@@ -11,12 +11,15 @@
     keyfile = $bindable(null),
     disabled = false,
     required = false,
+    acceptDrop = true,
     onerror,
     onchange,
   }: {
     keyfile?: { path: string; info: KeyfileInfo } | null;
     disabled?: boolean;
     required?: boolean;
+    /** Only one visible picker should claim OS file drops. */
+    acceptDrop?: boolean;
     onerror?: (e: CmdError | null) => void;
     onchange?: () => void;
   } = $props();
@@ -52,7 +55,7 @@
   onMount(() => {
     // Tauri intercepts OS file drops; HTML5 drop events never carry paths.
     const unlisten = getCurrentWebview().onDragDropEvent((event) => {
-      if (disabled) return;
+      if (disabled || !acceptDrop) return;
       const p = event.payload;
       if (p.type === "enter" || p.type === "over") dragging = true;
       else if (p.type === "leave") dragging = false;
