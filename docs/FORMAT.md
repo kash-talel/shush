@@ -78,8 +78,27 @@ total     = max(4096, PADMÉ(4 + compressed_len))
 
 At every point either the old or the new vault is intact on disk.
 
+## Attachments (sidecar blobs, issue #5)
+
+Each attachment is stored as `vault.shush.d/<attachment-uuid>.blob` beside the vault:
+
+| Off | Len | Field |
+|----:|----:|-------|
+| 0 | 5 | MAGIC `SHATT` |
+| 5 | 2 | VERSION (1) |
+| 7 | 1 | CIPHER_SUITE_ID (same as the vault) |
+| 8 | 24 | NONCE (zero-padded) |
+| 32 | N | AEAD ciphertext of `u32 len ‖ zstd(file) ‖ zero padding (PADMÉ, ≥ 4 KiB)` |
+
+- Key: `HKDF-SHA256(MasterKey, info="shush/v1/attachment-key")`.
+- AAD: `blob[0..8) ‖ vault KDF_SALT ‖ attachment id (ASCII)`, binding the blob to its vault and id.
+- Files ≤ 10 MiB; decompression bounded by the zstd frame size.
+- Metadata (`filename`, `mime_type`, `size_bytes`) lives in the encrypted payload; `data_base64` is
+  empty for stored attachments and only filled inside `.shushbackup` manifests (self-contained backups).
+- Add: blob written (and verified) before the metadata is saved. Delete: metadata saved first.
+  Unreferenced blobs are removed on unlock, after item deletion and after import.
+
 ## Not yet covered
 
 - Cross-process locking / generation counter (issue #9).
-- Attachments stored outside the JSON payload (issue #5, attachments part).
 - Decoy / duress slots (issue #8).

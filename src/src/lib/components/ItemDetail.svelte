@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Copy, Eye, EyeOff, Folder, History, Pencil, Star, Trash2 } from "@lucide/svelte";
   import TotpBadge from "./TotpBadge.svelte";
+  import AttachmentList from "./AttachmentList.svelte";
   import { revealPassword, toCmdError, type ItemDetail, type SecretField } from "../tauri-bridge";
 
   // Right pane (spec §7.2.2): click-to-copy fields, concealed password with
@@ -8,6 +9,7 @@
   let {
     item,
     folderName = null,
+    onupdated,
     oncopy,
     onedit,
     ondelete,
@@ -15,6 +17,7 @@
   }: {
     item: ItemDetail;
     folderName?: string | null;
+    onupdated: (updated: ItemDetail) => void;
     oncopy: (field: SecretField) => void;
     onedit: () => void;
     ondelete: () => void;
@@ -169,6 +172,8 @@
         <dd class="text-sm whitespace-pre-wrap text-zinc-300 select-text">{item.notes}</dd>
       </div>
     {/if}
+
+    <AttachmentList {item} onchange={onupdated} />
 
     {#if item.tags.length}
       <div class="flex flex-wrap gap-1.5 border-b border-hairline px-4 py-3">
