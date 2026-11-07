@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { KeyRound, Layers, LockKeyhole, NotebookText, Plus, Star } from "@lucide/svelte";
+  import { DatabaseBackup, KeyRound, Layers, LockKeyhole, NotebookText, Plus, Star } from "@lucide/svelte";
   import ItemList from "./ItemList.svelte";
   import ItemDetailView from "./ItemDetail.svelte";
   import ItemEditor from "./ItemEditor.svelte";
+  import BackupPanel from "./BackupPanel.svelte";
   import {
     copyField,
     createItem,
@@ -25,7 +26,7 @@
   let { onlock, oncopied }: { onlock: () => void; oncopied: (seconds: number) => void } = $props();
 
   type Filter = "all" | "favorites" | ItemKind;
-  type Mode = { kind: "view" } | { kind: "create"; itemKind: ItemKind } | { kind: "edit" };
+  type Mode = { kind: "view" } | { kind: "create"; itemKind: ItemKind } | { kind: "edit" } | { kind: "backup" };
 
   let items = $state.raw<ItemSummary[]>([]);
   let detail = $state.raw<ItemDetail | null>(null);
@@ -174,6 +175,14 @@
       >
         <Plus class="size-4" aria-hidden="true" /> New secure note
       </button>
+      <button
+        type="button"
+        onclick={() => (mode = { kind: "backup" })}
+        aria-current={mode.kind === "backup" ? "page" : undefined}
+        class={["flex h-8 items-center gap-2 rounded-md px-2 text-sm hover:bg-hairline/60", mode.kind === "backup" ? "bg-hairline text-zinc-100" : "text-zinc-300"]}
+      >
+        <DatabaseBackup class="size-4" aria-hidden="true" /> Backup &amp; restore
+      </button>
     </div>
 
     <button
@@ -195,7 +204,9 @@
         <span class="font-mono">[{error.code}]</span> {error.message}
       </p>
     {/if}
-    {#if mode.kind === "create"}
+    {#if mode.kind === "backup"}
+      <BackupPanel onimported={refresh} />
+    {:else if mode.kind === "create"}
       <ItemEditor kind={mode.itemKind} onsave={save} oncancel={() => (mode = { kind: "view" })} />
     {:else if mode.kind === "edit" && detail}
       <ItemEditor kind={detail.kind} existing={detail} onsave={save} oncancel={() => (mode = { kind: "view" })} />

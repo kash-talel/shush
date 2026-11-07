@@ -199,3 +199,33 @@ export const revealPassword = (id: string) => invoke<string>("reveal_password", 
 export const totpCode = (id: string) => invoke<TotpCode>("totp_code", { id });
 export const generatePassword = (options: GeneratorOptions) =>
   invoke<{ password: string; entropy_bits: number }>("generate_password", { options });
+
+// ---- Backup / import (Phase 6) ------------------------------------------------
+
+export type BackupCredentials =
+  | { mode: "same_as_vault" }
+  | { mode: "dedicated"; password: string; keyfile_path: string | null };
+
+export interface BackupInfo {
+  keyfile_required: boolean;
+  cipher: CipherInfo;
+}
+
+/** Counts only: what an import would do. */
+export interface ImportPreview {
+  exported_at: string;
+  total: number;
+  new_items: number;
+  identical: number;
+  conflicts: number;
+}
+
+export type ImportMode = "merge" | "replace";
+
+export const exportBackup = (path: string, credentials: BackupCredentials) =>
+  invoke<number>("export_backup", { path, credentials });
+export const inspectBackup = (path: string) => invoke<BackupInfo>("inspect_backup", { path });
+export const previewImport = (path: string, password: string, keyfilePath: string | null) =>
+  invoke<ImportPreview>("preview_import", { path, password, keyfilePath });
+export const applyImport = (path: string, password: string, keyfilePath: string | null, mode: ImportMode) =>
+  invoke<number>("apply_import", { path, password, keyfilePath, mode });
