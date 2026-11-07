@@ -27,6 +27,16 @@ use vault::{CreateOptions, OpenVault, VaultData, VaultError};
 
 /// File name of the primary vault inside the app data directory.
 const VAULT_FILE_NAME: &str = "vault.shush";
+/// Global hotkey for the Spotlight overlay (owner decision on #14: avoids the
+/// Windows `Alt+Shift` input-language switch).
+pub const SPOTLIGHT_HOTKEY: &str = "Ctrl+Alt+Space";
+/// Whether the hotkey was registered (another app may already own it).
+static HOTKEY_REGISTERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Event sent to the Spotlight window each time it opens.
+const EVENT_SPOTLIGHT_OPEN: &str = "spotlight-open";
+/// Event broadcast when a secret is copied (drives the status-bar countdown).
+const EVENT_CLIPBOARD: &str = "clipboard-copied";
+
 /// Minimum master password length (characters, after NFC) for new vaults.
 const MIN_PASSWORD_CHARS: usize = 8;
 
@@ -136,6 +146,8 @@ struct AppInfo {
     supported_ciphers: Vec<CipherInfo>,
     default_kdf: KdfParams,
     min_password_chars: usize,
+    /// The Spotlight hotkey, or `None` if it could not be registered.
+    spotlight_hotkey: Option<&'static str>,
 }
 
 #[tauri::command]
@@ -146,6 +158,9 @@ fn app_info() -> AppInfo {
         supported_ciphers: CipherSuite::ALL.into_iter().map(cipher_info).collect(),
         default_kdf: KdfParams::default(),
         min_password_chars: MIN_PASSWORD_CHARS,
+        spotlight_hotkey: HOTKEY_REGISTERED
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .then_some(SPOTLIGHT_HOTKEY),
     }
 }
 
@@ -448,6 +463,53 @@ fn auto_lock(app: &tauri::AppHandle, reason: os::session::LockReason) {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct SpotlightOpen {
+    /// Cleaned title of the window that was active when the hotkey was pressed.
+    context: Option<String>,
+}
+
+/// Hotkey handler: show Spotlight (pre-selecting by window context) or hide it.
+fn toggle_spotlight(app: &tauri::AppHandle) {
+    let Some(w) = app.get_webview_window("spotlight") else {
+        return;
+    };
+    if w.is_visible().unwrap_or(false) {
+        let _ = w.hide();
+        return;
+    }
+    // Read the context *before* Spotlight takes focus.
+    let context = os::win_context::foreground_title();
+    let _ = w.emit(EVENT_SPOTLIGHT_OPEN, SpotlightOpen { context });
+    let _ = w.center();
+    let _ = w.show();
+    let _ = w.set_focus();
+}
+
+/// Opens Spotlight from the main window's "Quick search" button.
+#[tauri::command]
+fn show_spotlight(app: tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("spotlight") {
+        if !w.is_visible().unwrap_or(false) {
+            toggle_spotlight(&app);
+        }
+    }
+}
+
+#[tauri::command]
+fn hide_spotlight(app: tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("spotlight") {
+        let _ = w.hide();
+    }
+}
+
+/// From Spotlight: open the main window (e.g. to unlock).
+#[tauri::command]
+fn open_main_window(app: tauri::AppHandle) {
+    hide_spotlight(app.clone());
+    show_main_window(&app);
+}
+
 /// Shows, un-minimizes and focuses the main window (tray click, second launch).
 pub fn show_main_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -462,12 +524,20 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
     let open = MenuItem::with_id(app, "open", "Open shush", true, None::<&str>)?;
+    let spotlight = MenuItem::with_id(
+        app,
+        "spotlight",
+        format!("Quick search ({SPOTLIGHT_HOTKEY})"),
+        true,
+        None::<&str>,
+    )?;
     let lock_item = MenuItem::with_id(app, "lock", "Lock vault", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit shush", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
             &open,
+            &spotlight,
             &lock_item,
             &PredefinedMenuItem::separator(app)?,
             &quit,
@@ -480,6 +550,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => show_main_window(app),
+            "spotlight" => toggle_spotlight(app),
             "lock" => {
                 app.state::<VaultState>().lock();
                 os::clipboard::clear_if_ours();
@@ -596,6 +667,7 @@ fn copy_field(app: tauri::AppHandle, id: String, field: SecretField) -> Result<u
         let secs = d.settings.clipboard_clear_seconds.clamp(5, 600);
         os::clipboard::copy_secret(&value, std::time::Duration::from_secs(u64::from(secs)))
             .map_err(|e| CmdError::new("CLIPBOARD", e.to_string()))?;
+        let _ = app.emit(EVENT_CLIPBOARD, secs);
         Ok(secs)
     })
 }
@@ -859,10 +931,25 @@ fn generate_password(
 /// in a binary carrying the app manifest. Keeping them out of the library lets
 /// `cargo test --lib` run without that manifest.
 pub fn builder() -> tauri::Builder<tauri::Wry> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
     tauri::Builder::default()
         .manage(VaultState::default())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        toggle_spotlight(app);
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             setup_tray(app)?;
+            // Another application may own the combination; Spotlight then stays
+            // reachable from the tray and app_info reports it (issue #14).
+            let ok = app.global_shortcut().register(SPOTLIGHT_HOTKEY).is_ok();
+            HOTKEY_REGISTERED.store(ok, std::sync::atomic::Ordering::Relaxed);
             let handle = app.handle().clone();
             os::session::watch_session(move |reason| auto_lock(&handle, reason));
             let handle = app.handle().clone();
@@ -880,13 +967,16 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
         })
         // Spec §1: tray persistence. Closing the window hides it; the idle /
         // session auto-lock keeps an unattended vault from staying open.
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main" {
-                    api.prevent_close();
-                    let _ = window.hide();
-                }
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                api.prevent_close();
+                let _ = window.hide();
             }
+            // Spotlight is transient: clicking elsewhere dismisses it.
+            tauri::WindowEvent::Focused(false) if window.label() == "spotlight" => {
+                let _ = window.hide();
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
@@ -916,7 +1006,10 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             list_folders,
             create_folder,
             rename_folder,
-            delete_folder
+            delete_folder,
+            show_spotlight,
+            hide_spotlight,
+            open_main_window
         ])
 }
 
