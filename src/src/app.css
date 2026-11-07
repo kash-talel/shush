@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+/* "Tactical Cyber-Minimalist" palette, spec §7.1.
+   Tailwind v4 is CSS-first: tokens live here instead of tailwind.config.js. */
+@theme {
+  --color-obsidian: #09090b;
+  --color-surface: #121215;
+  --color-hairline: #27272a;
+  --color-tactical: #10b981;
+  --color-cold: #06b6d4;
+  --color-danger: #ef4444;
+
+  /* Fonts are not fetched from a CDN (offline-first, strict CSP);
+     bundle Inter / JetBrains Mono locally in a later phase. */
+  --font-sans: "Inter", "Geist Sans", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Mono", Consolas, monospace;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: var(--color-obsidian);
+  color: #e4e4e7;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+input,
+textarea {
+  user-select: text;
+}

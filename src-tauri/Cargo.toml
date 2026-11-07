@@ -1,0 +1,57 @@
+[package]
+name = "shush"
+version = "0.1.0"
+description = "Offline-first, zero-knowledge password manager & 2FA authenticator for Windows"
+edition = "2021"
+rust-version = "1.80"
+publish = false
+
+[lib]
+# The crypto/vault core lives in the library so it can be unit-tested without
+# booting the Tauri runtime; `main.rs` is a thin entry point.
+name = "shush_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# --- Spec §2.1 (versions pinned per the master specification) ---
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+# `zeroize` feature: wipe Argon2's internal memory blocks on drop.
+argon2 = { version = "0.5", features = ["std", "alloc", "zeroize"] }
+# `zeroize` feature: wipe expanded cipher key schedules on drop.
+aes-gcm = { version = "0.10", features = ["zeroize"] }
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+zeroize = { version = "1.7", features = ["derive", "zeroize_derive"] }
+zstd = "0.13"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+totp-rs = { version = "5.5", features = ["gen_secret"] }
+windows-sys = { version = "0.52", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_DataExchange",
+    "Win32_System_RemoteDesktop",
+] }
+# --- Additions ---
+thiserror = "2"
+
+[dev-dependencies]
+hex = "0.4"
+tempfile = "3"
+
+# Argon2 is unusably slow without optimisation; keep test/dev builds fast.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true
