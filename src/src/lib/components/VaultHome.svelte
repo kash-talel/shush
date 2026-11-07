@@ -9,17 +9,14 @@
 
   let lockButton: HTMLButtonElement | undefined = $state();
 
-  onMount(() => {
-    lockButton?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "l") {
-        e.preventDefault();
-        onlock();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
+  onMount(() => lockButton?.focus());
+
+  function onKey(e: KeyboardEvent) {
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "l") {
+      e.preventDefault();
+      onlock();
+    }
+  }
 
   const rows = $derived([
     ["Items", String(summary.item_count)],
@@ -29,6 +26,8 @@
     ["Keyfile", summary.keyfile_required ? "required" : "not used"],
   ]);
 </script>
+
+<svelte:window onkeydown={onKey} />
 
 <section class="flex flex-1 items-center justify-center overflow-y-auto px-6 py-10">
   <div class="w-full max-w-[380px] text-center">

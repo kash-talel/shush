@@ -42,9 +42,7 @@
   {:else if status && !status.exists}
     <CreateVaultScreen vault={status} {info} oncreated={(s) => (summary = s)} />
   {:else if status}
-    {#key status.path}
-      <UnlockScreen vault={status} onunlocked={(s) => (summary = s)} />
-    {/key}
+    <UnlockScreen vault={status} onunlocked={(s) => (summary = s)} />
   {:else}
     <div class="flex-1"></div>
   {/if}
