@@ -42,11 +42,19 @@ windows-sys = { version = "0.52", features = [
     "Win32_Foundation",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    # Auto-lock on session lock / suspend / display off / idle (issue #15).
+    "Win32_System_Power",
+    "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Graphics_Gdi",
 ] }
 # --- Additions ---
 thiserror = "2"
 tauri-plugin-dialog = "2"
 unicode-normalization = "0.1"
+tauri-plugin-single-instance = "2"
 
 [dev-dependencies]
 hex = "0.4"
