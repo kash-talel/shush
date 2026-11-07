@@ -257,3 +257,15 @@ export const CSV_FORMAT_LABEL: Record<CsvFormat, string> = {
 export const previewCsv = (path: string) => invoke<CsvSummary>("preview_csv", { path });
 export const importCsv = (path: string) => invoke<CsvSummary>("import_csv", { path });
 export const shredCsv = (path: string) => invoke<void>("shred_csv", { path });
+
+// ---- Onboarding (Phase 7a) ------------------------------------------------------
+
+export interface Browser {
+  id: string;
+  name: string;
+  export_url: string;
+  steps: string;
+}
+
+/** Browsers whose profile folder exists. Their password stores are never read. */
+export const detectBrowsers = () => invoke<Browser[]>("detect_browsers");

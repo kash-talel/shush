@@ -5,6 +5,7 @@
   import UnlockScreen from "./lib/components/UnlockScreen.svelte";
   import CreateVaultScreen from "./lib/components/CreateVaultScreen.svelte";
   import Dashboard from "./lib/components/Dashboard.svelte";
+  import OnboardingScreen from "./lib/components/OnboardingScreen.svelte";
   import {
     appInfo,
     lock,
@@ -22,6 +23,8 @@
   let summary = $state<VaultSummary | null>(null);
   let clipboardUntil = $state(0);
   let autoLockReason = $state<AutoLockReason | null>(null);
+  // First run: show the import step once, right after the vault is created.
+  let onboarding = $state(false);
 
   async function refresh() {
     status = await vaultStatus();
@@ -30,6 +33,7 @@
   async function doLock() {
     await lock();
     summary = null;
+    onboarding = false;
     clipboardUntil = 0; // lock also clears shush's clipboard content
     await refresh();
   }
@@ -45,6 +49,7 @@
     // The backend already locked and wiped the vault; just follow it.
     const unlisten = listen<AutoLockReason>(AUTO_LOCK_EVENT, async (e) => {
       summary = null;
+      onboarding = false;
       clipboardUntil = 0;
       autoLockReason = e.payload;
       await refresh();
@@ -55,10 +60,19 @@
 </script>
 
 <div class="flex h-full flex-col">
-  {#if summary}
+  {#if summary && onboarding}
+    <OnboardingScreen ondone={() => (onboarding = false)} />
+  {:else if summary}
     <Dashboard onlock={doLock} oncopied={(secs) => (clipboardUntil = Date.now() + secs * 1000)} />
   {:else if status && !status.exists}
-    <CreateVaultScreen vault={status} {info} oncreated={(s) => (summary = s)} />
+    <CreateVaultScreen
+      vault={status}
+      {info}
+      oncreated={(s) => {
+        summary = s;
+        onboarding = true;
+      }}
+    />
   {:else if status}
     <UnlockScreen
       vault={status}

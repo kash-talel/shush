@@ -742,6 +742,14 @@ async fn apply_import(
     .await
 }
 
+// ---- First-run onboarding (roadmap Step 7a) ----------------------------------
+
+/// Browsers installed for this user (profile folder exists; nothing is read).
+#[tauri::command]
+fn detect_browsers() -> Vec<os::browsers::Browser> {
+    os::browsers::detect()
+}
+
 // ---- CSV migration (roadmap Step 6b) -----------------------------------------
 
 impl From<vault::importer::ImportError> for CmdError {
@@ -860,7 +868,8 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             apply_import,
             preview_csv,
             import_csv,
-            shred_csv
+            shred_csv,
+            detect_browsers
         ])
 }
 
