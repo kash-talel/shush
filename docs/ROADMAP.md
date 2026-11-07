@@ -16,7 +16,8 @@ and its PR is merged into `main`.
 | 4b | Attachments (stored outside the JSON payload, #5), folders | ⏳ after 6 (attachment storage needs a format decision) | |
 | 6a | Encrypted `.shushbackup` export (vault or separate credentials), import preview, merge / clean restore | ✅ implemented & verified (awaiting merge) | #34 |
 | 6b | CSV migration (Bitwarden / 1Password / KeePass / Chrome / Firefox) with conflict handling | ✅ implemented & verified (awaiting merge) | #35 |
-| 7 | First-run onboarding (guided CSV import, #17), native messaging host (#16) | ⏳ next | |
+| 7a | First-run onboarding: browser detection (folder existence only) + guided CSV import (#17) | ✅ implemented & verified (awaiting merge) | #36 |
+| 7b | Native messaging host + companion browser extension (#16) | ⏸ blocked on owner decisions (IPC auth / pairing) | |
 | 8 | Duress / decoy vault (#8), LAN sync (#18), air-gapped mode (#25) | ⏳ | |
 
 ## Decisions still needed from the owner
@@ -25,4 +26,7 @@ and its PR is merged into `main`.
   switch (#14). Proposed default: `Ctrl+Alt+Space`, user-configurable.
 - **5b auto-type:** only from the browser extension's verified origin, or also from window
   titles (phishing risk, #14)?
+- **7b native messaging (#16):** pairing model for the extension ↔ app channel (proposed:
+  named pipe restricted to the user SID + one-time pairing code shown in shush), and whether
+  the spec's automatic "try archived password" fallback is dropped (recommended: drop it).
 - **8 duress vault:** fixed-slot deniable format (bigger files) vs. a non-deniable decoy (#8).
