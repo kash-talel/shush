@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>shush — offline-first, zero-knowledge password manager for Windows</title>
+  <meta name="description" content="Offline-first, zero-knowledge password manager & 2FA authenticator for Windows. Tauri v2, Rust, Svelte 5. One encrypted file. No cloud. No telemetry.">
+  <meta property="og:title" content="shush — offline password manager">
+  <meta property="og:description" content="One encrypted file on your disk. No account, no cloud, no telemetry.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://kash-talel.github.io/shush/">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤫</text></svg>">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            accent: '#10b981',
+            'accent-2': '#06b6d4',
+            dg: { 800: '#18181b', 850: '#131316', 900: '#0c0c0f', 950: '#09090b' },
+          },
+          fontFamily: {
+            mono: ['"JetBrains Mono"', '"Cascadia Mono"', 'Consolas', 'monospace'],
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: 'Inter', system-ui, sans-serif; background: #0c0c0f; color: #fafafa; }
+    .glow-line { background: linear-gradient(90deg, transparent, #10b98180, #06b6d480, transparent); height: 1px; }
+    .card { background: #18181b; border: 1px solid #27272a; border-radius: 12px; transition: border-color 0.4s, transform 0.3s; }
+    .card:hover { border-color: #10b98140; transform: translateY(-2px); }
+    .btn-primary { background: #10b981; color: #0c0c0f; font-weight: 600; border-radius: 8px; padding: 12px 28px; transition: all 0.3s; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
+    .btn-primary:hover { background: #34d399; transform: translateY(-1px); box-shadow: 0 8px 30px #10b98130; }
+    .btn-secondary { background: transparent; color: #a1a1aa; border: 1px solid #27272a; border-radius: 8px; padding: 12px 28px; transition: all 0.3s; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
+    .btn-secondary:hover { border-color: #52525b; color: #fafafa; transform: translateY(-1px); }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .tag { background: #10b98112; color: #10b981; border: 1px solid #10b98125; border-radius: 6px; padding: 4px 10px; font-size: 12px; }
+    .code-block { background: #131316; border: 1px solid #27272a; border-radius: 10px; overflow: hidden; }
+    .code-block pre { padding: 20px 24px; overflow-x: auto; font-size: 13px; line-height: 1.7; }
+    .code-header { background: #18181b; border-bottom: 1px solid #27272a; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; }
+    .fade-in { opacity: 0; transform: translateY(20px); transition: opacity 0.6s ease-out, transform 0.6s ease-out; }
+    .fade-in.visible { opacity: 1; transform: none; }
+    .nav { position: fixed; top: 0; left: 0; right: 0; z-index: 50; transition: background 0.5s, border-color 0.5s; border-bottom: 1px solid transparent; }
+    .nav.scrolled { background: rgba(12, 12, 15, 0.8); backdrop-filter: blur(14px) saturate(1.4); border-color: #27272a; }
+    .eyebrow { font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.14em; font-size: 12px; color: #10b981; }
+    .section-title { font-size: 36px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.15; }
+    @media (max-width: 768px) { .section-title { font-size: 28px; } }
+    ::selection { background: #10b98140; }
+  </style>
+</head>
+<body class="antialiased">
+
+  <!-- NAV -->
+  <nav class="nav" id="nav">
+    <div class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="#" class="flex items-center gap-3 text-white no-underline">
+        <svg width="28" height="28" viewBox="0 0 80 80" fill="none">
+          <rect width="80" height="80" rx="18" fill="#10b981" fill-opacity="0.08" stroke="#10b981" stroke-opacity="0.45"/>
+          <path d="M28 37v-7a12 12 0 0 1 24 0v7" fill="none" stroke="#10b981" stroke-width="4" stroke-linecap="round"/>
+          <rect x="22" y="37" width="36" height="27" rx="6" fill="none" stroke="#10b981" stroke-width="4"/>
+          <circle cx="40" cy="50" r="3.5" fill="#10b981"/>
+        </svg>
+        <span class="mono text-[15px] font-medium tracking-wider">shush</span>
+      </a>
+      <div class="hidden md:flex items-center gap-1">
+        <a href="#features" class="mono text-[13px] uppercase tracking-widest text-zinc-400 hover:text-white px-3 py-2 transition-colors">Features</a>
+        <a href="#security" class="mono text-[13px] uppercase tracking-widest text-zinc-400 hover:text-white px-3 py-2 transition-colors">Security</a>
+        <a href="#quickstart" class="mono text-[13px] uppercase tracking-widest text-zinc-400 hover:text-white px-3 py-2 transition-colors">Quick start</a>
+        <a href="#architecture" class="mono text-[13px] uppercase tracking-widest text-zinc-400 hover:text-white px-3 py-2 transition-colors">Architecture</a>
+      </div>
+      <div class="flex items-center gap-3">
+        <a href="https://github.com/kash-talel/shush" target="_blank" rel="noopener" class="hidden sm:flex items-center gap-2 border border-zinc-700 rounded-lg h-9 px-3 mono text-xs uppercase tracking-widest text-zinc-400 hover:border-zinc-500 hover:text-white transition-all">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+          <span class="text-accent font-medium" id="star-count"></span>
+        </a>
+        <a href="https://github.com/kash-talel/shush/releases" class="btn-primary text-sm !py-2 !px-4">
+          Download
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 8h11M9 4l4 4-4 4"/></svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section class="relative pt-32 pb-20 overflow-hidden">
+    <div class="absolute inset-0 pointer-events-none">
+      <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-accent/5 rounded-full blur-[120px]"></div>
+    </div>
+    <div class="max-w-4xl mx-auto px-6 text-center relative fade-in">
+      <p class="eyebrow mb-6">Offline-first password manager</p>
+      <h1 class="text-5xl sm:text-7xl font-bold tracking-tight leading-[1.05] mb-6">
+        Your passwords.<br>
+        Your file.<br>
+        <span class="text-accent">Your rules.</span>
+      </h1>
+      <p class="text-lg sm:text-xl text-zinc-400 max-w-2xl mx-auto mb-10 leading-relaxed">
+        Zero-knowledge password manager &amp; 2FA authenticator for Windows.
+        One encrypted file on your disk. No account, no cloud, no telemetry.
+      </p>
+      <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
+        <a href="#quickstart" class="btn-primary text-base">
+          Quick start
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 8h11M9 4l4 4-4 4"/></svg>
+        </a>
+        <a href="https://github.com/kash-talel/shush" target="_blank" rel="noopener" class="btn-secondary text-base">
+          View on GitHub
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        </a>
+      </div>
+      <div class="flex flex-wrap justify-center gap-2">
+        <span class="tag mono">Tauri v2</span>
+        <span class="tag mono">Rust</span>
+        <span class="tag mono">Svelte 5</span>
+        <span class="tag mono">Argon2id</span>
+        <span class="tag mono">AES-256-GCM</span>
+        <span class="tag mono">XChaCha20</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="glow-line max-w-4xl mx-auto"></div>
+
+  <!-- FEATURES -->
+  <section id="features" class="py-24">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="text-center mb-16 fade-in">
+        <p class="eyebrow mb-4">Why shush?</p>
+        <h2 class="section-title">Every trade-off,<br><span class="text-accent">written down.</span></h2>
+      </div>
+      <div class="grid md:grid-cols-3 gap-6 fade-in">
+        <!-- Card 1 -->
+        <div class="card p-7">
+          <div class="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center mb-5">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold mb-2">Zero knowledge</h3>
+          <p class="text-zinc-400 text-sm leading-relaxed">No servers, no accounts. Your master key is re-derived from your password at every unlock — it never touches disk. The vault is one authenticated-encrypted file you own.</p>
+        </div>
+        <!-- Card 2 -->
+        <div class="card p-7">
+          <div class="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center mb-5">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold mb-2">Hardened desktop</h3>
+          <p class="text-zinc-400 text-sm leading-relaxed">Auto-lock on Win+L, sleep, lid close and idle. Clipboard excluded from history. Screen capture blocked. Single instance guards your vault file.</p>
+        </div>
+        <!-- Card 3 -->
+        <div class="card p-7">
+          <div class="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center mb-5">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold mb-2">Keyboard-first</h3>
+          <p class="text-zinc-400 text-sm leading-relaxed"><code class="mono text-accent text-xs">Ctrl+Alt+Space</code> opens Quick search from any app. Enter copies the password, Ctrl+Enter the username, Alt+Enter the TOTP code.</p>
+        </div>
+        <!-- Card 4 -->
+        <div class="card p-7">
+          <div class="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center mb-5">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold mb-2">Modern stack</h3>
+          <p class="text-zinc-400 text-sm leading-relaxed">Tauri v2 + Rust core for cryptography and secrets. Svelte 5 + Tailwind v4 frontend. Native Windows feel without Electron's memory overhead.</p>
+        </div>
+        <!-- Card 5 -->
+        <div class="card p-7">
+          <div class="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center mb-5">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold mb-2">Import everything</h3>
+          <p class="text-zinc-400 text-sm leading-relaxed">First-run wizard detects your browsers. CSV import from Chrome, Edge, Brave, Firefox, Bitwarden, 1Password, KeePass and KeePassXC with conflict handling.</p>
+        </div>
+        <!-- Card 6 -->
+        <div class="card p-7">
+          <div class="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center mb-5">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round"><path d="M4 22h14a2 2 0 0 0 2-2V7.5L14.5 2H6a2 2 0 0 0-2 2v4"/><polyline points="14 2 14 8 20 8"/><path d="m3 15 2 2 4-4"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold mb-2">Encrypted backups</h3>
+          <p class="text-zinc-400 text-sm leading-relaxed"><code class="mono text-accent text-xs">.shushbackup</code> files with preview, merge and clean restore. Sidecar attachments included. Every byte is authenticated encryption.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="glow-line max-w-4xl mx-auto"></div>
+
+  <!-- SECURITY -->
+  <section id="security" class="py-24">
+    <div class="max-w-5xl mx-auto px-6">
+      <div class="text-center mb-16 fade-in">
+        <p class="eyebrow mb-4">Security model</p>
+        <h2 class="section-title">Documented, not<br><span class="text-accent">marketed away.</span></h2>
+      </div>
+      <div class="grid md:grid-cols-2 gap-6 fade-in">
+        <div class="card p-7">
+          <h3 class="mono text-accent text-sm font-medium uppercase tracking-wider mb-3">Key derivation</h3>
+          <p class="text-zinc-400 text-sm leading-relaxed">Argon2id v1.3 (RFC 9106) — 64 MiB, 3 passes, 4 lanes. Memory-hard so GPU/ASIC guessing is expensive. Parameters are bounds-checked before hashing so a tampered header cannot exhaust memory.</p>
+        </div>
+        <div class="card p-7">
+          <h3 class="mono text-accent text-sm font-medium uppercase tracking-wider mb-3">Encryption</h3>
+          <p class="text-zinc-400 text-sm leading-relaxed">AEAD envelopes: AES-256-GCM (default) or XChaCha20-Poly1305. HKDF-SHA256 splits the master key into vault, canary and attachment keys. Fresh random nonces on every write.</p>
+        </div>
+        <div class="card p-7">
+          <h3 class="mono text-accent text-sm font-medium uppercase tracking-wider mb-3">Integrity</h3>
+          <p class="text-zinc-400 text-sm leading-relaxed">Every header byte is authenticated. A 33-byte canary tells "wrong password" apart from "tampered file". Payloads are PADMÉ-padded so file size barely leaks item count.</p>
+        </div>
+        <div class="card p-7">
+          <h3 class="mono text-accent text-sm font-medium uppercase tracking-wider mb-3">Auto-type (planned)</h3>
+          <p class="text-zinc-400 text-sm leading-relaxed">Only into sites whose origin the browser extension verified. Window titles never trigger typing — Quick search uses them only to pre-select a result, eliminating phishing via spoofed titles.</p>
+        </div>
+      </div>
+      <div class="text-center mt-10 fade-in">
+        <p class="text-zinc-500 text-sm">Every crypto primitive is pinned by <span class="text-zinc-300 font-medium">known-answer tests computed independently</span> (Node.js crypto, hash-wasm Argon2, @noble/ciphers), plus exhaustive single-bit tamper tests.</p>
+        <p class="text-zinc-600 text-xs mt-3">118 tests passing · 0 warnings · full threat model in <a href="https://github.com/kash-talel/shush/blob/main/docs/spec/security-model.md" class="text-accent hover:underline">docs/spec/security-model.md</a></p>
+      </div>
+    </div>
+  </section>
+
+  <div class="glow-line max-w-4xl mx-auto"></div>
+
+  <!-- QUICK START -->
+  <section id="quickstart" class="py-24">
+    <div class="max-w-3xl mx-auto px-6">
+      <div class="text-center mb-12 fade-in">
+        <p class="eyebrow mb-4">Get started</p>
+        <h2 class="section-title">Clone. Build.<br><span class="text-accent">Own your vault.</span></h2>
+      </div>
+      <div class="code-block fade-in">
+        <div class="code-header">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full bg-red-500/70"></span>
+            <span class="w-3 h-3 rounded-full bg-yellow-500/70"></span>
+            <span class="w-3 h-3 rounded-full bg-green-500/70"></span>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="mono text-[11px] text-zinc-500">PowerShell</span>
+            <button onclick="copyCode()" id="copy-btn" class="mono text-[11px] text-zinc-500 hover:text-accent transition-colors cursor-pointer">Copy</button>
+          </div>
+        </div>
+        <pre class="mono text-zinc-300"><code id="code-content"><span class="text-zinc-600"># Clone</span>
+<span class="text-accent">git</span> clone https://github.com/kash-talel/shush
+<span class="text-accent">cd</span> shush
+
+<span class="text-zinc-600"># Frontend dependencies</span>
+<span class="text-accent">npm</span> ci --prefix src
+
+<span class="text-zinc-600"># Run the test suite</span>
+<span class="text-accent">cd</span> src-tauri && <span class="text-accent">cargo</span> test --lib && <span class="text-accent">cd</span> ..
+
+<span class="text-zinc-600"># Run the app</span>
+<span class="text-accent">npx</span> --prefix src tauri dev</code></pre>
+      </div>
+      <div class="text-center mt-8 fade-in">
+        <p class="text-zinc-500 text-sm">Or download a prebuilt <code class="mono text-accent text-xs">shush-setup.exe</code> from
+          <a href="https://github.com/kash-talel/shush/releases" class="text-accent hover:underline">Releases</a>
+          <span class="text-zinc-600">(coming with v0.1.0)</span>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <div class="glow-line max-w-4xl mx-auto"></div>
+
+  <!-- ARCHITECTURE -->
+  <section id="architecture" class="py-24">
+    <div class="max-w-5xl mx-auto px-6">
+      <div class="text-center mb-16 fade-in">
+        <p class="eyebrow mb-4">Architecture</p>
+        <h2 class="section-title">Rust owns<br><span class="text-accent">every secret.</span></h2>
+      </div>
+      <div class="grid md:grid-cols-2 gap-6 fade-in">
+        <div class="card p-6">
+          <h3 class="mono text-accent text-xs font-medium uppercase tracking-wider mb-4">Rust core</h3>
+          <div class="space-y-3 text-sm">
+            <div class="flex gap-3"><span class="mono text-zinc-600 shrink-0">crypto/</span><span class="text-zinc-400">Argon2id KDF, keyfiles, AEAD envelope, HKDF key schedule, CSPRNG generator</span></div>
+            <div class="flex gap-3"><span class="mono text-zinc-600 shrink-0">vault/</span><span class="text-zinc-400">Binary container, crash-safe writer, items, folders, attachments, backups, CSV import</span></div>
+            <div class="flex gap-3"><span class="mono text-zinc-600 shrink-0">os/</span><span class="text-zinc-400">Win32 clipboard, auto-lock, browser detection, active-window context</span></div>
+            <div class="flex gap-3"><span class="mono text-zinc-600 shrink-0">totp/</span><span class="text-zinc-400">RFC 6238 TOTP with Base32 and otpauth:// URI parsing</span></div>
+          </div>
+        </div>
+        <div class="card p-6">
+          <h3 class="mono text-accent text-xs font-medium uppercase tracking-wider mb-4">Frontend &amp; docs</h3>
+          <div class="space-y-3 text-sm">
+            <div class="flex gap-3"><span class="mono text-zinc-600 shrink-0">src/</span><span class="text-zinc-400">Svelte 5 + Tailwind v4 — dashboard, folders, search, generator, TOTP ring, Quick search window</span></div>
+            <div class="flex gap-3"><span class="mono text-zinc-600 shrink-0">docs/</span><span class="text-zinc-400">Specs, byte-level format, roadmap, per-phase end-to-end test harness</span></div>
+            <div class="flex gap-3"><span class="mono text-zinc-600 shrink-0">site/</span><span class="text-zinc-400">This landing page — deployed to GitHub Pages</span></div>
+          </div>
+          <div class="mt-5 pt-4 border-t border-zinc-800">
+            <p class="text-xs text-zinc-500">The UI never sees raw passwords or TOTP secrets. Copy and code generation run in Rust. Editing never loads the current password into JavaScript.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="glow-line max-w-4xl mx-auto"></div>
+
+  <!-- CTA -->
+  <section class="py-24">
+    <div class="max-w-3xl mx-auto px-6 text-center fade-in">
+      <p class="eyebrow mb-4">Get shush</p>
+      <h2 class="section-title mb-4">Stop trusting clouds.<br><span class="text-accent">Start owning your vault.</span></h2>
+      <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mt-8">
+        <a href="https://github.com/kash-talel/shush" target="_blank" rel="noopener" class="btn-primary text-base">
+          Quick start
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 8h11M9 4l4 4-4 4"/></svg>
+        </a>
+        <a href="https://github.com/kash-talel/shush/releases" class="btn-secondary text-base">
+          Download latest release
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 8h11M9 4l4 4-4 4"/></svg>
+        </a>
+      </div>
+      <p class="mono text-zinc-600 text-xs mt-8">MIT © 2026 Mahdi Ghozzi. Alpha — see <a href="https://github.com/kash-talel/shush/blob/main/docs/ROADMAP.md" class="hover:text-zinc-400">roadmap</a> for what's next.</p>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="border-t border-zinc-800 py-16">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-10">
+        <div class="col-span-2 md:col-span-1">
+          <div class="flex items-center gap-2 mb-4">
+            <svg width="22" height="22" viewBox="0 0 80 80" fill="none">
+              <rect width="80" height="80" rx="18" fill="#10b981" fill-opacity="0.08" stroke="#10b981" stroke-opacity="0.45"/>
+              <path d="M28 37v-7a12 12 0 0 1 24 0v7" fill="none" stroke="#10b981" stroke-width="4" stroke-linecap="round"/>
+              <rect x="22" y="37" width="36" height="27" rx="6" fill="none" stroke="#10b981" stroke-width="4"/>
+              <circle cx="40" cy="50" r="3.5" fill="#10b981"/>
+            </svg>
+            <span class="mono text-sm font-medium">shush</span>
+          </div>
+          <p class="text-zinc-500 text-sm leading-relaxed">The offline-first, zero-knowledge password manager for Windows.</p>
+        </div>
+        <nav>
+          <h4 class="mono text-[11px] uppercase tracking-[0.14em] text-zinc-600 mb-4">Product</h4>
+          <div class="space-y-2">
+            <a href="#features" class="block text-zinc-400 text-sm hover:text-white transition-colors">Features</a>
+            <a href="#security" class="block text-zinc-400 text-sm hover:text-white transition-colors">Security</a>
+            <a href="#quickstart" class="block text-zinc-400 text-sm hover:text-white transition-colors">Quick start</a>
+            <a href="#architecture" class="block text-zinc-400 text-sm hover:text-white transition-colors">Architecture</a>
+          </div>
+        </nav>
+        <nav>
+          <h4 class="mono text-[11px] uppercase tracking-[0.14em] text-zinc-600 mb-4">Docs</h4>
+          <div class="space-y-2">
+            <a href="https://github.com/kash-talel/shush/blob/main/docs/FORMAT.md" class="block text-zinc-400 text-sm hover:text-white transition-colors">File format</a>
+            <a href="https://github.com/kash-talel/shush/blob/main/docs/spec/security-model.md" class="block text-zinc-400 text-sm hover:text-white transition-colors">Security model</a>
+            <a href="https://github.com/kash-talel/shush/blob/main/docs/ROADMAP.md" class="block text-zinc-400 text-sm hover:text-white transition-colors">Roadmap</a>
+            <a href="https://github.com/kash-talel/shush/blob/main/docs/testing/README.md" class="block text-zinc-400 text-sm hover:text-white transition-colors">Testing</a>
+          </div>
+        </nav>
+        <nav>
+          <h4 class="mono text-[11px] uppercase tracking-[0.14em] text-zinc-600 mb-4">Project</h4>
+          <div class="space-y-2">
+            <a href="https://github.com/kash-talel/shush" class="block text-zinc-400 text-sm hover:text-white transition-colors">GitHub</a>
+            <a href="https://github.com/kash-talel/shush/releases" class="block text-zinc-400 text-sm hover:text-white transition-colors">Releases</a>
+            <a href="https://github.com/kash-talel/shush/issues" class="block text-zinc-400 text-sm hover:text-white transition-colors">Issues</a>
+            <a href="https://github.com/kash-talel/shush/blob/main/LICENSE" class="block text-zinc-400 text-sm hover:text-white transition-colors">License (MIT)</a>
+          </div>
+        </nav>
+      </div>
+      <div class="mt-12 pt-6 border-t border-zinc-800/60 flex flex-col sm:flex-row justify-between items-center gap-4">
+        <p class="mono text-zinc-600 text-xs">MIT © 2026 Mahdi Ghozzi</p>
+        <p class="text-zinc-700 text-xs">Built with Tauri v2, Rust, Svelte 5 and Tailwind v4</p>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Scroll-aware nav
+    const nav = document.getElementById('nav');
+    window.addEventListener('scroll', () => {
+      nav.classList.toggle('scrolled', window.scrollY > 40);
+    });
+
+    // Fade-in on scroll
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); } });
+    }, { threshold: 0.15 });
+    document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+    // Copy code
+    function copyCode() {
+      const code = document.getElementById('code-content').textContent;
+      navigator.clipboard.writeText(code).then(() => {
+        const btn = document.getElementById('copy-btn');
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+      });
+    }
+
+    // GitHub stars
+    fetch('https://api.github.com/repos/kash-talel/shush')
+      .then(r => r.json())
+      .then(d => {
+        if (d.stargazers_count !== undefined) {
+          const el = document.getElementById('star-count');
+          if (el) el.textContent = d.stargazers_count > 0 ? `★ ${d.stargazers_count}` : '';
+        }
+      })
+      .catch(() => {});
+  </script>
+
+</body>
+</html>

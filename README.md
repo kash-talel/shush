@@ -9,6 +9,12 @@ One encrypted file on your disk. No account, no cloud, no telemetry.
 
 <br>
 
+<a href="https://kash-talel.github.io/shush/"><img src="https://img.shields.io/badge/Website-10b981?style=for-the-badge&logo=googlechrome&logoColor=0c0c0f" alt="Website" height="36"></a>&nbsp;
+<a href="https://github.com/kash-talel/shush/releases"><img src="https://img.shields.io/badge/Releases-18181b?style=for-the-badge&logo=github&logoColor=10b981" alt="Releases" height="36"></a>&nbsp;
+<a href="https://github.com/kash-talel/shush/blob/main/docs/README.md"><img src="https://img.shields.io/badge/Docs-18181b?style=for-the-badge&logo=readthedocs&logoColor=10b981" alt="Docs" height="36"></a>
+
+<br>
+
 [![CI](https://github.com/kash-talel/shush/actions/workflows/ci.yml/badge.svg)](https://github.com/kash-talel/shush/actions/workflows/ci.yml)
 ![status](https://img.shields.io/badge/status-alpha-orange)
 ![platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6)
