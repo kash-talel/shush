@@ -13,7 +13,7 @@ and its PR is merged into `main`.
 | 4 | Dashboard: item CRUD, TOTP + ring, generator, safe clipboard | ✅ complete | #31 |
 | 5a | Desktop: auto-lock (session/suspend/display/idle), capture protection, tray, single-instance | ✅ complete | #32 |
 | 5b | Desktop: Spotlight overlay + global hotkey, window-context search, auto-type | ⏸ blocked on owner decisions (#13 / #14) | |
-| 4b | Folders: create / rename / delete, assign items, sidebar filter | 🔨 in progress | |
+| 4b | Folders: create / rename / delete, assign items, sidebar filter | ✅ implemented & verified (awaiting merge) | #37 |
 | 4c | Attachments stored as separately sealed blobs (#5) | ⏳ needs format decision (sidecar files vs. in-container section) | |
 | 6a | Encrypted `.shushbackup` export (vault or separate credentials), import preview, merge / clean restore | ✅ implemented & verified (awaiting merge) | #34 |
 | 6b | CSV migration (Bitwarden / 1Password / KeePass / Chrome / Firefox) with conflict handling | ✅ implemented & verified (awaiting merge) | #35 |
