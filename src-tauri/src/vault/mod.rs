@@ -11,6 +11,7 @@
 //! (issue #5).
 
 pub mod container;
+pub mod items;
 pub mod models;
 pub mod state;
 
@@ -181,6 +182,23 @@ impl OpenVault {
                 Err(VaultError::WriteVerifyFailed)
             }
         })
+    }
+
+    /// Applies `f` to a copy of the data, saves it, and only then commits it in
+    /// memory. If `f` or the save fails, memory and disk stay unchanged.
+    pub fn modify<R, E: From<VaultError>>(
+        &mut self,
+        path: &Path,
+        f: impl FnOnce(&mut VaultData) -> Result<R, E>,
+    ) -> Result<R, E> {
+        let mut next = self.data.clone();
+        let result = f(&mut next)?;
+        let previous = std::mem::replace(&mut self.data, next);
+        if let Err(e) = self.save(path) {
+            self.data = previous;
+            return Err(e.into());
+        }
+        Ok(result)
     }
 
     /// Authenticated header fields.
@@ -404,6 +422,37 @@ mod tests {
             v.data_mut().items.push(note(&format!("n{i}"), "short"));
         }
         assert_eq!(v.to_bytes().unwrap().len(), empty);
+    }
+
+    #[test]
+    fn modify_is_transactional() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.shush");
+        let mut v = create_vault_file(&path, b"pw", None, FAST).unwrap();
+
+        v.modify::<_, VaultError>(&path, |d| {
+            d.items.push(note("kept", "x"));
+            Ok(())
+        })
+        .unwrap();
+        let on_disk = OpenVault::unlock(&read_vault_file(&path).unwrap(), b"pw", None).unwrap();
+        assert_eq!(on_disk.data().items.len(), 1);
+
+        // A failing closure leaves memory untouched.
+        let r: Result<(), VaultError> = v.modify(&path, |d| {
+            d.items.clear();
+            Err(VaultError::Malformed("nope"))
+        });
+        assert!(r.is_err());
+        assert_eq!(v.data().items.len(), 1);
+
+        // A failing save (target is a directory) rolls memory back.
+        let r: Result<(), VaultError> = v.modify(dir.path(), |d| {
+            d.items.clear();
+            Ok(())
+        });
+        assert!(r.is_err());
+        assert_eq!(v.data().items.len(), 1);
     }
 
     #[test]
