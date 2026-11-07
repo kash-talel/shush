@@ -92,3 +92,79 @@ export function splitPath(p: string): [string, string] {
   const i = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
   return [p.slice(0, i + 1), p.slice(i + 1)];
 }
+
+// ---- Items (Phase 4) --------------------------------------------------------
+
+export type ItemKind = "login" | "secure_note";
+export type SecretField = "password" | "username" | "totp";
+
+/** List row. Never contains passwords or TOTP secrets. */
+export interface ItemSummary {
+  id: string;
+  kind: ItemKind;
+  title: string;
+  subtitle: string;
+  host: string;
+  favorite: boolean;
+  has_totp: boolean;
+  updated_at: string;
+}
+
+/** Detail view. Never contains the password or TOTP secret. */
+export interface ItemDetail {
+  id: string;
+  kind: ItemKind;
+  title: string;
+  username: string;
+  url: string;
+  notes: string;
+  content: string;
+  tags: string[];
+  favorite: boolean;
+  has_password: boolean;
+  has_totp: boolean;
+  history_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Editor payload. `password` / `totp`: `null` = keep current, "" = clear. */
+export interface ItemDraft {
+  title: string;
+  username: string;
+  password: string | null;
+  url: string;
+  totp: string | null;
+  notes: string;
+  content: string;
+  favorite: boolean;
+  tags: string[];
+}
+
+export interface TotpCode {
+  code: string;
+  period: number;
+  remaining: number;
+}
+
+export interface GeneratorOptions {
+  length: number;
+  lower: boolean;
+  upper: boolean;
+  digits: boolean;
+  symbols: boolean;
+  exclude_ambiguous: boolean;
+}
+
+export const listItems = () => invoke<ItemSummary[]>("list_items");
+export const getItem = (id: string) => invoke<ItemDetail>("get_item", { id });
+export const createItem = (kind: ItemKind, draft: ItemDraft) => invoke<ItemDetail>("create_item", { kind, draft });
+export const updateItem = (id: string, draft: ItemDraft) => invoke<ItemDetail>("update_item", { id, draft });
+export const deleteItem = (id: string) => invoke<void>("delete_item", { id });
+export const setFavorite = (id: string, favorite: boolean) => invoke<void>("set_favorite", { id, favorite });
+/** Copies in Rust (history/cloud-excluded); resolves to seconds until auto-clear. */
+export const copyField = (id: string, field: SecretField) => invoke<number>("copy_field", { id, field });
+export const revealPassword = (id: string) => invoke<string>("reveal_password", { id });
+export const totpCode = (id: string) => invoke<TotpCode>("totp_code", { id });
+export const generatePassword = (options: GeneratorOptions) =>
+  invoke<{ password: string; entropy_bits: number }>("generate_password", { options });

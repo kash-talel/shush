@@ -172,6 +172,8 @@ pub enum SecretField {
     Password,
     /// The login username (not secret, but copied through the same path).
     Username,
+    /// The current TOTP code (computed at copy time).
+    Totp,
 }
 
 /// Random UUID v4 (RFC 9562) from the OS CSPRNG.
@@ -464,6 +466,15 @@ impl VaultData {
         match (self.find(id)?, field) {
             (VaultItem::Login(l), SecretField::Password) => Ok(Zeroizing::new(l.password.clone())),
             (VaultItem::Login(l), SecretField::Username) => Ok(Zeroizing::new(l.username.clone())),
+            (
+                VaultItem::Login(LoginItem {
+                    totp_secret: Some(t),
+                    ..
+                }),
+                SecretField::Totp,
+            ) => crate::totp::current_code(t)
+                .map(|c| Zeroizing::new(c.code))
+                .map_err(|e| ItemError::Invalid(format!("TOTP: {e}"))),
             _ => Err(ItemError::Invalid("This item has no such field".into())),
         }
     }
