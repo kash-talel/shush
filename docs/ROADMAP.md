@@ -11,10 +11,10 @@ and its PR is merged into `main`.
 | 2 | Crypto engine: Argon2id, keyfile, AES-GCM / XChaCha envelope, tests | ✅ complete | #28 |
 | 3 | Vault container, binary format, atomic writer, create / unlock / lock | ✅ complete | #29 |
 | 4 | Dashboard: item CRUD, TOTP + ring, generator, safe clipboard | ✅ complete | #31 |
-| 5a | Desktop: auto-lock (session/suspend/display/idle), capture protection, tray, single-instance | 🟡 in review | #32 |
-| 5b | Desktop: Spotlight overlay + global hotkey, window-context search, auto-type | ⏳ next — needs decisions on #13 / #14 | |
-| 4b | Attachments (stored outside the JSON payload, #5), folders | ⏳ | |
-| 6 | Encrypted `.shushbackup` export, import with diff / conflict inbox, CSV migration | ⏳ | |
+| 5a | Desktop: auto-lock (session/suspend/display/idle), capture protection, tray, single-instance | ✅ implemented & verified (awaiting merge) | #32 |
+| 5b | Desktop: Spotlight overlay + global hotkey, window-context search, auto-type | ⏸ blocked on owner decisions (#13 / #14) | |
+| 4b | Attachments (stored outside the JSON payload, #5), folders | ⏳ after 6 (attachment storage needs a format decision) | |
+| 6 | Encrypted `.shushbackup` export, import with diff / conflict inbox, CSV migration | 🔨 in progress | |
 | 7 | First-run onboarding (guided CSV import, #17), native messaging host (#16) | ⏳ | |
 | 8 | Duress / decoy vault (#8), LAN sync (#18), air-gapped mode (#25) | ⏳ | |
 
