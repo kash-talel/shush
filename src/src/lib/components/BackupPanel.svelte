@@ -3,6 +3,7 @@
   import { ArchiveRestore, DatabaseBackup, FileArchive, LoaderCircle, TriangleAlert } from "@lucide/svelte";
   import PasswordField from "./PasswordField.svelte";
   import KeyfileAttach from "./KeyfileAttach.svelte";
+  import CsvImport from "./CsvImport.svelte";
   import {
     applyImport,
     exportBackup,
@@ -280,5 +281,6 @@
       {/if}
       {#if !importPath}{@render errorLine(importError)}{/if}
     </div>
+    <CsvImport {onimported} />
   </div>
 </section>

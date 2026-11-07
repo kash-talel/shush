@@ -229,3 +229,31 @@ export const previewImport = (path: string, password: string, keyfilePath: strin
   invoke<ImportPreview>("preview_import", { path, password, keyfilePath });
 export const applyImport = (path: string, password: string, keyfilePath: string | null, mode: ImportMode) =>
   invoke<number>("apply_import", { path, password, keyfilePath, mode });
+
+// ---- CSV migration (Phase 6b) -------------------------------------------------
+
+export type CsvFormat = "chromium" | "firefox" | "bitwarden" | "one_password" | "kee_pass" | "kee_pass_xc" | "generic";
+
+export interface CsvSummary {
+  format: CsvFormat | null;
+  total: number;
+  new_items: number;
+  identical: number;
+  conflicts: number;
+  skipped: number;
+  invalid_totp: number;
+}
+
+export const CSV_FORMAT_LABEL: Record<CsvFormat, string> = {
+  chromium: "Chrome / Edge / Brave",
+  firefox: "Firefox",
+  bitwarden: "Bitwarden",
+  one_password: "1Password",
+  kee_pass: "KeePass",
+  kee_pass_xc: "KeePassXC",
+  generic: "Generic CSV",
+};
+
+export const previewCsv = (path: string) => invoke<CsvSummary>("preview_csv", { path });
+export const importCsv = (path: string) => invoke<CsvSummary>("import_csv", { path });
+export const shredCsv = (path: string) => invoke<void>("shred_csv", { path });

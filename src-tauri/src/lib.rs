@@ -742,6 +742,47 @@ async fn apply_import(
     .await
 }
 
+// ---- CSV migration (roadmap Step 6b) -----------------------------------------
+
+impl From<vault::importer::ImportError> for CmdError {
+    fn from(e: vault::importer::ImportError) -> Self {
+        Self::new("CSV_IMPORT", e.to_string())
+    }
+}
+
+#[tauri::command]
+async fn preview_csv(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<vault::importer::CsvSummary, CmdError> {
+    blocking(move || {
+        let bytes = vault::importer::read_csv(Path::new(&path))?;
+        // Preview runs on a copy: nothing is changed or saved.
+        read(&app, |d| {
+            Ok(vault::importer::import(&mut d.clone(), &bytes, false)?)
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn import_csv(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<vault::importer::CsvSummary, CmdError> {
+    blocking(move || {
+        let bytes = vault::importer::read_csv(Path::new(&path))?;
+        write(&app, |d| Ok(vault::importer::import(d, &bytes, true)?))
+    })
+    .await
+}
+
+/// Best-effort overwrite + delete of the plaintext CSV after import (#17).
+#[tauri::command]
+async fn shred_csv(path: String) -> Result<(), CmdError> {
+    blocking(move || Ok(vault::importer::shred_csv(Path::new(&path))?)).await
+}
+
 #[derive(Debug, Serialize)]
 struct GeneratedPassword {
     password: String,
@@ -816,7 +857,10 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             export_backup,
             inspect_backup,
             preview_import,
-            apply_import
+            apply_import,
+            preview_csv,
+            import_csv,
+            shred_csv
         ])
 }
 

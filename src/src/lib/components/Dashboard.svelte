@@ -181,7 +181,7 @@
         aria-current={mode.kind === "backup" ? "page" : undefined}
         class={["flex h-8 items-center gap-2 rounded-md px-2 text-sm hover:bg-hairline/60", mode.kind === "backup" ? "bg-hairline text-zinc-100" : "text-zinc-300"]}
       >
-        <DatabaseBackup class="size-4" aria-hidden="true" /> Backup &amp; restore
+        <DatabaseBackup class="size-4" aria-hidden="true" /> Backup &amp; import
       </button>
     </div>
 

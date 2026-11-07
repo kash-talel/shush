@@ -12,6 +12,7 @@
 
 pub mod backup;
 pub mod container;
+pub mod importer;
 pub mod items;
 pub mod models;
 pub mod state;
