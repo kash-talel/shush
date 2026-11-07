@@ -24,7 +24,7 @@ install command, and continue with the closest equivalent approach.
 ## Testing the desktop app
 
 Drive the UI over the Chrome DevTools Protocol, never with mouse/keyboard input (the user may be
-working on the same machine):
+working on the same machine). See `docs/testing/README.md` for the per-phase scripts and harness:
 
 - Launch with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1"`.
 - Point the debug build at a scratch vault with `SHUSH_VAULT_PATH=<scratch>\vault.shush`. Never use

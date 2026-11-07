@@ -1,9 +1,9 @@
 # shush roadmap & phase status
 
 Source of truth for "what phase are we in". Steps follow the master spec §12.
-A phase is **complete** only when: Rust tests + `clippy -D warnings` + `svelte-check` +
-frontend build pass, the CDP end-to-end script for the phase passes against the real app,
-and its PR is merged into `main`.
+A phase is **complete** only when Rust tests, `clippy -D warnings`, `svelte-check` and the
+frontend build pass (all enforced by CI), the CDP end-to-end script for the phase passes against
+the real app (see [`testing/`](testing/README.md)), and its PR is merged into `main`.
 
 | Step | Scope | Status | PR |
 |-----:|-------|--------|----|
@@ -12,9 +12,9 @@ and its PR is merged into `main`.
 | 3 | Vault container, binary format, atomic writer, create / unlock / lock | ✅ complete | #29 |
 | 4 | Dashboard: item CRUD, TOTP + ring, generator, safe clipboard | ✅ complete | #31 |
 | 5a | Desktop: auto-lock (session/suspend/display/idle), capture protection, tray, single-instance | ✅ complete | #32 |
-| 5b | Desktop: Spotlight overlay + `Ctrl+Alt+Space`, window-context pre-selection (auto-type moves to 7b) | ✅ implemented & verified (awaiting merge) | #38 |
+| 5b | Desktop: Spotlight overlay + `Ctrl+Alt+Space`, window-context pre-selection (auto-type moves to 7b) | ✅ complete | #38 |
 | 4b | Folders: create / rename / delete, assign items, sidebar filter | ✅ complete | #37 |
-| 4c | Attachments as AEAD-sealed sidecar files (#5) | ✅ implemented & verified (awaiting merge) | #39 |
+| 4c | Attachments as AEAD-sealed sidecar files (#5) | ✅ complete | #39 |
 | 6a | Encrypted `.shushbackup` export (vault or separate credentials), import preview, merge / clean restore | ✅ complete | #34 |
 | 6b | CSV migration (Bitwarden / 1Password / KeePass / Chrome / Firefox) with conflict handling | ✅ complete | #35 |
 | 7a | First-run onboarding: browser detection (folder existence only) + guided CSV import (#17) | ✅ complete | #36 |
