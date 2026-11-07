@@ -3,9 +3,9 @@
 //! Pipeline:
 //!
 //! ```text
-//! password ─┐
-//!           ├─ composite ─ Argon2id(salt, params) ─ MasterKey ─ HKDF-SHA256 ─┬─ VEK         (payload AEAD)
-//! keyfile ──┘  (SHA-256)                                                      └─ canary key  (credential check)
+//! NFC(password) ── P ┐
+//! SHA-256(keyfile) ─ K ┼─ Argon2id(params) ─ MasterKey ─ HKDF-SHA256 ─┬─ VEK         (payload AEAD)
+//! vault salt ─────── S ┘                                               └─ canary key  (credential check)
 //! ```
 //!
 //! Design invariants enforced here:

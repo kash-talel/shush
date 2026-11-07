@@ -1,15 +1,18 @@
 <script lang="ts">
-  import type { AppInfo } from "../tauri-bridge";
+  import { formatKdf, type AppInfo, type CipherInfo, type KdfParams } from "../tauri-bridge";
 
-  // Tactical footer status bar (spec §7.1). Only shows facts the backend
-  // actually reports; clipboard/TPM segments arrive with their features.
-  let { info, locked = true }: { info: AppInfo | null; locked?: boolean } = $props();
+  // Tactical footer status bar (spec §7.1). Shows the *vault's* cipher/KDF
+  // when one exists, otherwise the defaults for a new vault. Clipboard / TPM
+  // segments arrive with their features.
+  let {
+    info,
+    locked = true,
+    cipher = null,
+    kdf = null,
+  }: { info: AppInfo | null; locked?: boolean; cipher?: CipherInfo | null; kdf?: KdfParams | null } = $props();
 
-  const kdf = $derived(
-    info
-      ? `ARGON2ID ${Math.round(info.default_kdf.mem_kib / 1024)}M/t${info.default_kdf.iterations}/p${info.default_kdf.parallelism}`
-      : "…",
-  );
+  const cipherName = $derived(cipher?.name ?? info?.default_cipher.name ?? "…");
+  const kdfLabel = $derived(kdf ? formatKdf(kdf) : info ? formatKdf(info.default_kdf) : "…");
 </script>
 
 <footer
@@ -20,8 +23,8 @@
     [VAULT: <span class={locked ? "text-danger" : "text-tactical"}>{locked ? "LOCKED" : "UNLOCKED"}</span>]
   </span>
   <span aria-hidden="true" class="text-hairline">│</span>
-  <span>[CIPHER: <span class="text-cold">{info?.default_cipher.name ?? "…"}</span>]</span>
+  <span>[CIPHER: <span class="text-cold">{cipherName}</span>]</span>
   <span aria-hidden="true" class="text-hairline max-sm:hidden">│</span>
-  <span class="max-sm:hidden">[KDF: <span class="text-cold">{kdf}</span>]</span>
+  <span class="max-sm:hidden">[KDF: <span class="text-cold">{kdfLabel}</span>]</span>
   <span class="ml-auto text-zinc-600">v{info?.version ?? "?"}</span>
 </footer>

@@ -1,11 +1,23 @@
-//! Argon2id key derivation and composite-secret construction (spec §3.1).
+//! Argon2id key derivation (spec §3.1, as amended by issue #3).
+//!
+//! Inputs to Argon2id (RFC 9106 §3.1):
+//! - `P` (password): `UTF-8(NFC(master password))`
+//! - `S` (salt):     32-byte per-vault random salt
+//! - `K` (secret):   `SHA-256(keyfile)` when a keyfile is used, else empty
+//!
+//! Feeding the keyfile digest through Argon2's dedicated secret input gives
+//! unambiguous domain separation (no `password || digest` concatenation), and
+//! NFC normalization means the same visible password always yields the same
+//! bytes regardless of keyboard layout / IME.
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use serde::{Deserialize, Serialize};
+use unicode_normalization::UnicodeNormalization;
 
 use super::keyfile::KeyfileDigest;
-use super::zeroize_guard::{SecretBytes, SecretKey, KEY_LEN};
+use super::zeroize_guard::{SecretKey, KEY_LEN};
 use super::{fill_random, CryptoError};
+use zeroize::Zeroizing;
 
 /// Length of the per-vault Argon2 salt in bytes.
 pub const SALT_LEN: usize = 32;
@@ -80,7 +92,7 @@ impl KdfParams {
             && self.iterations >= Self::POLICY_MIN_ITERATIONS
     }
 
-    fn to_argon2(self) -> Result<Argon2<'static>, CryptoError> {
+    fn to_argon2(self, secret: &[u8]) -> Result<Argon2<'_>, CryptoError> {
         self.validate()?;
         let params = Params::new(
             self.mem_kib,
@@ -89,7 +101,11 @@ impl KdfParams {
             Some(KEY_LEN),
         )
         .map_err(|_| CryptoError::InvalidKdfParams("rejected by argon2"))?;
-        Ok(Argon2::new(Algorithm::Argon2id, Version::V0x13, params))
+        if secret.is_empty() {
+            return Ok(Argon2::new(Algorithm::Argon2id, Version::V0x13, params));
+        }
+        Argon2::new_with_secret(secret, Algorithm::Argon2id, Version::V0x13, params)
+            .map_err(|_| CryptoError::KeyDerivation)
     }
 }
 
@@ -106,34 +122,22 @@ pub fn generate_salt() -> Result<[u8; SALT_LEN], CryptoError> {
     Ok(salt)
 }
 
-/// Builds the KDF input exactly as spec §3.1 defines it:
+/// Normalizes a master password to Unicode NFC and returns its UTF-8 bytes
+/// in a wiped buffer.
 ///
-/// - without keyfile: `UTF-8(password)`
-/// - with keyfile:    `UTF-8(password) || SHA-256(keyfile)`
-///
-/// Issue #3 tracks replacing this with a domain-separated construction plus
-/// NFC normalization; keeping it in one function makes that a local change.
-pub fn composite_secret(
-    password: &[u8],
-    keyfile: Option<&KeyfileDigest>,
-) -> Result<SecretBytes, CryptoError> {
-    if core::str::from_utf8(password).is_err() {
-        return Err(CryptoError::InvalidPasswordEncoding);
-    }
-    if password.is_empty() && keyfile.is_none() {
-        return Err(CryptoError::EmptyCredentials);
-    }
-    // Exact capacity: no reallocation, so no unwiped stale copy.
-    let extra = keyfile.map_or(0, |_| KEY_LEN);
-    let mut out = SecretBytes::new(Vec::with_capacity(password.len() + extra));
-    out.extend_from_slice(password);
-    if let Some(kf) = keyfile {
-        out.extend_from_slice(kf.expose());
-    }
+/// The output buffer is pre-sized (NFC never expands by more than 3x), so it
+/// is not reallocated and no unwiped copy is left behind.
+pub fn normalize_password(password: &[u8]) -> Result<Zeroizing<String>, CryptoError> {
+    let text = core::str::from_utf8(password).map_err(|_| CryptoError::InvalidPasswordEncoding)?;
+    let mut out = Zeroizing::new(String::with_capacity(text.len() * 3));
+    out.extend(text.nfc());
     Ok(out)
 }
 
 /// Derives the 256-bit master key with Argon2id (RFC 9106, v1.3).
+///
+/// `password` must be UTF-8; it is NFC-normalized here. A keyfile-only vault
+/// (empty password + keyfile) is allowed; no credentials at all is not.
 ///
 /// This is CPU- and memory-heavy (~100 ms to seconds). Call it from a blocking
 /// thread (`tauri::async_runtime::spawn_blocking`), never from the UI or async
@@ -144,11 +148,17 @@ pub fn derive_master_key(
     salt: &[u8; SALT_LEN],
     params: &KdfParams,
 ) -> Result<SecretKey, CryptoError> {
-    let argon2 = params.to_argon2()?;
-    let composite = composite_secret(password, keyfile)?;
+    // Validate (cheap, bounds-only) before touching anything else.
+    params.validate()?;
+    let password = normalize_password(password)?;
+    if password.is_empty() && keyfile.is_none() {
+        return Err(CryptoError::EmptyCredentials);
+    }
+    let secret: &[u8] = keyfile.map_or(&[], |kf| kf.expose().as_slice());
+    let argon2 = params.to_argon2(secret)?;
     let mut key = SecretKey::zeroed();
     argon2
-        .hash_password_into(&composite, salt, key.as_mut_bytes())
+        .hash_password_into(password.as_bytes(), salt, key.as_mut_bytes())
         .map_err(|_| CryptoError::KeyDerivation)?;
     Ok(key)
 }
@@ -290,31 +300,44 @@ mod tests {
     }
 
     #[test]
-    fn composite_layout_matches_spec() {
-        let kf = keyfile::digest_bytes(b"kf").unwrap();
-        assert_eq!(&**composite_secret(b"pw", None).unwrap(), b"pw");
+    fn nfc_equivalent_passwords_derive_the_same_key() {
+        // "café" with precomposed é (U+00E9) vs e + combining acute (U+0301).
+        let composed = "caf\u{e9}";
+        let decomposed = "cafe\u{301}";
+        assert_ne!(composed.as_bytes(), decomposed.as_bytes());
+        assert_eq!(
+            derive(composed, None, &SALT),
+            derive(decomposed, None, &SALT)
+        );
+        assert_eq!(
+            &**normalize_password(decomposed.as_bytes()).unwrap(),
+            composed
+        );
+    }
 
-        let c = composite_secret(b"pw", Some(&kf)).unwrap();
-        assert_eq!(c.len(), 2 + KEY_LEN);
-        assert_eq!(&c[..2], b"pw");
-        assert_eq!(&c[2..], kf.expose());
+    #[test]
+    fn keyfile_changes_the_key_through_the_secret_input() {
+        let kf = keyfile::digest_bytes(b"kf").unwrap();
+        let without = derive_master_key(b"pw", None, &SALT, &FAST).unwrap();
+        let with = derive_master_key(b"pw", Some(&kf), &SALT, &FAST).unwrap();
+        assert_ne!(without.expose(), with.expose());
     }
 
     #[test]
     fn credential_validation() {
         let kf = keyfile::digest_bytes(b"kf").unwrap();
         assert_eq!(
-            composite_secret(b"", None).unwrap_err(),
+            derive_master_key(b"", None, &SALT, &FAST).unwrap_err(),
             CryptoError::EmptyCredentials
         );
         // Keyfile-only vaults are allowed.
-        assert_eq!(composite_secret(b"", Some(&kf)).unwrap().len(), KEY_LEN);
+        assert!(derive_master_key(b"", Some(&kf), &SALT, &FAST).is_ok());
         assert_eq!(
-            composite_secret(&[0xff, 0xfe], None).unwrap_err(),
+            derive_master_key(&[0xff, 0xfe], None, &SALT, &FAST).unwrap_err(),
             CryptoError::InvalidPasswordEncoding
         );
         // Non-ASCII UTF-8 is fine.
-        assert!(composite_secret("pässwörd🔑".as_bytes(), None).is_ok());
+        assert!(derive_master_key("pässwörd🔑".as_bytes(), None, &SALT, &FAST).is_ok());
     }
 
     #[test]
@@ -324,8 +347,10 @@ mod tests {
 
     /// Known-answer test with the production Argon2id configuration.
     ///
-    /// The expected value was cross-checked against an independent Argon2
-    /// implementation (hash-wasm, the reference C code compiled to WASM).
+    /// Inputs: P = NFC("shush-kat-pässword"), K = SHA-256("shush-kat-keyfile").
+    /// The password is passed *decomposed* (a + U+0308) so this also proves NFC
+    /// normalization. The expected value was computed independently with
+    /// hash-wasm (the reference Argon2 C code compiled to WASM).
     /// If this test fails, existing vaults would no longer open.
     #[test]
     fn argon2id_known_answer() {
@@ -336,10 +361,16 @@ mod tests {
         };
         let salt: [u8; SALT_LEN] = core::array::from_fn(|i| i as u8);
         let kf = keyfile::digest_bytes(b"shush-kat-keyfile").unwrap();
-        let key = derive_master_key(b"shush-kat-password", Some(&kf), &salt, &params).unwrap();
+        let key = derive_master_key(
+            "shush-kat-pa\u{308}ssword".as_bytes(),
+            Some(&kf),
+            &salt,
+            &params,
+        )
+        .unwrap();
         assert_eq!(hex::encode(key.expose()), KAT_ARGON2ID);
     }
-    const KAT_ARGON2ID: &str = "53cc979c950e90ac91fb89704eb1c5e9e1144d8b41acd46733132ac272fbbdd6";
+    const KAT_ARGON2ID: &str = "0360e61af742f41fa2cd3948086d6ae6fcf4b5495c97a1a4a30ca95e526d0cb8";
 
     /// Production preset under real cost. Slower (~0.3–1 s with optimised argon2).
     #[test]

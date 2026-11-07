@@ -41,6 +41,7 @@ windows-sys = { version = "0.52", features = [
 # --- Additions ---
 thiserror = "2"
 tauri-plugin-dialog = "2"
+unicode-normalization = "0.1"
 
 [dev-dependencies]
 hex = "0.4"
