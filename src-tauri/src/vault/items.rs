@@ -231,7 +231,8 @@ fn validate(kind: ItemKind, d: &ItemDraft) -> Result<(), ItemError> {
     Ok(())
 }
 
-fn host_of(url: &str) -> String {
+/// Lower-cased host of a URL, without `www.`, port or credentials.
+pub(crate) fn host_of(url: &str) -> String {
     let rest = url.split_once("://").map_or(url, |(_, r)| r);
     let host = rest.split(['/', '?', '#']).next().unwrap_or("");
     let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
