@@ -10,6 +10,7 @@
 //! the size recorded in the zstd frame, which must be ≤ [`MAX_DECOMPRESSED`]
 //! (issue #5).
 
+pub mod backup;
 pub mod container;
 pub mod items;
 pub mod models;
@@ -158,13 +159,13 @@ impl OpenVault {
         let keys = VaultKeys::derive(&master);
         sealed.verify_canary(&keys)?;
         let plaintext = sealed.open_payload(&keys)?;
-        let data = decode_payload(&plaintext)?;
+        let data: VaultData = decode_json(&plaintext)?;
         Ok(Self { header, keys, data })
     }
 
     /// Serializes and seals the vault into a complete file image.
     pub fn to_bytes(&self) -> Result<Vec<u8>, VaultError> {
-        let plaintext = encode_payload(&self.data)?;
+        let plaintext = encode_json(&self.data)?;
         container::seal(&self.header, &self.keys, &plaintext)
     }
 
@@ -175,7 +176,7 @@ impl OpenVault {
         container::write_atomic(path, &bytes, |written| {
             let sealed = container::parse(written)?;
             sealed.verify_canary(&self.keys)?;
-            let data = decode_payload(&sealed.open_payload(&self.keys)?)?;
+            let data: VaultData = decode_json(&sealed.open_payload(&self.keys)?)?;
             if data == self.data {
                 Ok(())
             } else {
@@ -199,6 +200,11 @@ impl OpenVault {
             return Err(e.into());
         }
         Ok(result)
+    }
+
+    /// Derived keys (crate-internal: used to seal backups with the vault's credentials).
+    pub(crate) fn keys(&self) -> &VaultKeys {
+        &self.keys
     }
 
     /// Authenticated header fields.
@@ -265,7 +271,8 @@ pub fn padme(len: usize) -> usize {
     (len + mask) & !mask
 }
 
-fn encode_payload(data: &VaultData) -> Result<SecretBytes, VaultError> {
+/// JSON → zstd → length-prefixed, PADMÉ-padded plaintext (shared by vault and backup).
+pub(crate) fn encode_json<T: serde::Serialize>(data: &T) -> Result<SecretBytes, VaultError> {
     // Limitation (issue #6): serde_json grows its Vec while writing, which can
     // leave unwiped fragments in freed memory.
     let json = Zeroizing::new(
@@ -284,7 +291,10 @@ fn encode_payload(data: &VaultData) -> Result<SecretBytes, VaultError> {
     Ok(out)
 }
 
-fn decode_payload(plaintext: &[u8]) -> Result<VaultData, VaultError> {
+/// Inverse of [`encode_json`], with the decompression-bomb guard.
+pub(crate) fn decode_json<T: serde::de::DeserializeOwned>(
+    plaintext: &[u8],
+) -> Result<T, VaultError> {
     let header: [u8; 4] = plaintext
         .get(..4)
         .and_then(|b| b.try_into().ok())
@@ -490,17 +500,20 @@ mod tests {
         frame.extend_from_slice(&(MAX_DECOMPRESSED + 1).to_le_bytes());
         let mut plaintext = (frame.len() as u32).to_le_bytes().to_vec();
         plaintext.extend_from_slice(&frame);
-        assert_eq!(decode_payload(&plaintext).err(), Some(VaultError::TooLarge));
+        assert_eq!(
+            decode_json::<VaultData>(&plaintext).err(),
+            Some(VaultError::TooLarge)
+        );
     }
 
     #[test]
     fn decode_rejects_garbage() {
         assert_eq!(
-            decode_payload(b"").err(),
+            decode_json::<VaultData>(b"").err(),
             Some(VaultError::CorruptPayload("missing length prefix"))
         );
         assert_eq!(
-            decode_payload(&[255, 255, 0, 0, 1]).err(),
+            decode_json::<VaultData>(&[255, 255, 0, 0, 1]).err(),
             Some(VaultError::CorruptPayload("length prefix out of range"))
         );
     }
@@ -510,7 +523,7 @@ mod tests {
         let v = OpenVault::create(b"pw", None, FAST).unwrap();
         let mut h = v.header().clone();
         h.kind = FileKind::Backup;
-        let bytes = container::seal(&h, &v.keys, &encode_payload(v.data()).unwrap()).unwrap();
+        let bytes = container::seal(&h, &v.keys, &encode_json(v.data()).unwrap()).unwrap();
         assert_eq!(
             OpenVault::unlock(&bytes, b"pw", None).err(),
             Some(VaultError::WrongKind(FileKind::Backup))

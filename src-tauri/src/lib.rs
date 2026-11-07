@@ -617,6 +617,131 @@ fn totp_code(app: tauri::AppHandle, id: String) -> Result<totp::TotpCode, CmdErr
     })
 }
 
+// ---- Backup / import (roadmap Step 6) ----------------------------------------
+
+/// Credentials for a new backup, as chosen in the UI.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+enum BackupCredentialChoice {
+    /// Same password / keyfile as the vault.
+    SameAsVault,
+    /// Dedicated password and optional keyfile (fresh salt).
+    Dedicated {
+        password: vault::items::SecretInput,
+        keyfile_path: Option<String>,
+    },
+}
+
+#[tauri::command]
+async fn export_backup(
+    app: tauri::AppHandle,
+    path: String,
+    credentials: BackupCredentialChoice,
+) -> Result<usize, CmdError> {
+    use vault::backup::{export_to, BackupCredentials};
+    blocking(move || {
+        let path = PathBuf::from(path);
+        if path.extension().and_then(|e| e.to_str()) != Some(vault::backup::EXTENSION) {
+            return Err(CmdError::new("INVALID_INPUT", "Backups must use the .shushbackup extension."));
+        }
+        let state = app.state::<VaultState>();
+        let result = state.with(|u| {
+            if path == u.path {
+                return Err(CmdError::new("INVALID_INPUT", "Choose a different file than the vault itself."));
+            }
+            match &credentials {
+                BackupCredentialChoice::SameAsVault => Ok(export_to(&path, &u.vault, BackupCredentials::SameAsVault)?),
+                BackupCredentialChoice::Dedicated { password, keyfile_path } => {
+                    let normalized = crypto::kdf::normalize_password(password.as_str().as_bytes()).map_err(VaultError::from)?;
+                    if normalized.chars().count() < MIN_PASSWORD_CHARS {
+                        return Err(CmdError::new(
+                            "WEAK_PASSWORD",
+                            format!("Use a backup password of at least {MIN_PASSWORD_CHARS} characters."),
+                        ));
+                    }
+                    let digest = keyfile_path
+                        .as_deref()
+                        .map(|p| crypto::keyfile::digest_file(Path::new(p)).map_err(keyfile_error))
+                        .transpose()?;
+                    let creds = BackupCredentials::Dedicated {
+                        password: password.as_str().as_bytes(),
+                        keyfile: digest.as_ref(),
+                        suite: u.vault.header().suite,
+                        kdf: u.vault.header().kdf,
+                    };
+                    Ok(export_to(&path, &u.vault, creds)?)
+                }
+            }
+        });
+        result.unwrap_or_else(|| Err(locked()))
+    })
+    .await
+}
+
+/// Non-secret facts about a backup file, read from its header.
+#[derive(Debug, Serialize)]
+struct BackupInfo {
+    keyfile_required: bool,
+    cipher: CipherInfo,
+}
+
+#[tauri::command]
+async fn inspect_backup(path: String) -> Result<BackupInfo, CmdError> {
+    blocking(move || {
+        let h = vault::backup::read_backup_header(Path::new(&path))?;
+        Ok(BackupInfo {
+            keyfile_required: h.keyfile_required,
+            cipher: cipher_info(h.suite),
+        })
+    })
+    .await
+}
+
+fn open_backup(
+    path: &str,
+    password: &str,
+    keyfile_path: Option<&str>,
+) -> Result<vault::backup::Manifest, CmdError> {
+    let digest = keyfile_path
+        .map(|p| crypto::keyfile::digest_file(Path::new(p)).map_err(keyfile_error))
+        .transpose()?;
+    Ok(vault::backup::open_file(
+        Path::new(path),
+        password.as_bytes(),
+        digest.as_ref(),
+    )?)
+}
+
+#[tauri::command]
+async fn preview_import(
+    app: tauri::AppHandle,
+    path: String,
+    password: vault::items::SecretInput,
+    keyfile_path: Option<String>,
+) -> Result<vault::backup::ImportPreview, CmdError> {
+    blocking(move || {
+        let manifest = open_backup(&path, password.as_str(), keyfile_path.as_deref())?;
+        read(&app, |d| Ok(vault::backup::preview(d, &manifest)))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn apply_import(
+    app: tauri::AppHandle,
+    path: String,
+    password: vault::items::SecretInput,
+    keyfile_path: Option<String>,
+    mode: vault::backup::ImportMode,
+) -> Result<usize, CmdError> {
+    blocking(move || {
+        // Decrypt (slow KDF) before taking the vault lock.
+        let manifest = open_backup(&path, password.as_str(), keyfile_path.as_deref())?;
+        write(&app, |d| Ok(vault::backup::apply(d, &manifest, mode)))
+    })
+    .await
+}
+
 #[derive(Debug, Serialize)]
 struct GeneratedPassword {
     password: String,
@@ -687,7 +812,11 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             copy_field,
             reveal_password,
             totp_code,
-            generate_password
+            generate_password,
+            export_backup,
+            inspect_backup,
+            preview_import,
+            apply_import
         ])
 }
 
