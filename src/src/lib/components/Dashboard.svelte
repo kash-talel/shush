@@ -5,16 +5,19 @@
   import ItemDetailView from "./ItemDetail.svelte";
   import ItemEditor from "./ItemEditor.svelte";
   import BackupPanel from "./BackupPanel.svelte";
+  import FolderList from "./FolderList.svelte";
   import {
     copyField,
     createItem,
     deleteItem,
     getItem,
+    listFolders,
     listItems,
     setFavorite,
     toCmdError,
     updateItem,
     type CmdError,
+    type FolderInfo,
     type ItemDetail,
     type ItemDraft,
     type ItemKind,
@@ -31,6 +34,8 @@
   let items = $state.raw<ItemSummary[]>([]);
   let detail = $state.raw<ItemDetail | null>(null);
   let filter = $state<Filter>("all");
+  let folderFilter = $state<string | null>(null);
+  let folders = $state.raw<FolderInfo[]>([]);
   let query = $state("");
   let mode = $state<Mode>({ kind: "view" });
   let error = $state<CmdError | null>(null);
@@ -39,6 +44,7 @@
   const visible = $derived.by(() => {
     const q = query.trim().toLowerCase();
     return items.filter((i) => {
+      if (folderFilter !== null && i.folder_id !== folderFilter) return false;
       if (filter === "favorites" && !i.favorite) return false;
       if ((filter === "login" || filter === "secure_note") && i.kind !== filter) return false;
       if (!q) return true;
@@ -65,7 +71,16 @@
 
   async function refresh() {
     items = (await run(listItems)) ?? items;
+    folders = (await run(listFolders)) ?? folders;
+    if (detail) {
+      // Keep the open item in sync (e.g. its folder was deleted).
+      const id = detail.id;
+      const d = await run(() => getItem(id));
+      if (d) detail = d;
+    }
   }
+
+  const folderName = (id: string | null) => folders.find((f) => f.id === id)?.name ?? null;
 
   async function select(id: string) {
     mode = { kind: "view" };
@@ -146,11 +161,14 @@
     {#each filters as f (f.id)}
       <button
         type="button"
-        onclick={() => (filter = f.id)}
-        aria-current={filter === f.id ? "page" : undefined}
+        onclick={() => {
+          filter = f.id;
+          folderFilter = null;
+        }}
+        aria-current={filter === f.id && folderFilter === null ? "page" : undefined}
         class={[
           "flex h-8 items-center gap-2 rounded-md px-2 text-sm transition",
-          filter === f.id ? "bg-hairline text-zinc-100" : "text-zinc-400 hover:bg-hairline/60 hover:text-zinc-200",
+          filter === f.id && folderFilter === null ? "bg-hairline text-zinc-100" : "text-zinc-400 hover:bg-hairline/60 hover:text-zinc-200",
         ]}
       >
         <f.icon class="size-4" aria-hidden="true" />
@@ -158,6 +176,19 @@
         <span class="font-mono text-[11px] text-zinc-500">{counts[f.id]}</span>
       </button>
     {/each}
+
+    <FolderList
+      {folders}
+      activeId={folderFilter}
+      onselect={(id) => {
+        filter = "all";
+        folderFilter = id;
+      }}
+      onchanged={(removedId) => {
+        if (removedId && folderFilter === removedId) folderFilter = null;
+        void refresh();
+      }}
+    />
 
     <div class="mt-4 flex flex-col gap-1 border-t border-hairline pt-3">
       <button
@@ -207,12 +238,13 @@
     {#if mode.kind === "backup"}
       <BackupPanel onimported={refresh} />
     {:else if mode.kind === "create"}
-      <ItemEditor kind={mode.itemKind} onsave={save} oncancel={() => (mode = { kind: "view" })} />
+      <ItemEditor kind={mode.itemKind} {folders} defaultFolderId={folderFilter} onsave={save} oncancel={() => (mode = { kind: "view" })} />
     {:else if mode.kind === "edit" && detail}
-      <ItemEditor kind={detail.kind} existing={detail} onsave={save} oncancel={() => (mode = { kind: "view" })} />
+      <ItemEditor kind={detail.kind} existing={detail} {folders} onsave={save} oncancel={() => (mode = { kind: "view" })} />
     {:else if detail}
       <ItemDetailView
         item={detail}
+        folderName={folderName(detail.folder_id)}
         oncopy={copy}
         onedit={() => (mode = { kind: "edit" })}
         ondelete={remove}

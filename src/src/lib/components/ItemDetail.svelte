@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Copy, Eye, EyeOff, History, Pencil, Star, Trash2 } from "@lucide/svelte";
+  import { Copy, Eye, EyeOff, Folder, History, Pencil, Star, Trash2 } from "@lucide/svelte";
   import TotpBadge from "./TotpBadge.svelte";
   import { revealPassword, toCmdError, type ItemDetail, type SecretField } from "../tauri-bridge";
 
@@ -7,12 +7,14 @@
   // explicit reveal, live TOTP, edit / delete / favorite.
   let {
     item,
+    folderName = null,
     oncopy,
     onedit,
     ondelete,
     onfavorite,
   }: {
     item: ItemDetail;
+    folderName?: string | null;
     oncopy: (field: SecretField) => void;
     onedit: () => void;
     ondelete: () => void;
@@ -69,7 +71,14 @@
 
 <article class="flex min-h-0 min-w-0 flex-1 flex-col">
   <header class="flex h-12 shrink-0 items-center gap-2 border-b border-hairline px-4">
-    <h2 class="min-w-0 flex-1 truncate text-sm font-medium text-zinc-100">{item.title}</h2>
+    <h2 class="min-w-0 truncate text-sm font-medium text-zinc-100">{item.title}</h2>
+    <span class="min-w-0 flex-1">
+      {#if folderName}
+        <span class="inline-flex max-w-full items-center gap-1 rounded border border-hairline px-1.5 py-0.5 text-[11px] text-zinc-400" aria-label="Folder">
+          <Folder class="size-3 shrink-0" aria-hidden="true" /> <span class="truncate">{folderName}</span>
+        </span>
+      {/if}
+    </span>
     <button
       type="button"
       onclick={onfavorite}

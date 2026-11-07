@@ -3,18 +3,22 @@
   import { LoaderCircle, Sparkles, TriangleAlert } from "@lucide/svelte";
   import PasswordField from "./PasswordField.svelte";
   import PasswordGenerator from "./PasswordGenerator.svelte";
-  import { toCmdError, type CmdError, type ItemDetail, type ItemDraft, type ItemKind } from "../tauri-bridge";
+  import { toCmdError, type CmdError, type FolderInfo, type ItemDetail, type ItemDraft, type ItemKind } from "../tauri-bridge";
 
   // Create / edit form. Secrets follow "keep unless changed": when editing,
   // the existing password and TOTP secret are never loaded into the UI.
   let {
     kind,
     existing = null,
+    folders = [],
+    defaultFolderId = null,
     onsave,
     oncancel,
   }: {
     kind: ItemKind;
     existing?: ItemDetail | null;
+    folders?: FolderInfo[];
+    defaultFolderId?: string | null;
     onsave: (draft: ItemDraft) => Promise<void>;
     oncancel: () => void;
   } = $props();
@@ -29,6 +33,8 @@
   let content = $state(initial?.content ?? "");
   let tags = $state(initial?.tags.join(", ") ?? "");
   let favorite = $state(initial?.favorite ?? false);
+  // svelte-ignore state_referenced_locally
+  let folderId = $state<string | null>(initial ? initial.folder_id : defaultFolderId);
 
   let password = $state("");
   let passwordTouched = $state(initial === null);
@@ -57,6 +63,7 @@
         content,
         favorite,
         tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+        folder_id: folderId,
         password: isLogin && passwordTouched ? password : null,
         totp: isLogin && totpTouched ? totp : null,
       });
@@ -223,6 +230,19 @@
           spellcheck="false"
           class="h-10 w-full rounded-lg border border-hairline bg-surface px-3 font-mono text-sm text-cold outline-none focus:border-tactical/60"
         />
+      </div>
+      <div>
+        {@render label("f-folder", "Folder")}
+        <select
+          id="f-folder"
+          bind:value={folderId}
+          class="h-10 rounded-lg border border-hairline bg-surface px-2 text-sm text-zinc-100 outline-none focus:border-tactical/60"
+        >
+          <option value={null}>No folder</option>
+          {#each folders as f (f.id)}
+            <option value={f.id}>{f.name}</option>
+          {/each}
+        </select>
       </div>
       <label class="flex h-10 items-center gap-2 text-xs text-zinc-400">
         <input type="checkbox" bind:checked={favorite} class="accent-emerald-500" /> Favorite
