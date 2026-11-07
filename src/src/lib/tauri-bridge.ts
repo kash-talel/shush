@@ -137,6 +137,7 @@ export interface ItemSummary {
   subtitle: string;
   host: string;
   favorite: boolean;
+  folder_id: string | null;
   has_totp: boolean;
   updated_at: string;
 }
@@ -151,6 +152,7 @@ export interface ItemDetail {
   notes: string;
   content: string;
   tags: string[];
+  folder_id: string | null;
   favorite: boolean;
   has_password: boolean;
   has_totp: boolean;
@@ -170,6 +172,7 @@ export interface ItemDraft {
   content: string;
   favorite: boolean;
   tags: string[];
+  folder_id: string | null;
 }
 
 export interface TotpCode {
@@ -269,3 +272,17 @@ export interface Browser {
 
 /** Browsers whose profile folder exists. Their password stores are never read. */
 export const detectBrowsers = () => invoke<Browser[]>("detect_browsers");
+
+// ---- Folders (Phase 4b) ---------------------------------------------------------
+
+export interface FolderInfo {
+  id: string;
+  name: string;
+  item_count: number;
+}
+
+export const listFolders = () => invoke<FolderInfo[]>("list_folders");
+export const createFolder = (name: string) => invoke<string>("create_folder", { name });
+export const renameFolder = (id: string, name: string) => invoke<void>("rename_folder", { id, name });
+/** Items in the folder are kept (moved to "no folder"); resolves to how many moved. */
+export const deleteFolder = (id: string) => invoke<number>("delete_folder", { id });

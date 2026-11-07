@@ -348,6 +348,7 @@ pub fn import(data: &mut VaultData, bytes: &[u8], apply: bool) -> Result<CsvSumm
             },
             favorite: row.favorite,
             tags: row.tags.clone(),
+            folder_id: None, // CSV folders are carried over as tags
         };
         if apply {
             match data.create_item(row.kind, &draft) {

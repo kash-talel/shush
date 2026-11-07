@@ -742,6 +742,49 @@ async fn apply_import(
     .await
 }
 
+// ---- Folders (roadmap Step 4b) -----------------------------------------------
+
+#[derive(Debug, Serialize)]
+struct FolderInfo {
+    id: String,
+    name: String,
+    item_count: usize,
+}
+
+#[tauri::command]
+fn list_folders(app: tauri::AppHandle) -> Result<Vec<FolderInfo>, CmdError> {
+    read(&app, |d| {
+        let summaries = d.summaries();
+        Ok(d.folders
+            .iter()
+            .map(|f| FolderInfo {
+                id: f.id.clone(),
+                name: f.name.clone(),
+                item_count: summaries
+                    .iter()
+                    .filter(|s| s.folder_id.as_deref() == Some(f.id.as_str()))
+                    .count(),
+            })
+            .collect())
+    })
+}
+
+#[tauri::command]
+async fn create_folder(app: tauri::AppHandle, name: String) -> Result<String, CmdError> {
+    blocking(move || write(&app, |d| Ok(d.create_folder(&name)?))).await
+}
+
+#[tauri::command]
+async fn rename_folder(app: tauri::AppHandle, id: String, name: String) -> Result<(), CmdError> {
+    blocking(move || write(&app, |d| Ok(d.rename_folder(&id, &name)?))).await
+}
+
+/// Deletes a folder; its items are kept. Returns how many were moved out.
+#[tauri::command]
+async fn delete_folder(app: tauri::AppHandle, id: String) -> Result<usize, CmdError> {
+    blocking(move || write(&app, |d| Ok(d.delete_folder(&id)?))).await
+}
+
 // ---- First-run onboarding (roadmap Step 7a) ----------------------------------
 
 /// Browsers installed for this user (profile folder exists; nothing is read).
@@ -869,7 +912,11 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             preview_csv,
             import_csv,
             shred_csv,
-            detect_browsers
+            detect_browsers,
+            list_folders,
+            create_folder,
+            rename_folder,
+            delete_folder
         ])
 }
 

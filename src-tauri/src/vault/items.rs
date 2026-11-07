@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::models::{
-    now_rfc3339, BaseItem, LoginItem, PasswordHistoryEntry, SecureNoteItem, VaultData, VaultItem,
+    now_rfc3339, BaseItem, Folder, LoginItem, PasswordHistoryEntry, SecureNoteItem, VaultData,
+    VaultItem,
 };
 use crate::crypto::fill_random;
 
@@ -18,6 +19,8 @@ const MAX_TITLE: usize = 256;
 const MAX_SHORT: usize = 4096;
 const MAX_LONG: usize = 1024 * 1024;
 const MAX_TAGS: usize = 32;
+const MAX_FOLDER_NAME: usize = 64;
+const MAX_FOLDERS: usize = 200;
 /// Newest entries kept per login (issue #19: history must be bounded).
 pub const MAX_HISTORY: usize = 50;
 
@@ -60,6 +63,9 @@ pub struct ItemDraft {
     /// Tags.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Folder id, or `None` for no folder.
+    #[serde(default)]
+    pub folder_id: Option<String>,
 }
 
 /// A secret string received from the UI, wiped when dropped.
@@ -125,6 +131,8 @@ pub struct ItemSummary {
     pub host: String,
     /// Favorite flag.
     pub favorite: bool,
+    /// Folder id, if any.
+    pub folder_id: Option<String>,
     /// Whether a TOTP secret is configured.
     pub has_totp: bool,
     /// Last modification time.
@@ -150,6 +158,8 @@ pub struct ItemDetail {
     pub content: String,
     /// Tags.
     pub tags: Vec<String>,
+    /// Folder id, if any.
+    pub folder_id: Option<String>,
     /// Favorite flag.
     pub favorite: bool,
     /// Whether a password is stored.
@@ -295,11 +305,12 @@ impl VaultData {
     /// Adds a new item and returns its id.
     pub fn create_item(&mut self, kind: ItemKind, d: &ItemDraft) -> Result<String, ItemError> {
         validate(kind, d)?;
+        self.check_folder(d.folder_id.as_deref())?;
         let now = now_rfc3339();
         let base = BaseItem {
             id: new_id(),
             title: d.title.trim().to_string(),
-            folder_id: None,
+            folder_id: d.folder_id.clone(),
             tags: clean_tags(&d.tags),
             favorite: d.favorite,
             notes: d.notes.clone(),
@@ -334,6 +345,7 @@ impl VaultData {
     pub fn update_item(&mut self, id: &str, d: &ItemDraft) -> Result<(), ItemError> {
         let k = kind(self.find(id)?);
         validate(k, d)?;
+        self.check_folder(d.folder_id.as_deref())?;
         let now = now_rfc3339();
         let item = self.find_mut(id)?;
         {
@@ -342,6 +354,7 @@ impl VaultData {
             b.tags = clean_tags(&d.tags);
             b.favorite = d.favorite;
             b.notes = d.notes.clone();
+            b.folder_id = d.folder_id.clone();
             b.updated_at = now.clone();
         }
         match item {
@@ -371,6 +384,86 @@ impl VaultData {
         }
         self.updated_at = now;
         Ok(())
+    }
+
+    fn check_folder(&self, id: Option<&str>) -> Result<(), ItemError> {
+        match id {
+            Some(id) if !self.folders.iter().any(|f| f.id == id) => {
+                Err(ItemError::Invalid("That folder no longer exists".into()))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn folder_name(&self, name: &str, except: Option<&str>) -> Result<String, ItemError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(ItemError::Invalid("Folder name is required".into()));
+        }
+        if name.chars().count() > MAX_FOLDER_NAME {
+            return Err(ItemError::Invalid("Folder name is too long".into()));
+        }
+        if self
+            .folders
+            .iter()
+            .any(|f| Some(f.id.as_str()) != except && f.name.eq_ignore_ascii_case(name))
+        {
+            return Err(ItemError::Invalid(
+                "A folder with that name already exists".into(),
+            ));
+        }
+        Ok(name.to_string())
+    }
+
+    /// Creates a folder and returns its id.
+    pub fn create_folder(&mut self, name: &str) -> Result<String, ItemError> {
+        if self.folders.len() >= MAX_FOLDERS {
+            return Err(ItemError::Invalid("Too many folders".into()));
+        }
+        let name = self.folder_name(name, None)?;
+        let id = new_id();
+        self.folders.push(Folder {
+            id: id.clone(),
+            name,
+            icon: None,
+        });
+        self.folders.sort_by_key(|f| f.name.to_lowercase());
+        self.updated_at = now_rfc3339();
+        Ok(id)
+    }
+
+    /// Renames a folder.
+    pub fn rename_folder(&mut self, id: &str, name: &str) -> Result<(), ItemError> {
+        let name = self.folder_name(name, Some(id))?;
+        let f = self
+            .folders
+            .iter_mut()
+            .find(|f| f.id == id)
+            .ok_or(ItemError::NotFound)?;
+        f.name = name;
+        self.folders.sort_by_key(|f| f.name.to_lowercase());
+        self.updated_at = now_rfc3339();
+        Ok(())
+    }
+
+    /// Deletes a folder. Its items are kept and moved to "no folder".
+    /// Returns how many items were moved.
+    pub fn delete_folder(&mut self, id: &str) -> Result<usize, ItemError> {
+        let before = self.folders.len();
+        self.folders.retain(|f| f.id != id);
+        if self.folders.len() == before {
+            return Err(ItemError::NotFound);
+        }
+        let mut moved = 0;
+        for item in &mut self.items {
+            let b = base_mut(item);
+            if b.folder_id.as_deref() == Some(id) {
+                b.folder_id = None;
+                moved += 1;
+            }
+        }
+        self.updated_at = now_rfc3339();
+        Ok(moved)
     }
 
     /// Removes an item.
@@ -416,6 +509,7 @@ impl VaultData {
                     subtitle,
                     host,
                     favorite: b.favorite,
+                    folder_id: b.folder_id.clone(),
                     has_totp,
                     updated_at: b.updated_at.clone(),
                 }
@@ -442,6 +536,7 @@ impl VaultData {
             notes: b.notes.clone(),
             content: String::new(),
             tags: b.tags.clone(),
+            folder_id: b.folder_id.clone(),
             favorite: b.favorite,
             has_password: false,
             has_totp: false,
@@ -643,6 +738,78 @@ mod tests {
         assert!(v.secret(&n, SecretField::Password).is_err());
         v.delete_item(&a).unwrap();
         assert_eq!(v.items.len(), 2);
+    }
+
+    #[test]
+    fn folders_lifecycle() {
+        let mut v = VaultData::new();
+        let work = v.create_folder("  Work ").unwrap();
+        let bank = v.create_folder("Banking").unwrap();
+        assert_eq!(
+            v.folders
+                .iter()
+                .map(|f| f.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Banking", "Work"]
+        );
+        assert!(
+            v.create_folder("work").is_err(),
+            "names are unique, case-insensitively"
+        );
+        assert!(v.create_folder("   ").is_err());
+        assert!(v.create_folder(&"x".repeat(65)).is_err());
+
+        let id = v
+            .create_item(
+                ItemKind::Login,
+                &ItemDraft {
+                    folder_id: Some(work.clone()),
+                    ..login("Jira", "p")
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            v.detail(&id).unwrap().folder_id.as_deref(),
+            Some(work.as_str())
+        );
+        assert_eq!(v.summaries()[0].folder_id.as_deref(), Some(work.as_str()));
+
+        v.update_item(
+            &id,
+            &ItemDraft {
+                folder_id: Some(bank.clone()),
+                password: None,
+                ..login("Jira", "")
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            v.detail(&id).unwrap().folder_id.as_deref(),
+            Some(bank.as_str())
+        );
+
+        assert!(v
+            .create_item(
+                ItemKind::Login,
+                &ItemDraft {
+                    folder_id: Some("nope".into()),
+                    ..login("X", "p")
+                }
+            )
+            .is_err());
+
+        v.rename_folder(&bank, "Finance").unwrap();
+        assert!(v.rename_folder(&bank, "WORK").is_err());
+        v.rename_folder(&bank, "finance").unwrap(); // case change of its own name is fine
+
+        assert_eq!(
+            v.delete_folder(&bank).unwrap(),
+            1,
+            "items are kept, moved out"
+        );
+        assert_eq!(v.items.len(), 1);
+        assert_eq!(v.detail(&id).unwrap().folder_id, None);
+        assert_eq!(v.delete_folder(&bank), Err(ItemError::NotFound));
     }
 
     #[test]
