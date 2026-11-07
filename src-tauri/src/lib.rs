@@ -9,6 +9,8 @@
 #![warn(missing_docs)]
 
 pub mod crypto;
+pub mod os;
+pub mod totp;
 pub mod vault;
 
 use std::path::{Path, PathBuf};
@@ -19,8 +21,9 @@ use zeroize::Zeroizing;
 
 use crypto::{CipherSuite, CryptoError, KdfParams, KeyfileDigest};
 use vault::container::Header;
+use vault::items::{ItemDetail, ItemDraft, ItemError, ItemKind, ItemSummary, SecretField};
 use vault::state::{Unlocked, VaultState};
-use vault::{CreateOptions, OpenVault, VaultError};
+use vault::{CreateOptions, OpenVault, VaultData, VaultError};
 
 /// File name of the primary vault inside the app data directory.
 const VAULT_FILE_NAME: &str = "vault.shush";
@@ -97,6 +100,19 @@ impl From<VaultError> for CmdError {
             other => Self::new("INTERNAL", other.to_string()),
         }
     }
+}
+
+impl From<ItemError> for CmdError {
+    fn from(e: ItemError) -> Self {
+        match e {
+            ItemError::NotFound => Self::new("ITEM_NOT_FOUND", "That item no longer exists."),
+            ItemError::Invalid(m) => Self::new("INVALID_INPUT", m),
+        }
+    }
+}
+
+fn locked() -> CmdError {
+    CmdError::new("VAULT_LOCKED", "The vault is locked.")
 }
 
 #[derive(Debug, Serialize)]
@@ -410,6 +426,134 @@ async fn unlock(
 #[tauri::command]
 fn lock(app: tauri::AppHandle) {
     app.state::<VaultState>().lock();
+    // Never leave a copied secret behind on the clipboard after locking.
+    os::clipboard::clear_if_ours();
+}
+
+// ---- Items (roadmap Step 4) -------------------------------------------------
+
+/// Read-only access to the unlocked vault data.
+fn read<R>(
+    app: &tauri::AppHandle,
+    f: impl FnOnce(&VaultData) -> Result<R, CmdError>,
+) -> Result<R, CmdError> {
+    app.state::<VaultState>()
+        .with(|u| f(u.vault.data()))
+        .unwrap_or_else(|| Err(locked()))
+}
+
+/// Transactional mutation: applied, saved crash-safely, then committed.
+fn write<R>(
+    app: &tauri::AppHandle,
+    f: impl FnOnce(&mut VaultData) -> Result<R, CmdError>,
+) -> Result<R, CmdError> {
+    app.state::<VaultState>()
+        .with_mut(|u| {
+            let path = u.path.clone();
+            u.vault.modify(&path, f)
+        })
+        .unwrap_or_else(|| Err(locked()))
+}
+
+#[tauri::command]
+fn list_items(app: tauri::AppHandle) -> Result<Vec<ItemSummary>, CmdError> {
+    read(&app, |d| Ok(d.summaries()))
+}
+
+#[tauri::command]
+fn get_item(app: tauri::AppHandle, id: String) -> Result<ItemDetail, CmdError> {
+    read(&app, |d| Ok(d.detail(&id)?))
+}
+
+#[tauri::command]
+async fn create_item(
+    app: tauri::AppHandle,
+    kind: ItemKind,
+    draft: ItemDraft,
+) -> Result<ItemDetail, CmdError> {
+    blocking(move || {
+        write(&app, |d| {
+            let id = d.create_item(kind, &draft)?;
+            Ok(d.detail(&id)?)
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn update_item(
+    app: tauri::AppHandle,
+    id: String,
+    draft: ItemDraft,
+) -> Result<ItemDetail, CmdError> {
+    blocking(move || {
+        write(&app, |d| {
+            d.update_item(&id, &draft)?;
+            Ok(d.detail(&id)?)
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn delete_item(app: tauri::AppHandle, id: String) -> Result<(), CmdError> {
+    blocking(move || write(&app, |d| Ok(d.delete_item(&id)?))).await
+}
+
+#[tauri::command]
+async fn set_favorite(app: tauri::AppHandle, id: String, favorite: bool) -> Result<(), CmdError> {
+    blocking(move || write(&app, |d| Ok(d.set_favorite(&id, favorite)?))).await
+}
+
+/// Copies a field to the clipboard from Rust; the secret never reaches JS.
+/// Returns the number of seconds until it is cleared.
+#[tauri::command]
+fn copy_field(app: tauri::AppHandle, id: String, field: SecretField) -> Result<u32, CmdError> {
+    read(&app, |d| {
+        let value = d.secret(&id, field)?;
+        if value.is_empty() {
+            return Err(CmdError::new("EMPTY_FIELD", "Nothing to copy."));
+        }
+        let secs = d.settings.clipboard_clear_seconds.clamp(5, 600);
+        os::clipboard::copy_secret(&value, std::time::Duration::from_secs(u64::from(secs)))
+            .map_err(|e| CmdError::new("CLIPBOARD", e.to_string()))?;
+        Ok(secs)
+    })
+}
+
+/// Explicit, user-initiated reveal of one password (issue #6: this is the
+/// only path by which a stored password reaches the WebView).
+#[tauri::command]
+fn reveal_password(app: tauri::AppHandle, id: String) -> Result<String, CmdError> {
+    read(&app, |d| {
+        Ok(d.secret(&id, SecretField::Password)?.to_string())
+    })
+}
+
+#[tauri::command]
+fn totp_code(app: tauri::AppHandle, id: String) -> Result<totp::TotpCode, CmdError> {
+    read(&app, |d| {
+        let secret = d.totp_secret(&id)?;
+        totp::current_code(&secret).map_err(|e| CmdError::new("TOTP", e.to_string()))
+    })
+}
+
+#[derive(Debug, Serialize)]
+struct GeneratedPassword {
+    password: String,
+    entropy_bits: f64,
+}
+
+#[tauri::command]
+fn generate_password(
+    options: crypto::generator::GeneratorOptions,
+) -> Result<GeneratedPassword, CmdError> {
+    let g = crypto::generator::generate(&options)
+        .map_err(|e| CmdError::new("INVALID_INPUT", e.to_string()))?;
+    Ok(GeneratedPassword {
+        password: g.password.to_string(),
+        entropy_bits: g.entropy_bits,
+    })
 }
 
 /// Tauri builder with every shush command and the vault state registered.
@@ -427,7 +571,17 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             inspect_keyfile,
             create_vault,
             unlock,
-            lock
+            lock,
+            list_items,
+            get_item,
+            create_item,
+            update_item,
+            delete_item,
+            set_favorite,
+            copy_field,
+            reveal_password,
+            totp_code,
+            generate_password
         ])
 }
 

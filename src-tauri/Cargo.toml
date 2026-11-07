@@ -32,11 +32,16 @@ zeroize = { version = "1.7", features = ["derive", "zeroize_derive"] }
 zstd = "0.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-totp-rs = { version = "5.5", features = ["gen_secret"] }
+# `otpauth`: parse otpauth:// URIs so imported issuers keep algorithm/digits/period (issue #24).
+totp-rs = { version = "5.5", features = ["gen_secret", "otpauth"] }
 windows-sys = { version = "0.52", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_DataExchange",
     "Win32_System_RemoteDesktop",
+    # Clipboard with history/cloud exclusion formats (issue #12).
+    "Win32_Foundation",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
 ] }
 # --- Additions ---
 thiserror = "2"

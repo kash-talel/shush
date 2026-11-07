@@ -86,6 +86,13 @@ impl VaultState {
     pub fn with<R>(&self, f: impl FnOnce(&Unlocked) -> R) -> Option<R> {
         self.guard().unlocked.as_ref().map(f)
     }
+
+    /// Runs `f` with mutable access while holding the lock, so a mutation and
+    /// its save to disk are one atomic step relative to other commands and
+    /// to `lock()` (issue #10).
+    pub fn with_mut<R>(&self, f: impl FnOnce(&mut Unlocked) -> R) -> Option<R> {
+        self.guard().unlocked.as_mut().map(f)
+    }
 }
 
 #[cfg(test)]

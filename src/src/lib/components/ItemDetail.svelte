@@ -1,0 +1,176 @@
+<script lang="ts">
+  import { Copy, Eye, EyeOff, History, Pencil, Star, Trash2 } from "@lucide/svelte";
+  import TotpBadge from "./TotpBadge.svelte";
+  import { revealPassword, toCmdError, type ItemDetail, type SecretField } from "../tauri-bridge";
+
+  // Right pane (spec §7.2.2): click-to-copy fields, concealed password with
+  // explicit reveal, live TOTP, edit / delete / favorite.
+  let {
+    item,
+    oncopy,
+    onedit,
+    ondelete,
+    onfavorite,
+  }: {
+    item: ItemDetail;
+    oncopy: (field: SecretField) => void;
+    onedit: () => void;
+    ondelete: () => void;
+    onfavorite: () => void;
+  } = $props();
+
+  // Revealed password is tied to the item it came from, so selecting another
+  // item hides it automatically (no $effect).
+  let revealed = $state.raw<{ for: string; value: string } | null>(null);
+  const shown = $derived(revealed?.for === item.id ? revealed.value : null);
+  let revealError = $state<string | null>(null);
+  let confirmDelete = $state<string | null>(null);
+
+  async function toggleReveal() {
+    if (shown !== null) {
+      revealed = null;
+      return;
+    }
+    try {
+      revealed = { for: item.id, value: await revealPassword(item.id) };
+      revealError = null;
+    } catch (e) {
+      revealError = toCmdError(e).message;
+    }
+  }
+
+  function remove() {
+    if (confirmDelete === item.id) ondelete();
+    else confirmDelete = item.id;
+  }
+
+  const created = $derived(item.created_at.replace("T", " ").replace("Z", " UTC"));
+  const updated = $derived(item.updated_at.replace("T", " ").replace("Z", " UTC"));
+</script>
+
+{#snippet field(label: string, value: string, copyAs: SecretField | null, mono = false)}
+  <div class="group border-b border-hairline px-4 py-3">
+    <dt class="mb-1 text-[11px] tracking-wider text-zinc-500 uppercase">{label}</dt>
+    <dd class="flex items-center gap-2">
+      <span class={["min-w-0 flex-1 truncate text-sm text-zinc-100 select-text", mono && "font-mono"]}>{value || "—"}</span>
+      {#if copyAs && value}
+        <button
+          type="button"
+          onclick={() => oncopy(copyAs)}
+          class="grid size-7 place-items-center rounded-md text-zinc-500 opacity-60 transition group-hover:opacity-100 hover:bg-hairline hover:text-zinc-100"
+          aria-label="Copy {label.toLowerCase()}"
+        >
+          <Copy class="size-3.5" />
+        </button>
+      {/if}
+    </dd>
+  </div>
+{/snippet}
+
+<article class="flex min-h-0 min-w-0 flex-1 flex-col">
+  <header class="flex h-12 shrink-0 items-center gap-2 border-b border-hairline px-4">
+    <h2 class="min-w-0 flex-1 truncate text-sm font-medium text-zinc-100">{item.title}</h2>
+    <button
+      type="button"
+      onclick={onfavorite}
+      class="grid size-8 place-items-center rounded-md hover:bg-hairline"
+      aria-label={item.favorite ? "Remove from favorites" : "Add to favorites"}
+      aria-pressed={item.favorite}
+    >
+      <Star class={["size-4", item.favorite ? "fill-amber-300 text-amber-300" : "text-zinc-500"]} />
+    </button>
+    <button
+      type="button"
+      onclick={onedit}
+      class="flex h-8 items-center gap-1.5 rounded-md border border-hairline px-2.5 text-xs text-zinc-300 hover:bg-hairline"
+    >
+      <Pencil class="size-3.5" aria-hidden="true" /> Edit
+    </button>
+    <button
+      type="button"
+      onclick={remove}
+      onblur={() => (confirmDelete = null)}
+      class={[
+        "flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs transition",
+        confirmDelete === item.id ? "border-danger bg-danger/15 text-danger" : "border-hairline text-zinc-400 hover:text-danger",
+      ]}
+    >
+      <Trash2 class="size-3.5" aria-hidden="true" />
+      {confirmDelete === item.id ? "Click again to delete" : "Delete"}
+    </button>
+  </header>
+
+  <dl class="min-h-0 flex-1 overflow-y-auto">
+    {#if item.kind === "login"}
+      {@render field("Username", item.username, "username")}
+
+      <div class="group border-b border-hairline px-4 py-3">
+        <dt class="mb-1 text-[11px] tracking-wider text-zinc-500 uppercase">Password</dt>
+        <dd class="flex items-center gap-2">
+          <span class="min-w-0 flex-1 truncate font-mono text-sm text-zinc-100 select-text">
+            {#if !item.has_password}—{:else if shown !== null}{shown}{:else}••••••••••••{/if}
+          </span>
+          {#if item.has_password}
+            <button
+              type="button"
+              onclick={toggleReveal}
+              class="grid size-7 place-items-center rounded-md text-zinc-500 hover:bg-hairline hover:text-zinc-100"
+              aria-label={shown !== null ? "Hide password" : "Reveal password"}
+              aria-pressed={shown !== null}
+            >
+              {#if shown !== null}<EyeOff class="size-3.5" />{:else}<Eye class="size-3.5" />{/if}
+            </button>
+            <button
+              type="button"
+              onclick={() => oncopy("password")}
+              class="grid size-7 place-items-center rounded-md text-zinc-500 hover:bg-hairline hover:text-zinc-100"
+              aria-label="Copy password"
+            >
+              <Copy class="size-3.5" />
+            </button>
+          {/if}
+        </dd>
+        {#if revealError}<p class="mt-1 text-xs text-danger">{revealError}</p>{/if}
+        {#if item.history_count > 0}
+          <p class="mt-1.5 flex items-center gap-1 font-mono text-[11px] text-zinc-500">
+            <History class="size-3" aria-hidden="true" /> {item.history_count} previous password{item.history_count === 1 ? "" : "s"} archived
+          </p>
+        {/if}
+      </div>
+
+      {#if item.has_totp}
+        <div class="border-b border-hairline px-4 py-3">
+          <dt class="mb-1.5 text-[11px] tracking-wider text-zinc-500 uppercase">One-time code</dt>
+          <dd><TotpBadge id={item.id} oncopy={() => oncopy("totp")} /></dd>
+        </div>
+      {/if}
+
+      {@render field("Website", item.url, null, true)}
+    {:else}
+      <div class="border-b border-hairline px-4 py-3">
+        <dt class="mb-1 text-[11px] tracking-wider text-zinc-500 uppercase">Note</dt>
+        <!-- Plain text only: never render stored content as HTML (issue #20). -->
+        <dd class="font-mono text-sm leading-6 whitespace-pre-wrap text-zinc-200 select-text">{item.content || "—"}</dd>
+      </div>
+    {/if}
+
+    {#if item.notes}
+      <div class="border-b border-hairline px-4 py-3">
+        <dt class="mb-1 text-[11px] tracking-wider text-zinc-500 uppercase">Notes</dt>
+        <dd class="text-sm whitespace-pre-wrap text-zinc-300 select-text">{item.notes}</dd>
+      </div>
+    {/if}
+
+    {#if item.tags.length}
+      <div class="flex flex-wrap gap-1.5 border-b border-hairline px-4 py-3">
+        {#each item.tags as tag (tag)}
+          <span class="rounded border border-cold/30 px-1.5 py-0.5 font-mono text-[11px] text-cold">#{tag}</span>
+        {/each}
+      </div>
+    {/if}
+
+    <p class="px-4 py-3 font-mono text-[10px] leading-4 text-zinc-600">
+      created {created}<br />updated {updated}
+    </p>
+  </dl>
+</article>

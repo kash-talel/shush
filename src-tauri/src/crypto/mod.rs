@@ -20,6 +20,7 @@
 #![forbid(unsafe_code)]
 
 pub mod cipher;
+pub mod generator;
 pub mod kdf;
 pub mod keyfile;
 pub mod zeroize_guard;

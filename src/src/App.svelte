@@ -3,7 +3,7 @@
   import StatusBar from "./lib/components/StatusBar.svelte";
   import UnlockScreen from "./lib/components/UnlockScreen.svelte";
   import CreateVaultScreen from "./lib/components/CreateVaultScreen.svelte";
-  import VaultHome from "./lib/components/VaultHome.svelte";
+  import Dashboard from "./lib/components/Dashboard.svelte";
   import {
     appInfo,
     lock,
@@ -17,6 +17,7 @@
   let info = $state<AppInfo | null>(null);
   let status = $state<VaultStatus | null>(null);
   let summary = $state<VaultSummary | null>(null);
+  let clipboardUntil = $state(0);
 
   async function refresh() {
     status = await vaultStatus();
@@ -25,6 +26,7 @@
   async function doLock() {
     await lock();
     summary = null;
+    clipboardUntil = 0; // lock also clears shush's clipboard content
     await refresh();
   }
 
@@ -38,7 +40,7 @@
 
 <div class="flex h-full flex-col">
   {#if summary}
-    <VaultHome {summary} onlock={doLock} />
+    <Dashboard onlock={doLock} oncopied={(secs) => (clipboardUntil = Date.now() + secs * 1000)} />
   {:else if status && !status.exists}
     <CreateVaultScreen vault={status} {info} oncreated={(s) => (summary = s)} />
   {:else if status}
@@ -51,5 +53,6 @@
     locked={summary === null}
     cipher={summary?.cipher ?? status?.cipher ?? null}
     kdf={summary?.kdf ?? status?.kdf ?? null}
+    {clipboardUntil}
   />
 </div>
