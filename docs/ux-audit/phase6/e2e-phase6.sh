@@ -29,7 +29,7 @@ fi
 check "login present before backup" "[...document.querySelectorAll('[role=option]')].some(o => o.textContent.includes('GitHub (work)'))"
 
 echo "--- export with the vault's credentials"
-$D click "text:Backup & restore" >/dev/null
+$D click "text:Backup & import" >/dev/null
 waitfor "$(body).includes('BACKUP_AND_RESTORE')"
 $D click "text:EXPORT BACKUP" >/dev/null; sleep 2
 $DLG -Title "Save encrypted backup" -Path "$B1" >/dev/null
@@ -55,7 +55,7 @@ $D click "text:Delete" >/dev/null; $D click "text:Click again to delete" >/dev/n
 waitfor "![...document.querySelectorAll('[role=option]')].some(o => o.textContent.includes('GitHub (work)'))"
 check "login deleted" "![...document.querySelectorAll('[role=option]')].some(o => o.textContent.includes('GitHub (work)'))"
 
-$D click "text:Backup & restore" >/dev/null
+$D click "text:Backup & import" >/dev/null
 waitfor "$(body).includes('Choose a .shushbackup file')"
 $D click "text:Choose a .shushbackup file" >/dev/null; sleep 2
 $DLG -Title "Choose a backup to import" -Path "$B2" >/dev/null
