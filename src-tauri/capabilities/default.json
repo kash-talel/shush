@@ -1,9 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window. Grant only what each window needs (see issue #20).",
+  "description": "Main and Spotlight windows. Grant only what each window needs (see issue #20).",
   "windows": [
-    "main"
+    "main",
+    "spotlight"
   ],
   "permissions": [
     "core:default",

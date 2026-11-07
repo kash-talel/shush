@@ -47,6 +47,10 @@
 
   onMount(() => {
     // The backend already locked and wiped the vault; just follow it.
+    // Copies from Spotlight (another window) also drive the countdown.
+    const unlistenCopy = listen<number>("clipboard-copied", (e) => {
+      clipboardUntil = Date.now() + e.payload * 1000;
+    });
     const unlisten = listen<AutoLockReason>(AUTO_LOCK_EVENT, async (e) => {
       summary = null;
       onboarding = false;
@@ -55,7 +59,10 @@
       await refresh();
     });
     void init();
-    return () => void unlisten.then((f) => f());
+    return () => {
+      void unlisten.then((f) => f());
+      void unlistenCopy.then((f) => f());
+    };
   });
 </script>
 
@@ -63,7 +70,7 @@
   {#if summary && onboarding}
     <OnboardingScreen ondone={() => (onboarding = false)} />
   {:else if summary}
-    <Dashboard onlock={doLock} oncopied={(secs) => (clipboardUntil = Date.now() + secs * 1000)} />
+    <Dashboard hotkey={info?.spotlight_hotkey ?? null} onlock={doLock} oncopied={(secs) => (clipboardUntil = Date.now() + secs * 1000)} />
   {:else if status && !status.exists}
     <CreateVaultScreen
       vault={status}

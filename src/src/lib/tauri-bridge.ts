@@ -22,6 +22,8 @@ export interface AppInfo {
   supported_ciphers: CipherInfo[];
   default_kdf: KdfParams;
   min_password_chars: number;
+  /** Global Spotlight hotkey, or null if another app already owns it. */
+  spotlight_hotkey: string | null;
 }
 
 export interface VaultStatus {
@@ -76,6 +78,7 @@ export const createVault = (password: string, keyfile: KeyfileChoice, cipherId: 
 export const unlock = (password: string, keyfilePath: string | null) =>
   invoke<VaultSummary>("unlock", { password, keyfilePath });
 export const lock = () => invoke<void>("lock");
+export const showSpotlight = () => invoke<void>("show_spotlight");
 
 /** Why the backend locked the vault on its own (session / power / idle / tray). */
 export type AutoLockReason =

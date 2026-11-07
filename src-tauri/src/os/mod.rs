@@ -4,3 +4,4 @@
 pub mod browsers;
 pub mod clipboard;
 pub mod session;
+pub mod win_context;

@@ -23,6 +23,22 @@
         "theme": "Dark",
         "backgroundColor": "#09090b",
         "contentProtected": true
+      },
+      {
+        "label": "spotlight",
+        "title": "shush quick search",
+        "width": 640,
+        "height": 440,
+        "decorations": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "center": true,
+        "theme": "Dark",
+        "backgroundColor": "#09090b",
+        "contentProtected": true,
+        "shadow": true
       }
     ],
     "security": {

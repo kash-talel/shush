@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { DatabaseBackup, KeyRound, Layers, LockKeyhole, NotebookText, Plus, Star } from "@lucide/svelte";
+  import { DatabaseBackup, KeyRound, Layers, LockKeyhole, NotebookText, Plus, Search, Star } from "@lucide/svelte";
   import ItemList from "./ItemList.svelte";
   import ItemDetailView from "./ItemDetail.svelte";
   import ItemEditor from "./ItemEditor.svelte";
@@ -14,6 +14,7 @@
     listFolders,
     listItems,
     setFavorite,
+    showSpotlight,
     toCmdError,
     updateItem,
     type CmdError,
@@ -26,7 +27,11 @@
   } from "../tauri-bridge";
 
   // Main vault dashboard (spec §7.2.2): sidebar · list · detail/editor.
-  let { onlock, oncopied }: { onlock: () => void; oncopied: (seconds: number) => void } = $props();
+  let {
+    onlock,
+    oncopied,
+    hotkey = null,
+  }: { onlock: () => void; oncopied: (seconds: number) => void; hotkey?: string | null } = $props();
 
   type Filter = "all" | "favorites" | ItemKind;
   type Mode = { kind: "view" } | { kind: "create"; itemKind: ItemKind } | { kind: "edit" } | { kind: "backup" };
@@ -218,8 +223,17 @@
 
     <button
       type="button"
+      onclick={() => showSpotlight()}
+      class="mt-auto flex h-8 items-center gap-2 rounded-md px-2 text-sm text-zinc-400 hover:bg-hairline/60 hover:text-zinc-200"
+      title={hotkey ? `Quick search from anywhere: ${hotkey}` : "Quick search (global hotkey unavailable: another app uses it)"}
+    >
+      <Search class="size-4" aria-hidden="true" /> Quick search
+      <kbd class="ml-auto font-mono text-[9px] text-zinc-600">{hotkey ? hotkey.toUpperCase() : "TRAY"}</kbd>
+    </button>
+    <button
+      type="button"
       onclick={onlock}
-      class="mt-auto flex h-9 items-center gap-2 rounded-md border border-danger/30 px-2 text-sm text-danger hover:bg-danger/10"
+      class="mt-2 flex h-9 items-center gap-2 rounded-md border border-danger/30 px-2 text-sm text-danger hover:bg-danger/10"
     >
       <LockKeyhole class="size-4" aria-hidden="true" /> Lock vault
       <kbd class="ml-auto font-mono text-[10px] opacity-70">CTRL+L</kbd>
