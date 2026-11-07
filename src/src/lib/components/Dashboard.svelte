@@ -259,6 +259,7 @@
       <ItemDetailView
         item={detail}
         folderName={folderName(detail.folder_id)}
+        onupdated={(d) => (detail = d)}
         oncopy={copy}
         onedit={() => (mode = { kind: "edit" })}
         ondelete={remove}

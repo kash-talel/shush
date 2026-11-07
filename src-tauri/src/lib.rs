@@ -427,6 +427,8 @@ async fn unlock(
         let state = app.state::<VaultState>();
         let ticket = state.begin_unlock();
         let vault = unlock_blocking(&path, password.as_bytes(), keyfile_path.as_deref())?;
+        // Remove attachment blobs left behind by an interrupted add/delete.
+        vault::attachments::gc_orphans(&path, vault.data());
         let s = summary(&path, &vault);
         state
             .finish_unlock(ticket, Unlocked { path, vault })
@@ -647,7 +649,114 @@ async fn update_item(
 
 #[tauri::command]
 async fn delete_item(app: tauri::AppHandle, id: String) -> Result<(), CmdError> {
-    blocking(move || write(&app, |d| Ok(d.delete_item(&id)?))).await
+    blocking(move || {
+        write(&app, |d| Ok(d.delete_item(&id)?))?;
+        // The item's attachment blobs are now unreferenced.
+        app.state::<VaultState>()
+            .with(|u| vault::attachments::gc_orphans(&u.path, u.vault.data()));
+        Ok(())
+    })
+    .await
+}
+
+// ---- Attachments (roadmap Step 4c) ---------------------------------------------
+
+fn guess_mime(path: &Path) -> &'static str {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    match ext.as_deref() {
+        Some("pdf") => "application/pdf",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("txt" | "md") => "text/plain",
+        Some("json") => "application/json",
+        Some("pem" | "crt" | "cer" | "key") => "application/x-pem-file",
+        Some("zip") => "application/zip",
+        _ => "application/octet-stream",
+    }
+}
+
+fn io_err(e: std::io::Error) -> CmdError {
+    CmdError::new(
+        "IO_ERROR",
+        format!("Could not access the file ({}).", e.kind()),
+    )
+}
+
+#[tauri::command]
+async fn add_attachment(
+    app: tauri::AppHandle,
+    item_id: String,
+    path: String,
+) -> Result<ItemDetail, CmdError> {
+    blocking(move || {
+        let src = PathBuf::from(&path);
+        let meta = std::fs::metadata(&src).map_err(io_err)?;
+        if !meta.is_file() {
+            return Err(CmdError::new(
+                "INVALID_INPUT",
+                "Choose a file, not a folder.",
+            ));
+        }
+        if meta.len() > vault::attachments::MAX_ATTACHMENT_BYTES {
+            return Err(CmdError::new(
+                "TOO_LARGE",
+                "Attachments are limited to 10 MB.",
+            ));
+        }
+        let data = Zeroizing::new(std::fs::read(&src).map_err(io_err)?);
+        let name = src
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| String::from("file"));
+        app.state::<VaultState>()
+            .with_mut(|u| {
+                let path = u.path.clone();
+                u.vault
+                    .add_attachment(&path, &item_id, &name, guess_mime(&src), &data)?;
+                Ok(u.vault.data().detail(&item_id)?)
+            })
+            .unwrap_or_else(|| Err(locked()))
+    })
+    .await
+}
+
+/// Decrypts an attachment to a file the user chose (explicit export).
+#[tauri::command]
+async fn save_attachment(
+    app: tauri::AppHandle,
+    attachment_id: String,
+    dest: String,
+) -> Result<(), CmdError> {
+    blocking(move || {
+        let bytes = app
+            .state::<VaultState>()
+            .with(|u| u.vault.read_attachment(&u.path, &attachment_id))
+            .unwrap_or(Err(VaultError::NotFound))?;
+        std::fs::write(&dest, bytes.as_slice()).map_err(io_err)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn delete_attachment(
+    app: tauri::AppHandle,
+    item_id: String,
+    attachment_id: String,
+) -> Result<ItemDetail, CmdError> {
+    blocking(move || {
+        app.state::<VaultState>()
+            .with_mut(|u| {
+                let path = u.path.clone();
+                u.vault.delete_attachment(&path, &item_id, &attachment_id)?;
+                Ok(u.vault.data().detail(&item_id)?)
+            })
+            .unwrap_or_else(|| Err(locked()))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -722,7 +831,11 @@ async fn export_backup(
                 return Err(CmdError::new("INVALID_INPUT", "Choose a different file than the vault itself."));
             }
             match &credentials {
-                BackupCredentialChoice::SameAsVault => Ok(export_to(&path, &u.vault, BackupCredentials::SameAsVault)?),
+                BackupCredentialChoice::SameAsVault => {
+                    // Backups are self-contained: attachment files are embedded.
+                    let data = u.vault.data_with_embedded_attachments(&u.path)?;
+                    Ok(export_to(&path, &u.vault, &data, BackupCredentials::SameAsVault)?)
+                }
                 BackupCredentialChoice::Dedicated { password, keyfile_path } => {
                     let normalized = crypto::kdf::normalize_password(password.as_str().as_bytes()).map_err(VaultError::from)?;
                     if normalized.chars().count() < MIN_PASSWORD_CHARS {
@@ -741,7 +854,8 @@ async fn export_backup(
                         suite: u.vault.header().suite,
                         kdf: u.vault.header().kdf,
                     };
-                    Ok(export_to(&path, &u.vault, creds)?)
+                    let data = u.vault.data_with_embedded_attachments(&u.path)?;
+                    Ok(export_to(&path, &u.vault, &data, creds)?)
                 }
             }
         });
@@ -808,8 +922,21 @@ async fn apply_import(
 ) -> Result<usize, CmdError> {
     blocking(move || {
         // Decrypt (slow KDF) before taking the vault lock.
-        let manifest = open_backup(&path, password.as_str(), keyfile_path.as_deref())?;
-        write(&app, |d| Ok(vault::backup::apply(d, &manifest, mode)))
+        let mut manifest = open_backup(&path, password.as_str(), keyfile_path.as_deref())?;
+        app.state::<VaultState>()
+            .with_mut(|u| {
+                let path = u.path.clone();
+                // Embedded files become this vault's blobs first; unreferenced
+                // ones (e.g. merge conflicts) are cleaned up afterwards.
+                u.vault
+                    .materialize_embedded(&path, &mut manifest.vault_data)?;
+                let n = u.vault.modify(&path, |d| {
+                    Ok::<_, CmdError>(vault::backup::apply(d, &manifest, mode))
+                })?;
+                vault::attachments::gc_orphans(&path, u.vault.data());
+                Ok(n)
+            })
+            .unwrap_or_else(|| Err(locked()))
     })
     .await
 }
@@ -1009,7 +1136,10 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             delete_folder,
             show_spotlight,
             hide_spotlight,
-            open_main_window
+            open_main_window,
+            add_attachment,
+            save_attachment,
+            delete_attachment
         ])
 }
 

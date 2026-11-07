@@ -18,6 +18,7 @@ pub const MAX_NONCE_LEN: usize = 24;
 /// HKDF `info` labels. Changing either breaks every existing vault.
 const INFO_VEK: &[u8] = b"shush/v1/vault-encryption-key";
 const INFO_CANARY: &[u8] = b"shush/v1/canary-verification-key";
+const INFO_ATTACHMENT: &[u8] = b"shush/v1/attachment-key";
 
 /// Known canary plaintext. 17 bytes, so the sealed canary is 33 bytes,
 /// matching the `CANARY_CIPHERTEXT` field in spec §4.
@@ -94,6 +95,7 @@ pub struct SealedBox {
 pub struct VaultKeys {
     vek: SecretKey,
     canary: SecretKey,
+    attachment: SecretKey,
 }
 
 impl VaultKeys {
@@ -103,12 +105,19 @@ impl VaultKeys {
         let hk = Hkdf::<Sha256>::new(None, master.expose());
         let mut vek = SecretKey::zeroed();
         let mut canary = SecretKey::zeroed();
+        let mut attachment = SecretKey::zeroed();
         // 32 bytes is far below HKDF-SHA256's 8160-byte limit; cannot fail.
         hk.expand(INFO_VEK, vek.as_mut_bytes())
             .expect("valid HKDF length");
         hk.expand(INFO_CANARY, canary.as_mut_bytes())
             .expect("valid HKDF length");
-        Self { vek, canary }
+        hk.expand(INFO_ATTACHMENT, attachment.as_mut_bytes())
+            .expect("valid HKDF length");
+        Self {
+            vek,
+            canary,
+            attachment,
+        }
     }
 
     /// Key that encrypts the vault payload.
@@ -119,6 +128,11 @@ impl VaultKeys {
     /// Key that encrypts the canary block.
     pub fn canary_key(&self) -> &SecretKey {
         &self.canary
+    }
+
+    /// Key that encrypts attachment sidecar blobs.
+    pub fn attachment_key(&self) -> &SecretKey {
+        &self.attachment
     }
 }
 
@@ -516,6 +530,10 @@ mod tests {
         let keys = VaultKeys::derive(&master);
         assert_eq!(hex::encode(keys.vault_encryption_key().expose()), KAT_VEK);
         assert_eq!(hex::encode(keys.canary_key().expose()), KAT_CANARY_KEY);
+        assert_eq!(
+            hex::encode(keys.attachment_key().expose()),
+            KAT_ATTACHMENT_KEY
+        );
 
         let aes = seal_with_nonce(
             CipherSuite::Aes256Gcm,
@@ -537,6 +555,8 @@ mod tests {
         .unwrap();
         assert_eq!(hex::encode(&xc.ciphertext), KAT_XCHACHA);
     }
+    const KAT_ATTACHMENT_KEY: &str =
+        "6f15f26ac3f35a68aaa6dfeeb6cfb1cc86ea130eebdd320b4eed091152bd72bb";
     const KAT_VEK: &str = "9ebcb7380c3f97f55dda404254d62e33cdc04d87c37c30904a729d9bfdbf3d1c";
     const KAT_CANARY_KEY: &str = "ccdbf1f1e85b9dff53b86e22278669061e18ecaf2a76063e7cfe9d4360b52c65";
     const KAT_AES_GCM: &str = "dc82094e5b7fbe54db65c5be6ed3d49a02b3a9b80b957b7118";

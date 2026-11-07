@@ -160,8 +160,17 @@ export interface ItemDetail {
   has_password: boolean;
   has_totp: boolean;
   history_count: number;
+  attachments: AttachmentInfo[];
   created_at: string;
   updated_at: string;
+}
+
+export interface AttachmentInfo {
+  id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  created_at: string;
 }
 
 /** Editor payload. `password` / `totp`: `null` = keep current, "" = clear. */
@@ -289,3 +298,12 @@ export const createFolder = (name: string) => invoke<string>("create_folder", { 
 export const renameFolder = (id: string, name: string) => invoke<void>("rename_folder", { id, name });
 /** Items in the folder are kept (moved to "no folder"); resolves to how many moved. */
 export const deleteFolder = (id: string) => invoke<number>("delete_folder", { id });
+
+// ---- Attachments (Phase 4c) -------------------------------------------------------
+
+export const addAttachment = (itemId: string, path: string) => invoke<ItemDetail>("add_attachment", { itemId, path });
+/** Writes the decrypted file to `dest` (an explicit, user-chosen export). */
+export const saveAttachment = (attachmentId: string, dest: string) =>
+  invoke<void>("save_attachment", { attachmentId, dest });
+export const deleteAttachment = (itemId: string, attachmentId: string) =>
+  invoke<ItemDetail>("delete_attachment", { itemId, attachmentId });
