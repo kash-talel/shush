@@ -10,6 +10,7 @@
 //! the size recorded in the zstd frame, which must be ≤ [`MAX_DECOMPRESSED`]
 //! (issue #5).
 
+pub mod attachments;
 pub mod backup;
 pub mod container;
 pub mod importer;

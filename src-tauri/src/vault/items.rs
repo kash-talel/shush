@@ -168,10 +168,27 @@ pub struct ItemDetail {
     pub has_totp: bool,
     /// Number of archived passwords.
     pub history_count: usize,
+    /// Attached files (metadata only).
+    pub attachments: Vec<AttachmentInfo>,
     /// Creation time.
     pub created_at: String,
     /// Last modification time.
     pub updated_at: String,
+}
+
+/// Attachment metadata for the UI (never the file contents).
+#[derive(Debug, Clone, Serialize)]
+pub struct AttachmentInfo {
+    /// Attachment id.
+    pub id: String,
+    /// Original file name.
+    pub filename: String,
+    /// MIME type.
+    pub mime_type: String,
+    /// Size in bytes.
+    pub size_bytes: u64,
+    /// RFC 3339 time it was added.
+    pub created_at: String,
 }
 
 /// A secret field that can be copied / revealed.
@@ -541,6 +558,17 @@ impl VaultData {
             has_password: false,
             has_totp: false,
             history_count: 0,
+            attachments: b
+                .attachments
+                .iter()
+                .map(|a| AttachmentInfo {
+                    id: a.id.clone(),
+                    filename: a.filename.clone(),
+                    mime_type: a.mime_type.clone(),
+                    size_bytes: a.size_bytes,
+                    created_at: a.created_at.clone(),
+                })
+                .collect(),
             created_at: b.created_at.clone(),
             updated_at: b.updated_at.clone(),
         };

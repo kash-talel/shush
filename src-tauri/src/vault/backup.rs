@@ -58,17 +58,20 @@ pub enum BackupCredentials<'a> {
     },
 }
 
-/// Seals `vault`'s current data into a backup file image.
+/// Seals `data` (normally the vault's data with attachments embedded, see
+/// [`OpenVault::data_with_embedded_attachments`]) into a backup file image.
+/// `vault` supplies the header and keys for [`BackupCredentials::SameAsVault`].
 pub fn export_bytes(
     vault: &OpenVault,
+    data: &VaultData,
     creds: BackupCredentials<'_>,
 ) -> Result<Vec<u8>, VaultError> {
     let manifest = Manifest {
         backup_version: BACKUP_VERSION,
         exported_at: now_rfc3339(),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
-        items_count: vault.data().items.len(),
-        vault_data: vault.data().clone(),
+        items_count: data.items.len(),
+        vault_data: data.clone(),
     };
     let plaintext = encode_json(&manifest)?;
     match creds {
@@ -103,9 +106,10 @@ pub fn export_bytes(
 pub fn export_to(
     path: &Path,
     vault: &OpenVault,
+    data: &VaultData,
     creds: BackupCredentials<'_>,
 ) -> Result<usize, VaultError> {
-    let bytes = export_bytes(vault, creds)?;
+    let bytes = export_bytes(vault, data, creds)?;
     container::write_atomic(path, &bytes, |written| {
         let sealed = container::parse(written)?;
         if sealed.header.kind == FileKind::Backup {
@@ -114,7 +118,7 @@ pub fn export_to(
             Err(VaultError::WriteVerifyFailed)
         }
     })?;
-    Ok(vault.data().items.len())
+    Ok(data.items.len())
 }
 
 /// Reads just a backup's header (to know whether it needs a keyfile).
@@ -318,7 +322,7 @@ mod tests {
     #[test]
     fn export_same_credentials_roundtrip() {
         let v = vault_with(&[("GitHub", "pw1"), ("Mail", "pw2")]);
-        let bytes = export_bytes(&v, BackupCredentials::SameAsVault).unwrap();
+        let bytes = export_bytes(&v, v.data(), BackupCredentials::SameAsVault).unwrap();
         assert_eq!(&bytes[..5], b"SHBKP");
         let m = open_bytes(&bytes, b"vault pw", None).unwrap();
         assert_eq!(m.items_count, 2);
@@ -347,7 +351,7 @@ mod tests {
             suite: CipherSuite::XChaCha20Poly1305,
             kdf: FAST,
         };
-        let bytes = export_bytes(&v, creds).unwrap();
+        let bytes = export_bytes(&v, v.data(), creds).unwrap();
         let sealed = container::parse(&bytes).unwrap();
         assert_ne!(
             sealed.header.salt,
@@ -462,7 +466,7 @@ mod tests {
         let path = dir.path().join("vault.shushbackup");
         let v = vault_with(&[("GitHub", "pw")]);
         assert_eq!(
-            export_to(&path, &v, BackupCredentials::SameAsVault).unwrap(),
+            export_to(&path, &v, v.data(), BackupCredentials::SameAsVault).unwrap(),
             1
         );
         assert!(read_backup_header(&path).unwrap().kind == FileKind::Backup);
