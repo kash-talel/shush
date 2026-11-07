@@ -1,6 +1,16 @@
 <div align="center">
 
-<img src=".github/banner.svg" alt="shush" width="720">
+<a href="https://kash-talel.github.io/shush/">
+  <img src=".github/banner.svg" alt="shush" width="720">
+</a>
+
+<br><br>
+
+<a href="https://kash-talel.github.io/shush/">
+  <img src=".github/logo.png" alt="shush logo" width="120" height="120" style="border-radius: 24px;">
+</a>
+
+<br><br>
 
 ### Offline-first, zero-knowledge password manager & 2FA authenticator for Windows.
 
@@ -9,9 +19,9 @@ One encrypted file on your disk. No account, no cloud, no telemetry.
 
 <br>
 
-<a href="https://kash-talel.github.io/shush/"><img src="https://img.shields.io/badge/Website-10b981?style=for-the-badge&logo=googlechrome&logoColor=0c0c0f" alt="Website" height="36"></a>&nbsp;
-<a href="https://github.com/kash-talel/shush/releases"><img src="https://img.shields.io/badge/Releases-18181b?style=for-the-badge&logo=github&logoColor=10b981" alt="Releases" height="36"></a>&nbsp;
-<a href="https://github.com/kash-talel/shush/blob/main/docs/README.md"><img src="https://img.shields.io/badge/Docs-18181b?style=for-the-badge&logo=readthedocs&logoColor=10b981" alt="Docs" height="36"></a>
+<a href="https://kash-talel.github.io/shush/"><img src="https://img.shields.io/badge/Website-dc2626?style=for-the-badge&logo=googlechrome&logoColor=ffffff" alt="Website" height="36"></a>&nbsp;
+<a href="https://github.com/kash-talel/shush/releases"><img src="https://img.shields.io/badge/Releases-18181b?style=for-the-badge&logo=github&logoColor=dc2626" alt="Releases" height="36"></a>&nbsp;
+<a href="https://github.com/kash-talel/shush/blob/main/docs/README.md"><img src="https://img.shields.io/badge/Docs-18181b?style=for-the-badge&logo=readthedocs&logoColor=dc2626" alt="Docs" height="36"></a>
 
 <br>
 

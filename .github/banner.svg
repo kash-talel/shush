@@ -5,25 +5,64 @@
       <stop offset="1" stop-color="#121215"/>
     </linearGradient>
     <linearGradient id="glow" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#10b981" stop-opacity="0"/>
-      <stop offset="0.5" stop-color="#10b981" stop-opacity="0.55"/>
-      <stop offset="1" stop-color="#06b6d4" stop-opacity="0"/>
+      <stop offset="0" stop-color="#dc2626" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#dc2626" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#f59e0b" stop-opacity="0"/>
     </linearGradient>
+    <linearGradient id="lip-grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ef4444"/>
+      <stop offset="1" stop-color="#b91c1c"/>
+    </linearGradient>
+    <linearGradient id="cig-ember" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#ef4444"/>
+    </linearGradient>
+    <filter id="ember-glow">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="smoke-blur">
+      <feGaussianBlur stdDeviation="1.5"/>
+    </filter>
   </defs>
   <rect width="720" height="180" rx="16" fill="url(#bg)"/>
   <rect x="0.5" y="0.5" width="719" height="179" rx="15.5" fill="none" stroke="#27272a"/>
   <rect x="80" y="178" width="560" height="2" fill="url(#glow)"/>
 
-  <!-- lock mark -->
+  <!-- lips + cigarette mark -->
   <g transform="translate(88 50)">
-    <rect width="80" height="80" rx="18" fill="#10b981" fill-opacity="0.08" stroke="#10b981" stroke-opacity="0.45"/>
-    <path d="M28 37v-7a12 12 0 0 1 24 0v7" fill="none" stroke="#10b981" stroke-width="4" stroke-linecap="round"/>
-    <rect x="22" y="37" width="36" height="27" rx="6" fill="none" stroke="#10b981" stroke-width="4"/>
-    <circle cx="40" cy="50" r="3.5" fill="#10b981"/>
+    <rect width="80" height="80" rx="18" fill="#dc2626" fill-opacity="0.06" stroke="#dc2626" stroke-opacity="0.3"/>
+
+    <!-- upper lip -->
+    <path d="M20 42 C20 42 28 30 40 34 C52 30 60 42 60 42" fill="url(#lip-grad)" stroke="#b91c1c" stroke-width="1"/>
+    <!-- cupid's bow highlight -->
+    <path d="M33 36 C36 33 44 33 47 36" fill="none" stroke="#fca5a5" stroke-width="0.8" stroke-opacity="0.5"/>
+    <!-- lower lip -->
+    <path d="M20 42 C20 42 28 56 40 54 C52 56 60 42 60 42" fill="url(#lip-grad)" stroke="#b91c1c" stroke-width="1"/>
+    <!-- lip line -->
+    <path d="M22 42 C28 44 34 43 40 42 C46 43 52 44 58 42" fill="none" stroke="#991b1b" stroke-width="1.2"/>
+
+    <!-- cigarette -->
+    <rect x="52" y="39" width="26" height="5" rx="1.5" fill="#e8e0d4" stroke="#d4c8b8" stroke-width="0.5"/>
+    <!-- cigarette filter band -->
+    <rect x="52" y="39" width="8" height="5" rx="1.5" fill="#f5e6c8"/>
+    <line x1="56" y1="39" x2="56" y2="44" stroke="#e8d8b8" stroke-width="0.4"/>
+    <!-- ember tip -->
+    <rect x="76" y="39.5" width="4" height="4" rx="1" fill="url(#cig-ember)" filter="url(#ember-glow)"/>
+
+    <!-- smoke wisps -->
+    <path d="M79 38 C80 32 76 28 79 22" fill="none" stroke="#a1a1aa" stroke-width="0.8" stroke-opacity="0.3" filter="url(#smoke-blur)"/>
+    <path d="M80 36 C82 30 78 25 82 18" fill="none" stroke="#a1a1aa" stroke-width="0.6" stroke-opacity="0.2" filter="url(#smoke-blur)"/>
   </g>
 
-  <text x="196" y="96" fill="#fafafa" font-family="'JetBrains Mono','Cascadia Mono',Consolas,monospace" font-size="54" font-weight="700" letter-spacing="2">shush</text>
-  <text x="200" y="126" fill="#10b981" font-family="'JetBrains Mono','Cascadia Mono',Consolas,monospace" font-size="15" letter-spacing="3">// OFFLINE · ZERO-KNOWLEDGE · WINDOWS</text>
-  <text x="634" y="62" fill="#06b6d4" fill-opacity="0.7" font-family="'JetBrains Mono','Cascadia Mono',Consolas,monospace" font-size="11" text-anchor="end">ARGON2ID 64M/t3/p4</text>
-  <text x="634" y="80" fill="#06b6d4" fill-opacity="0.7" font-family="'JetBrains Mono','Cascadia Mono',Consolas,monospace" font-size="11" text-anchor="end">AES-256-GCM · XCHACHA20</text>
+  <text x="196" y="82" fill="#fafafa" font-family="'JetBrains Mono','Cascadia Mono',Consolas,monospace" font-size="54" font-weight="700" letter-spacing="2">shush</text>
+  <text x="200" y="112" fill="#a1a1aa" font-family="'Inter','Segoe UI',system-ui,sans-serif" font-size="16" font-weight="400">Offline-first, zero-knowledge password manager</text>
+  <text x="200" y="136" fill="#dc2626" font-family="'JetBrains Mono','Cascadia Mono',Consolas,monospace" font-size="12" letter-spacing="3" font-weight="500">// YOUR PASSWORDS · YOUR FILE · YOUR RULES</text>
+
+  <g transform="translate(580 50)">
+    <text x="52" y="12" fill="#71717a" font-family="'JetBrains Mono','Cascadia Mono',Consolas,monospace" font-size="10" text-anchor="end">ARGON2ID 64M/t3/p4</text>
+    <text x="52" y="28" fill="#71717a" font-family="'JetBrains Mono','Cascadia Mono',Consolas,monospace" font-size="10" text-anchor="end">AES-256-GCM</text>
+    <text x="52" y="44" fill="#71717a" font-family="'JetBrains Mono','Cascadia Mono',Consolas,monospace" font-size="10" text-anchor="end">XCHACHA20-POLY1305</text>
+    <text x="52" y="64" fill="#52525b" font-family="'JetBrains Mono','Cascadia Mono',Consolas,monospace" font-size="9" text-anchor="end">TAURI v2 · RUST · SVELTE 5</text>
+  </g>
 </svg>
