@@ -77,6 +77,37 @@ export const unlock = (password: string, keyfilePath: string | null) =>
   invoke<VaultSummary>("unlock", { password, keyfilePath });
 export const lock = () => invoke<void>("lock");
 
+/** Why the backend locked the vault on its own (session / power / idle / tray). */
+export type AutoLockReason =
+  | "session_locked"
+  | "logoff"
+  | "disconnected"
+  | "suspend"
+  | "display_off"
+  | "idle"
+  | "tray";
+
+export const AUTO_LOCK_EVENT = "vault-auto-locked";
+
+export function describeAutoLock(r: AutoLockReason): string {
+  switch (r) {
+    case "session_locked":
+      return "Windows was locked";
+    case "logoff":
+      return "you signed out of Windows";
+    case "disconnected":
+      return "the session was disconnected";
+    case "suspend":
+      return "the PC went to sleep";
+    case "display_off":
+      return "the display turned off";
+    case "idle":
+      return "of inactivity";
+    case "tray":
+      return "it was locked from the tray";
+  }
+}
+
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;

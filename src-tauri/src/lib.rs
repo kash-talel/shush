@@ -16,7 +16,7 @@ pub mod vault;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use zeroize::Zeroizing;
 
 use crypto::{CipherSuite, CryptoError, KdfParams, KeyfileDigest};
@@ -430,6 +430,85 @@ fn lock(app: tauri::AppHandle) {
     os::clipboard::clear_if_ours();
 }
 
+/// Event sent to the UI when the vault locks without the user clicking Lock.
+const EVENT_AUTO_LOCKED: &str = "vault-auto-locked";
+
+/// Automatic lock from a session / power / idle trigger (issue #15).
+fn auto_lock(app: &tauri::AppHandle, reason: os::session::LockReason) {
+    let state = app.state::<VaultState>();
+    // Sleep-related triggers honour the vault's `auto_lock_on_sleep` setting;
+    // workstation lock, log-off and disconnect always lock.
+    let wanted = state
+        .with(|u| !reason.is_sleep_related() || u.vault.data().settings.auto_lock_on_sleep)
+        .unwrap_or(false); // already locked: nothing to do
+    if wanted {
+        state.lock();
+        os::clipboard::clear_if_ours();
+        let _ = app.emit(EVENT_AUTO_LOCKED, reason);
+    }
+}
+
+/// Shows, un-minimizes and focuses the main window (tray click, second launch).
+pub fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+    let open = MenuItem::with_id(app, "open", "Open shush", true, None::<&str>)?;
+    let lock_item = MenuItem::with_id(app, "lock", "Lock vault", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit shush", true, None::<&str>)?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &open,
+            &lock_item,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
+
+    let mut tray = TrayIconBuilder::with_id("main")
+        .tooltip("shush")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "open" => show_main_window(app),
+            "lock" => {
+                app.state::<VaultState>().lock();
+                os::clipboard::clear_if_ours();
+                let _ = app.emit(EVENT_AUTO_LOCKED, "tray");
+            }
+            "quit" => {
+                app.state::<VaultState>().lock();
+                os::clipboard::clear_if_ours();
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
 // ---- Items (roadmap Step 4) -------------------------------------------------
 
 /// Read-only access to the unlocked vault data.
@@ -565,6 +644,33 @@ fn generate_password(
 pub fn builder() -> tauri::Builder<tauri::Wry> {
     tauri::Builder::default()
         .manage(VaultState::default())
+        .setup(|app| {
+            setup_tray(app)?;
+            let handle = app.handle().clone();
+            os::session::watch_session(move |reason| auto_lock(&handle, reason));
+            let handle = app.handle().clone();
+            let idle_handle = app.handle().clone();
+            os::session::watch_idle(
+                move || {
+                    idle_handle
+                        .state::<VaultState>()
+                        .with(|u| u.vault.data().settings.auto_lock_idle_minutes)
+                        .unwrap_or(0)
+                },
+                move || auto_lock(&handle, os::session::LockReason::Idle),
+            );
+            Ok(())
+        })
+        // Spec §1: tray persistence. Closing the window hides it; the idle /
+        // session auto-lock keeps an unattended vault from staying open.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             app_info,
             vault_status,

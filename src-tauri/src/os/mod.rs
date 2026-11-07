@@ -1,4 +1,5 @@
-//! Windows integration (spec §6). Phase 4 ships the clipboard; auto-type,
-//! window-context detection, Windows Hello and screen protection follow.
+//! Windows integration (spec §6): clipboard (Phase 4), auto-lock triggers
+//! (Phase 5). Auto-type, window-context detection and Windows Hello follow.
 
 pub mod clipboard;
+pub mod session;

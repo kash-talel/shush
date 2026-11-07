@@ -3,9 +3,22 @@
   import { Fingerprint, LoaderCircle, Lock, TriangleAlert } from "@lucide/svelte";
   import PasswordField from "./PasswordField.svelte";
   import KeyfileAttach from "./KeyfileAttach.svelte";
-  import { toCmdError, unlock, type CmdError, type KeyfileInfo, type VaultStatus, type VaultSummary } from "../tauri-bridge";
+  import {
+    describeAutoLock,
+    toCmdError,
+    unlock,
+    type AutoLockReason,
+    type CmdError,
+    type KeyfileInfo,
+    type VaultStatus,
+    type VaultSummary,
+  } from "../tauri-bridge";
 
-  let { vault, onunlocked }: { vault: VaultStatus; onunlocked: (s: VaultSummary) => void } = $props();
+  let {
+    vault,
+    autoLockReason = null,
+    onunlocked,
+  }: { vault: VaultStatus; autoLockReason?: AutoLockReason | null; onunlocked: (s: VaultSummary) => void } = $props();
 
   let password = $state("");
   let keyfile = $state<{ path: string; info: KeyfileInfo } | null>(null);
@@ -59,6 +72,11 @@
         <Lock class="size-5 text-tactical" strokeWidth={1.75} aria-hidden="true" />
       </div>
       <h1 class="font-mono text-[13px] tracking-[0.18em] text-zinc-300">// SHUSH_VAULT_AUTHENTICATION</h1>
+      {#if autoLockReason}
+        <p class="rounded-full border border-cold/30 bg-cold/10 px-2.5 py-0.5 font-mono text-[10px] tracking-wider text-cold" role="status">
+          AUTO-LOCKED · {describeAutoLock(autoLockReason)}
+        </p>
+      {/if}
       <!-- Middle-truncate: the directory may shrink, the file name never does. -->
       <p class="flex max-w-full font-mono text-[11px] text-zinc-500" title={vault.path}>
         <span class="truncate">{vault.path.slice(0, cut + 1)}</span>
