@@ -17,9 +17,19 @@
 }
 
 html,
-body {
+body,
+#app {
   height: 100%;
+}
+
+html {
+  /* Dark native scrollbars, file inputs and form controls in WebView2. */
+  color-scheme: dark;
+}
+
+body {
   margin: 0;
+  overflow: hidden;
   background: var(--color-obsidian);
   color: #e4e4e7;
   font-family: var(--font-sans);
@@ -30,4 +40,9 @@ body {
 input,
 textarea {
   user-select: text;
+}
+
+::selection {
+  background: rgb(16 185 129 / 0.35);
+  color: #fafafa;
 }

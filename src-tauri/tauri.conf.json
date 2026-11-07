@@ -17,9 +17,11 @@
         "title": "shush",
         "width": 1100,
         "height": 720,
-        "minWidth": 800,
-        "minHeight": 520,
-        "center": true
+        "minWidth": 720,
+        "minHeight": 560,
+        "center": true,
+        "theme": "Dark",
+        "backgroundColor": "#09090b"
       }
     ],
     "security": {
@@ -40,7 +42,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": [
+      "nsis",
+      "msi"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

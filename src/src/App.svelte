@@ -1,38 +1,57 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ShieldCheck } from "@lucide/svelte";
-  import { appInfo, type AppInfo } from "./lib/tauri-bridge";
+  import StatusBar from "./lib/components/StatusBar.svelte";
+  import UnlockScreen from "./lib/components/UnlockScreen.svelte";
+  import CreateVaultScreen from "./lib/components/CreateVaultScreen.svelte";
+  import VaultHome from "./lib/components/VaultHome.svelte";
+  import {
+    appInfo,
+    lock,
+    vaultStatus,
+    type AppInfo,
+    type VaultStatus,
+    type VaultSummary,
+  } from "./lib/tauri-bridge";
 
-  // Phase 1 placeholder. The Unlock / Dashboard / Spotlight router lands in Phase 4.
+  // Router (spec §8): Create → Unlock → Vault. Spotlight arrives in Phase 5.
   let info = $state<AppInfo | null>(null);
-  let error = $state<string | null>(null);
+  let status = $state<VaultStatus | null>(null);
+  let summary = $state<VaultSummary | null>(null);
+
+  async function refresh() {
+    status = await vaultStatus();
+  }
+
+  async function doLock() {
+    await lock();
+    summary = null;
+    await refresh();
+  }
 
   onMount(async () => {
-    try {
-      info = await appInfo();
-    } catch (e) {
-      error = String(e);
-    }
+    [info] = await Promise.all([appInfo(), refresh()]);
+    // A reload of the WebView must not show stale unlocked UI: the Rust side
+    // may still hold the vault, so lock to get back to a known state.
+    if (status?.unlocked) await doLock();
   });
 </script>
 
-<main class="flex h-full flex-col">
-  <section class="flex flex-1 flex-col items-center justify-center gap-4">
-    <ShieldCheck class="size-10 text-tactical" strokeWidth={1.5} />
-    <p class="font-mono text-sm tracking-widest text-zinc-400">// SHUSH_VAULT_AUTHENTICATION</p>
-    <p class="font-mono text-xs text-zinc-600">phase 1 · crypto engine</p>
-  </section>
-
-  <footer
-    class="flex gap-3 border-t border-hairline bg-surface px-4 py-1.5 font-mono text-[11px] text-zinc-500"
-  >
-    <span>[VAULT: <span class="text-danger">LOCKED</span>]</span>
-    <span>│</span>
-    <span>
-      [CIPHERS:
-      <span class="text-cold">{info ? info.supported_ciphers.join(" / ") : error ? "ERR" : "…"}</span>]
-    </span>
-    <span>│</span>
-    <span>[v{info?.version ?? "?"}]</span>
-  </footer>
-</main>
+<div class="flex h-full flex-col">
+  {#if summary}
+    <VaultHome {summary} onlock={doLock} />
+  {:else if status && !status.exists}
+    <CreateVaultScreen vault={status} {info} oncreated={(s) => (summary = s)} />
+  {:else if status}
+    {#key status.path}
+      <UnlockScreen vault={status} onunlocked={(s) => (summary = s)} />
+    {/key}
+  {:else}
+    <div class="flex-1"></div>
+  {/if}
+  <StatusBar
+    {info}
+    locked={summary === null}
+    cipher={summary?.cipher ?? status?.cipher ?? null}
+    kdf={summary?.kdf ?? status?.kdf ?? null}
+  />
+</div>
