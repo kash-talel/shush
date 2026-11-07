@@ -1,0 +1,31 @@
+# shush — instructions for Claude
+
+## Workflow rule: find a skill before starting new work
+
+Before starting any new process or feature (a new phase, a new kind of task, a new
+tool or testing workflow), unless a suitable skill is already installed:
+
+1. Run `/find-skills` to search for a skill that fits the workflow.
+2. Vet the candidates (install count, source reputation, repo stars) and read the
+   skill's `SKILL.md` before installing it.
+3. Install the best match, then run it and follow it for the work.
+
+If installing is blocked (for example by permission rules), say so, give the user the
+install command, and continue with the closest equivalent approach.
+
+## Installed project skills
+
+- `.claude/skills/svelte-core-bestpractices`, `.claude/skills/svelte-code-writer`: official
+  Svelte skills (vendored from `sveltejs/ai-tools`, MIT). Follow them for every `.svelte` /
+  `.svelte.ts` change. The `npx @sveltejs/mcp svelte-autofixer` step needs the user to allow
+  running that package; until then validate with `npm run check` in `src/`.
+- `web-design-guidelines` (user-level): UI / accessibility review.
+
+## Testing the desktop app
+
+Drive the UI over the Chrome DevTools Protocol, never with mouse/keyboard input (the user may be
+working on the same machine):
+
+- Launch with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1"`.
+- Point the debug build at a scratch vault with `SHUSH_VAULT_PATH=<scratch>\vault.shush`. Never use
+  the real `%APPDATA%\com.shush.vault` vault for testing.

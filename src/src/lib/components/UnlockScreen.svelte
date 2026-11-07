@@ -10,7 +10,7 @@
   let password = $state("");
   let keyfile = $state<{ path: string; info: KeyfileInfo } | null>(null);
   let busy = $state(false);
-  // Seeded once from the header check; the screen is re-keyed per vault path.
+  // Seeded once from the header check; the screen re-mounts after every lock.
   let error = $state<CmdError | null>(untrack(() => vault.error));
   let passwordInput: HTMLInputElement | undefined = $state();
 
