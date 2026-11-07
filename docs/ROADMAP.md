@@ -14,7 +14,7 @@ and its PR is merged into `main`.
 | 5a | Desktop: auto-lock (session/suspend/display/idle), capture protection, tray, single-instance | ✅ implemented & verified (awaiting merge) | #32 |
 | 5b | Desktop: Spotlight overlay + global hotkey, window-context search, auto-type | ⏸ blocked on owner decisions (#13 / #14) | |
 | 4b | Attachments (stored outside the JSON payload, #5), folders | ⏳ after 6 (attachment storage needs a format decision) | |
-| 6a | Encrypted `.shushbackup` export (vault or separate credentials), import preview, merge / clean restore | ✅ implemented & verified (awaiting merge) | #33 |
+| 6a | Encrypted `.shushbackup` export (vault or separate credentials), import preview, merge / clean restore | ✅ implemented & verified (awaiting merge) | #34 |
 | 6b | CSV migration (Bitwarden / 1Password / KeePass / Chrome / Firefox) with conflict handling | ⏳ next | |
 | 7 | First-run onboarding (guided CSV import, #17), native messaging host (#16) | ⏳ | |
 | 8 | Duress / decoy vault (#8), LAN sync (#18), air-gapped mode (#25) | ⏳ | |
