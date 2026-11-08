@@ -113,11 +113,25 @@ mod imp {
     }
 
     pub(super) fn set_secret(utf16_nul: &[u16]) -> Result<u32, ClipboardError> {
-        let _open = Open::acquire()?;
+        let open = Open::acquire()?;
         // SAFETY: clipboard is open.
         if unsafe { EmptyClipboard() } == 0 {
             return Err(ClipboardError::Failed);
         }
+        if let Err(e) = place_formats(utf16_nul) {
+            // A half-formatted secret (text without the exclusion formats) must
+            // not stay on the clipboard: it would be untracked and unexcluded.
+            // SAFETY: clipboard is still open (we hold `open`).
+            unsafe { EmptyClipboard() };
+            return Err(e);
+        }
+        drop(open);
+        Ok(sequence())
+    }
+
+    /// Writes the secret text and every format that keeps it out of Clipboard
+    /// History, Cloud Clipboard and monitoring apps. Caller holds the clipboard.
+    fn place_formats(utf16_nul: &[u16]) -> Result<(), ClipboardError> {
         // SAFETY: reinterpreting a &[u16] as bytes is valid (no padding, u8 alignment).
         let text = unsafe {
             std::slice::from_raw_parts(utf16_nul.as_ptr().cast::<u8>(), utf16_nul.len() * 2)
@@ -134,8 +148,7 @@ mod imp {
         )?;
         set_data(register("CanIncludeInClipboardHistory"), &zero)?;
         set_data(register("CanUploadToCloudClipboard"), &zero)?;
-        drop(_open);
-        Ok(sequence())
+        Ok(())
     }
 
     pub(super) fn sequence() -> u32 {

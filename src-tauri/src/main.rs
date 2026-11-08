@@ -10,6 +10,14 @@ fn main() {
             shush_lib::show_main_window(app);
         }))
         .plugin(tauri_plugin_dialog::init())
-        .run(tauri::generate_context!())
-        .expect("error while running shush");
+        .build(tauri::generate_context!())
+        .expect("error while building shush")
+        .run(|_app, event| {
+            // Spec §6.3: a copied secret must not outlive the app, whichever
+            // path exits it (tray quit, programmatic exit, ...). Clears only if
+            // the clipboard still holds shush's content.
+            if let tauri::RunEvent::Exit = event {
+                shush_lib::os::clipboard::clear_if_ours();
+            }
+        });
 }
