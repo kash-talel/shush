@@ -6,5 +6,6 @@ pub mod clipboard;
 pub mod memory;
 pub mod pipe;
 pub mod recycle;
+pub mod replace;
 pub mod session;
 pub mod win_context;
