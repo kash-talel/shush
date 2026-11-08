@@ -83,6 +83,7 @@ flowchart TD
 
 Normative design: [`windows-hello.md`](windows-hello.md). In short:
 
+0. **Mechanism**: Exclusively uses WinRT `Windows.Security.Credentials.KeyCredentialManager` (TPM-backed when available). DPAPI and legacy CNG key-storage-provider UI prompts (`NCRYPT_UI_POLICY`) are strictly rejected.
 1. **Cold Unlock**: Vault requires the **Master Password** (and **Keyfile**, if set). Only a password unlock arms a Hello session, with one Hello prompt.
 2. **Session**: the vault sub-keys are wrapped under a key derived from a Hello signature over a random in-memory challenge. Ciphertext and challenge live in process memory only; nothing goes to disk, DPAPI or the registry.
 3. **Lock = wipe**: every lock wipes the plaintext keys and data. Hello re-derives the wrap key from a new user gesture; a dump of a locked shush holds no usable key.

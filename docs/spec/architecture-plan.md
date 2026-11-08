@@ -19,14 +19,14 @@ flowchart TD
     KF -->|"SHA-256 Hash"| KFH["Keyfile Digest (32 bytes)"]
     MP & KFH --> Composite["Composite Secret = MP || KFH"]
     
-    Composite --> KDF["Argon2id KDF\n(64MB RAM, 4 passes, 32-byte Salt)"]
+    Composite --> KDF["Argon2id KDF\n(64MB RAM, 3 passes, 32-byte Salt)"]
     KDF --> MK["Master Key (256-bit)"]
     MK --> HKDF["HKDF-SHA256 Expansion"]
     HKDF --> VEK["Vault Encryption Key (AES-256-GCM / XChaCha20)"]
     HKDF --> VAK["Auth Canary Key (Trial Verification)"]
     
     VEK --> Encrypt["Encrypt / Decrypt Vault Payload"]
-    Plaintext["Vault Plaintext (JSON / SQLite)"] <--> Encrypt <--> Ciphertext["Encrypted Vault (.shush file)"]
+    Plaintext["Vault Plaintext (Zstd-compressed JSON)"] <--> Encrypt <--> Ciphertext["Encrypted Vault (.shush file)"]
 
     subgraph Fast Unlock Session
         VEK -.->|"User toggles Windows Hello"| TPMWrap["Wrap sub-keys under a per-session KEK\n(HKDF of a Hello signature, memory only)"]
@@ -65,50 +65,64 @@ Instead of keeping sensitive fields individually encrypted inside a plaintext da
 |   - Quick check if password is correct without loading DB   |
 +-------------------------------------------------------------+
 | Encrypted Payload (AEAD Ciphertext)                         |
-|   - Compressed (zstandard) SQLite database or JSON model     |
+|   - Compressed (zstandard) JSON model (VaultData)           |
 |   - Auth Tag (16 bytes)                                     |
 +-------------------------------------------------------------+
 ```
 
+> [!NOTE]
+> The container format above illustrates the envelope concept. The normative on-disk format is defined in [`FORMAT.md`](../FORMAT.md) (format version 3 with dual fixed-size slots for plausible deniability; version 2 for `.shushbackup` single payloads).
+
 ### 2.2 Data Schema
 
-When unlocked and decrypted into memory, the database organizes user credentials with rich metadata:
+When decrypted into memory, the payload deserializes into an in-memory document tree (`VaultData`, defined normatively in [`master-specification.md`](master-specification.md#5-in-memory-data-models--schema) and implemented in `src-tauri/src/vault/models.rs`).
 
 ```mermaid
 erDiagram
-    VAULT_ITEM ||--o{ CUSTOM_FIELD : contains
+    VAULT_DATA ||--o{ VAULT_ITEM : contains
+    VAULT_DATA ||--o{ FOLDER : contains
+    VAULT_DATA ||--|| VAULT_SETTINGS : configures
+    VAULT_ITEM ||--o{ ATTACHMENT : attaches
     VAULT_ITEM ||--o{ PASSWORD_HISTORY : tracks
     VAULT_ITEM }|--o| FOLDER : belongs_to
-    VAULT_ITEM }|--o{ TAG : has
+
+    VAULT_DATA {
+        uint32 version "Schema version (1)"
+        datetime updated_at "RFC 3339 UTC"
+    }
 
     VAULT_ITEM {
         uuid id PK
-        string type "login | note | card | identity"
+        string type "login | secure_note"
         string title
-        string username
-        string password
-        string url
-        string totp_secret "For 2FA authenticator"
-        string notes
+        uuid folder_id FK
+        array tags "string[]"
         boolean favorite
+        string notes
         datetime created_at
         datetime updated_at
-        datetime last_used
-    }
-
-    CUSTOM_FIELD {
-        uuid id PK
-        uuid item_id FK
-        string label
-        string value
-        string field_type "text | hidden | boolean"
+        datetime last_used_at
+        string username "login only"
+        string password "login only"
+        string url "login only"
+        string totp_secret "login only"
+        string content "secure_note only"
     }
 
     PASSWORD_HISTORY {
-        uuid id PK
-        uuid item_id FK
-        string old_password
+        string password
         datetime changed_at
+        string source "Optional, e.g. import origin"
+        string status "active_superseded | archived_conflict"
+    }
+
+    ATTACHMENT {
+        uuid id PK
+        string filename
+        string mime_type
+        uint64 size_bytes
+        string data_base64 "Empty if sidecar blob"
+        datetime created_at
     }
 
     FOLDER {
@@ -116,7 +130,19 @@ erDiagram
         string name
         string icon
     }
+
+    VAULT_SETTINGS {
+        uint32 clipboard_clear_seconds
+        uint32 auto_lock_idle_minutes
+        boolean auto_lock_on_sleep
+        boolean enable_windows_hello
+        boolean air_gapped_mode
+        boolean duress_pin_enabled
+    }
 ```
+
+> [!NOTE]
+> Early architectural ideation contemplated SQLite storage and conceptual item types (`card`, `identity`, `CUSTOM_FIELD`). The production design standardized on a zero-dependency, authenticated Zstandard-compressed JSON payload (`VaultData`) supporting `login` and `secure_note` items with embedded `password_history` arrays (`{password, changed_at, source, status}`). Additional item types may be evaluated in future format versions.
 
 ---
 
@@ -169,6 +195,7 @@ graph LR
 
 > [!TIP]
 > **Rust + Tauri v2** provides the ideal balance: the sensitive cryptographic and vault logic stays in strictly typed, memory-safe Rust with instant memory clearing, while the UI can be built with modern, ultra-responsive tools like Tailwind and Svelte.
+> The workspace follows a split layout: the Tauri/Rust core resides in `src-tauri/`, while the frontend project is housed in `src/` (with source files under `src/src/`). See [`master-specification.md`](master-specification.md#8-complete-project-layout) for the complete directory layout.
 
 ---
 
@@ -178,6 +205,7 @@ To make `shush` feel effortless and enjoyable for daily use:
 
 1. **Global Quick Search (`Ctrl + Alt + Space`)**:
    - Opens a Spotlight/Raycast-like mini search overlay.
+   - Hotkey: `Ctrl + Alt + Space` (Owner decision #14: selected to prevent hotkey collisions with Windows keyboard layout switching, superseding early drafts of `Alt + Shift + S` and `Ctrl + Space`).
    - Type 2 letters of a website name (e.g., `"gi"` for GitHub), press Enter to copy the password, or `Ctrl+Enter` to copy the username.
 2. **Integrated Built-in TOTP Authenticator**:
    - Generates 6-digit 2FA codes directly alongside the password, with a progress ring showing the remaining 30-second window.
@@ -195,6 +223,9 @@ To make `shush` feel effortless and enjoyable for daily use:
 ---
 
 ## 6. Implementation Roadmap
+
+> [!NOTE] Authoritative Roadmap
+> The preliminary 4-phase outline below reflects early architecture scoping. The authoritative roadmap tracking all 8 phases, milestones, active progress, and owner decisions is maintained in [`docs/ROADMAP.md`](../ROADMAP.md) and [`master-specification.md` §12](master-specification.md#12-implementation-roadmap-for-claude).
 
 ### Phase 1: Cryptographic Engine & Vault Core (CLI / Backend)
 - [ ] Implement `Argon2id` key derivation with composite inputs (`MasterPassword + SHA-256(Keyfile)`).
@@ -215,10 +246,10 @@ To make `shush` feel effortless and enjoyable for daily use:
 - [ ] Windows System Tray minimization & auto-launch on Windows startup.
 - [ ] Clipboard auto-wipe timer with sequence validation.
 - [ ] Auto-lock when workstation locks or goes idle.
-- [ ] Quick Search overlay (Spotlight style) with global hotkey.
+- [ ] Quick Search overlay (Spotlight style) with global hotkey (`Ctrl + Alt + Space`).
 
 ### Phase 4: Advanced Features & Hardening
 - [ ] TOTP Authenticator (RFC 6238) calculation and visual timers.
 - [ ] Windows Hello quick unlock per [`windows-hello.md`](windows-hello.md) (`KeyCredentialManager`, memory-only session).
-- [ ] Export (Encrypted `.shush` backup, Plaintext CSV with warning modal) and Import (Bitwarden / 1Password / Chrome CSV).
+- [ ] Export (Encrypted `.shushbackup` backup [magic `SHBKP`], Plaintext CSV with warning modal) and Import (Bitwarden / 1Password / Chrome CSV).
 - [ ] Memory dump protection (`SetWindowDisplayAffinity`, `VirtualLock`).
