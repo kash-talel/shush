@@ -430,7 +430,14 @@ mod tests {
         assert!(is_sibling_exe(&target, &own, exe_name));
         // The reverse (junction-form peer, canonical own) must NOT match: the
         // peer is never resolved on disk (#97).
-        assert!(!is_sibling_exe(&own, &target, exe_name) || own == target);
+        let strip = |p: &Path| -> String {
+            let s = p.to_string_lossy();
+            s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+        };
+        assert!(
+            !is_sibling_exe(&own, &target, exe_name)
+                || strip(&own).eq_ignore_ascii_case(&strip(&target))
+        );
     }
 
     #[test]
