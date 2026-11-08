@@ -25,6 +25,7 @@ Follow this strict step-by-step procedure:
    gh issue view <NUMBER> --comments
    ```
 2. Inspect related specifications in `docs/spec/`, `docs/FORMAT.md`, and the relevant code files (`src-tauri/src/` or `src/src/`).
+3. Check if an installed skill applies (e.g. `svelte-core-bestpractices`, `frontend-design`, `native-feel-cross-platform-desktop`). If the task involves a new tool, stack component, or testing workflow without an installed skill, invoke `find-skills` per `CLAUDE.md` to search and vet candidate skills before proceeding.
 
 ## Step 3: File Discovered Bugs & Feature Suggestions
 If during your analysis, review, or implementation you discover:
