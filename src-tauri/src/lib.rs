@@ -98,6 +98,14 @@ impl From<VaultError> for CmdError {
                 format!("Could not access the vault file ({kind})."),
             ),
             V::WriteVerifyFailed => Self::new("WRITE_FAILED", e.to_string()),
+            V::InUse => Self::new(
+                "VAULT_IN_USE",
+                "This vault is open in another shush window or program. Close it there first.",
+            ),
+            V::ChangedOnDisk => Self::new(
+                "VAULT_CHANGED_ON_DISK",
+                "The vault file was changed by another program since you unlocked it.                  Your change was not saved. Lock and unlock the vault to load the current version.",
+            ),
             V::NotAVault
             | V::WrongKind(_)
             | V::UnsupportedVersion(_)
@@ -716,6 +724,7 @@ async fn create_vault(
     blocking(move || {
         let state = app.state::<VaultState>();
         let ticket = state.begin_unlock();
+        let lock = vault::lock::VaultLock::acquire(&path)?;
         let vault = create_vault_blocking(
             &path,
             password.as_bytes(),
@@ -742,7 +751,7 @@ async fn create_vault(
         })?;
         let s = summary(&path, &vault);
         state
-            .finish_unlock(ticket, Unlocked { path, vault })
+            .finish_unlock(ticket, Unlocked { path, vault, lock })
             .map_err(|_| {
                 CmdError::new("LOCKED_DURING_UNLOCK", "Vault was locked while opening.")
             })?;
@@ -788,12 +797,15 @@ async fn unlock(
     blocking(move || {
         let state = app.state::<VaultState>();
         let ticket = state.begin_unlock();
+        // Taken before reading the file, so the snapshot we load cannot be
+        // replaced by another process while we hold it (issue #9).
+        let lock = vault::lock::VaultLock::acquire(&path)?;
         let vault = unlock_blocking(&path, password.as_bytes(), keyfile_path.as_deref())?;
         // Remove attachment blobs left behind by an interrupted add/delete.
         vault::attachments::gc_orphans(&path, vault.data());
         let s = summary(&path, &vault);
         state
-            .finish_unlock(ticket, Unlocked { path, vault })
+            .finish_unlock(ticket, Unlocked { path, vault, lock })
             .map_err(|_| {
                 CmdError::new("LOCKED_DURING_UNLOCK", "Vault was locked while opening.")
             })?;

@@ -15,6 +15,7 @@ pub mod backup;
 pub mod container;
 pub mod importer;
 pub mod items;
+pub mod lock;
 pub mod models;
 pub mod registry;
 pub mod state;
@@ -79,6 +80,13 @@ pub enum VaultError {
     /// The bytes read back after writing did not verify.
     #[error("written vault failed verification; the previous vault was kept")]
     WriteVerifyFailed,
+    /// Another process holds this vault open (issue #9).
+    #[error("this vault is open in another shush process")]
+    InUse,
+    /// The file on disk is no longer the one this vault was loaded from
+    /// (another writer replaced it); saving would discard its changes (issue #9).
+    #[error("the vault file was changed by another program since it was opened")]
+    ChangedOnDisk,
     /// Underlying cryptographic failure.
     #[error(transparent)]
     Crypto(#[from] CryptoError),
@@ -108,6 +116,34 @@ pub struct OpenVault {
     header: Header,
     keys: VaultKeys,
     data: VaultData,
+    /// Fingerprint of the file image this vault was loaded from or last
+    /// wrote; `None` until it exists on disk. A save only replaces exactly
+    /// that file (optimistic concurrency, issue #9).
+    disk_id: Option<DiskId>,
+}
+
+/// Identifies one written file image: SHA-256 of its header, which holds the
+/// random nonces and (v2) `SAVE_ID` drawn on every save, so two saves never
+/// share it. Not a secret and not an integrity check (the AEAD is).
+type DiskId = [u8; 32];
+
+fn disk_id(bytes: &[u8]) -> DiskId {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(&bytes[..bytes.len().min(HEADER_LEN)]).into()
+}
+
+/// The [`DiskId`] of the file currently at `path`, or `None` if there is none.
+fn disk_id_at(path: &Path) -> Result<Option<DiskId>, VaultError> {
+    use std::io::Read;
+    let mut buf = Vec::with_capacity(HEADER_LEN);
+    match std::fs::File::open(path) {
+        Ok(f) => {
+            f.take(HEADER_LEN as u64).read_to_end(&mut buf)?;
+            Ok(Some(disk_id(&buf)))
+        }
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
 }
 
 impl std::fmt::Debug for OpenVault {
@@ -139,6 +175,7 @@ impl OpenVault {
             keys: VaultKeys::derive(&master),
             header,
             data: VaultData::new(),
+            disk_id: None,
         })
     }
 
@@ -163,7 +200,12 @@ impl OpenVault {
         sealed.verify_canary(&keys)?;
         let plaintext = sealed.open_payload(&keys)?;
         let data: VaultData = decode_json(&plaintext)?;
-        Ok(Self { header, keys, data })
+        Ok(Self {
+            header,
+            keys,
+            data,
+            disk_id: Some(disk_id(bytes)),
+        })
     }
 
     /// Serializes and seals the vault into a complete file image.
@@ -174,9 +216,18 @@ impl OpenVault {
 
     /// Writes the vault crash-safely, verifying the written bytes decrypt
     /// back to the same data before the old file is replaced.
-    pub fn save(&self, path: &Path) -> Result<(), VaultError> {
+    ///
+    /// Refuses with [`VaultError::ChangedOnDisk`] if the file at `path` is not
+    /// the one this vault was loaded from or last wrote, so a concurrent
+    /// writer's changes are never silently overwritten (issue #9).
+    pub fn save(&mut self, path: &Path) -> Result<(), VaultError> {
         let bytes = self.to_bytes()?;
+        let expected = self.disk_id;
         container::write_atomic(path, &bytes, |written| {
+            // Checked as late as possible: right before the old file is replaced.
+            if disk_id_at(path)? != expected {
+                return Err(VaultError::ChangedOnDisk);
+            }
             let sealed = container::parse(written)?;
             sealed.verify_canary(&self.keys)?;
             let data: VaultData = decode_json(&sealed.open_payload(&self.keys)?)?;
@@ -185,7 +236,9 @@ impl OpenVault {
             } else {
                 Err(VaultError::WriteVerifyFailed)
             }
-        })
+        })?;
+        self.disk_id = Some(disk_id(&bytes));
+        Ok(())
     }
 
     /// Applies `f` to a copy of the data, saves it, and only then commits it in
@@ -256,7 +309,7 @@ pub fn create_vault_file(
     if path.exists() {
         return Err(VaultError::AlreadyExists);
     }
-    let vault = OpenVault::create(password, keyfile, options)?;
+    let mut vault = OpenVault::create(password, keyfile, options)?;
     vault.save(path)?;
     Ok(vault)
 }
@@ -435,6 +488,59 @@ mod tests {
             v.data_mut().items.push(note(&format!("n{i}"), "short"));
         }
         assert_eq!(v.to_bytes().unwrap().len(), empty);
+    }
+
+    #[test]
+    fn stale_snapshot_cannot_overwrite_a_newer_save() {
+        // Two writers load generation N (issue #9).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.shush");
+        create_vault_file(&path, b"pw", None, FAST).unwrap();
+        let bytes = read_vault_file(&path).unwrap();
+        let mut a = OpenVault::unlock(&bytes, b"pw", None).unwrap();
+        let mut b = OpenVault::unlock(&bytes, b"pw", None).unwrap();
+
+        // A saves N+1; A can keep saving on top of its own writes.
+        for t in ["a1", "a2"] {
+            a.modify::<_, VaultError>(&path, |d| {
+                d.items.push(note(t, "x"));
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        // B's save from the stale snapshot is refused and rolled back.
+        let r = b.modify::<_, VaultError>(&path, |d| {
+            d.items.push(note("b", "x"));
+            Ok(())
+        });
+        assert_eq!(r, Err(VaultError::ChangedOnDisk));
+        assert!(b.data().items.is_empty());
+        let on_disk = OpenVault::unlock(&read_vault_file(&path).unwrap(), b"pw", None).unwrap();
+        assert_eq!(on_disk.data().items.len(), 2, "A's items survive");
+        assert!(!sibling_exists(&path, "tmp"));
+    }
+
+    #[test]
+    fn save_refuses_missing_or_unexpected_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.shush");
+        let mut v = create_vault_file(&path, b"pw", None, FAST).unwrap();
+
+        // The file was removed or moved away by someone else.
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(v.save(&path), Err(VaultError::ChangedOnDisk));
+        assert!(!path.exists(), "not silently recreated");
+
+        // A brand-new vault must not replace a file that appeared meanwhile.
+        let mut fresh = OpenVault::create(b"pw", None, FAST).unwrap();
+        std::fs::write(&path, b"someone else's file").unwrap();
+        assert_eq!(fresh.save(&path), Err(VaultError::ChangedOnDisk));
+        assert_eq!(std::fs::read(&path).unwrap(), b"someone else's file");
+    }
+
+    fn sibling_exists(path: &Path, suffix: &str) -> bool {
+        container::sibling(path, suffix).exists()
     }
 
     #[test]
