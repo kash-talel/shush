@@ -27,35 +27,39 @@
   }
 </script>
 
-<section class="flex min-h-0 w-72 shrink-0 flex-col border-r border-hairline">
-  <label class="flex h-12 items-center gap-2 border-b border-hairline px-3 focus-within:bg-surface">
+<section class="flex min-h-0 w-72 shrink-0 flex-col border-r border-hairline bg-obsidian/60 max-[1000px]:w-60">
+  <label class="flex h-12 items-center gap-2 border-b border-hairline px-3 transition-colors focus-within:bg-surface">
     <Search class="size-4 text-zinc-500" aria-hidden="true" />
-    <span class="font-mono text-sm text-tactical/70" aria-hidden="true">&gt;</span>
+    <span class="font-mono text-sm text-ruby" aria-hidden="true">›</span>
     <input
       bind:this={searchInput}
       bind:value={query}
       {onkeydown}
       type="search"
       spellcheck="false"
-      placeholder="search vault…"
+      placeholder="search vault"
       aria-label="Search vault"
-      class="min-w-0 flex-1 bg-transparent font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600"
+      class="min-w-0 flex-1 bg-transparent font-mono text-[12px] text-zinc-100 caret-ruby outline-none placeholder:text-zinc-600"
     />
-    <kbd class="rounded border border-hairline px-1 font-mono text-[10px] text-zinc-600">CTRL+F</kbd>
+    <kbd class="kbd">Ctrl F</kbd>
   </label>
 
   <ul class="min-h-0 flex-1 overflow-y-auto py-1" role="listbox" aria-label="Items">
     {#each items as item (item.id)}
-      <li role="option" aria-selected={item.id === selectedId}>
+      {@const on = item.id === selectedId}
+      <li role="option" aria-selected={on}>
         <button
           type="button"
           onclick={() => onselect(item.id)}
-          class={[
-            "flex w-full items-center gap-3 px-3 py-2 text-left transition",
-            item.id === selectedId ? "bg-surface shadow-[inset_2px_0_0_var(--color-tactical)]" : "hover:bg-surface/60",
-          ]}
+          class={["flex w-full items-center gap-3 px-3 py-2 text-left transition-colors", on ? "rail-on bg-surface" : "hover:bg-surface/70"]}
         >
-          <span class="grid size-8 shrink-0 place-items-center rounded-md border border-hairline bg-obsidian font-mono text-xs text-zinc-400 uppercase">
+          <!-- Stamped-steel monogram plate -->
+          <span
+            class={[
+              "grid size-8 shrink-0 place-items-center rounded-[3px] border font-mono text-[10.5px] font-semibold uppercase",
+              on ? "border-crimson/50 bg-crimson/10 text-ruby" : "border-hairline bg-raised text-zinc-400",
+            ]}
+          >
             {#if item.kind === "secure_note"}
               <NotebookText class="size-4" aria-hidden="true" />
             {:else if item.host}
@@ -66,11 +70,11 @@
           </span>
           <span class="min-w-0 flex-1">
             <span class="flex items-center gap-1.5">
-              <span class="truncate text-sm text-zinc-100">{item.title}</span>
-              {#if item.favorite}<Star class="size-3 shrink-0 fill-amber-300 text-amber-300" aria-label="Favorite" />{/if}
-              {#if item.has_totp}<ShieldCheck class="size-3 shrink-0 text-tactical" aria-label="Has 2FA" />{/if}
+              <span class={["truncate text-[13px]", on ? "text-zinc-50" : "text-zinc-200"]}>{item.title}</span>
+              {#if item.favorite}<Star class="size-3 shrink-0 fill-caution text-caution" aria-label="Favorite" />{/if}
+              {#if item.has_totp}<ShieldCheck class="size-3 shrink-0 text-uv" aria-label="Has 2FA" />{/if}
             </span>
-            <span class="block truncate font-mono text-[11px] text-zinc-500">
+            <span class="block truncate font-mono text-[10.5px] text-zinc-500">
               {item.kind === "secure_note" ? "secure note" : item.subtitle || item.host || "—"}
             </span>
           </span>

@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
-  import { Fingerprint, LoaderCircle, Lock, TriangleAlert } from "@lucide/svelte";
+  import { LoaderCircle, TriangleAlert } from "@lucide/svelte";
+  import Spindle from "./Spindle.svelte";
   import PasswordField from "./PasswordField.svelte";
   import KeyfileAttach from "./KeyfileAttach.svelte";
   import {
     describeAutoLock,
+    formatKdf,
     toCmdError,
     unlock,
     type AutoLockReason,
@@ -65,22 +67,22 @@
   onMount(() => passwordInput?.focus());
 </script>
 
-<section class="flex flex-1 items-center justify-center overflow-y-auto px-6 py-10 [@media(max-height:640px)]:py-4">
+<section class="flex flex-1 items-center justify-center overflow-y-auto px-6 py-8 [@media(max-height:640px)]:py-4">
   <div class="w-full max-w-[380px]">
-    <header class="mb-8 flex flex-col items-center gap-3 text-center [@media(max-height:640px)]:mb-5">
-      <div class="grid size-12 place-items-center rounded-xl border border-hairline bg-surface [@media(max-height:640px)]:hidden">
-        <Lock class="size-5 text-tactical" strokeWidth={1.75} aria-hidden="true" />
+    <header class="mb-7 flex flex-col items-center gap-3 text-center [@media(max-height:640px)]:mb-4">
+      <div class="mb-2 [@media(max-height:640px)]:hidden">
+        <Spindle spinning={busy} />
       </div>
-      <h1 class="font-mono text-[13px] tracking-[0.18em] text-zinc-300">// SHUSH_VAULT_AUTHENTICATION</h1>
+      <h1 class="font-display text-[28px] leading-none font-bold tracking-[-0.01em] text-zinc-50">Unlock vault</h1>
       {#if autoLockReason}
-        <p class="rounded-full border border-cold/30 bg-cold/10 px-2.5 py-0.5 font-mono text-[10px] tracking-wider text-cold" role="status">
-          AUTO-LOCKED · {describeAutoLock(autoLockReason)}
+        <p class="flex items-center gap-2 rounded-[3px] border border-uv/30 bg-uv/10 px-2 py-1 font-mono text-[10px] text-uv-soft" role="status">
+          <span class="led text-uv"></span> AUTO-LOCKED: {describeAutoLock(autoLockReason)}
         </p>
       {/if}
       <!-- Middle-truncate: the directory may shrink, the file name never does. -->
-      <p class="flex max-w-full font-mono text-[11px] text-zinc-500" title={vault.path}>
+      <p class="flex max-w-full font-mono text-[10.5px] text-zinc-500" title={vault.path}>
         <span class="truncate">{vault.path.slice(0, cut + 1)}</span>
-        <span class="shrink-0 text-cold/80">{vault.path.slice(cut + 1)}</span>
+        <span class="shrink-0 text-uv">{vault.path.slice(cut + 1)}</span>
       </p>
     </header>
 
@@ -96,16 +98,11 @@
         oninput={() => (error = null)}
       />
 
-      <div>
-        <span class="mb-1.5 flex items-baseline justify-between text-xs font-medium text-zinc-400">
-          Keyfile
-          {#if keyfileRequired}
-            <span class="font-normal text-amber-300">required for this vault</span>
-          {:else}
-            <span class="font-normal text-zinc-500">not used by this vault</span>
-          {/if}
-        </span>
-        {#if keyfileRequired}
+      {#if keyfileRequired}
+        <div>
+          <span class="mb-1.5 flex items-baseline justify-between text-xs font-medium text-zinc-300">
+            Keyfile <span class="spec text-caution!">required for this vault</span>
+          </span>
           <KeyfileAttach
             bind:keyfile
             required
@@ -113,8 +110,8 @@
             onerror={(e) => (error = e)}
             onchange={() => passwordInput?.focus()}
           />
-        {/if}
-      </div>
+        </div>
+      {/if}
 
       <!-- Reserve two lines so an error never shifts the centred layout. -->
       <div id="unlock-feedback" aria-live="polite" class="min-h-10">
@@ -126,24 +123,22 @@
         {/if}
       </div>
 
-      <button
-        type="submit"
-        disabled={!canSubmit}
-        class="flex h-11 items-center justify-center gap-2 rounded-lg bg-tactical font-mono text-sm font-semibold tracking-wider text-obsidian transition
-          hover:bg-emerald-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tactical
-          disabled:cursor-not-allowed disabled:bg-hairline disabled:text-zinc-500"
-      >
+      <button type="submit" disabled={!canSubmit} class="key h-11 text-[13px]">
         {#if busy}
           <LoaderCircle class="size-4 animate-spin" aria-hidden="true" /> DERIVING KEY…
         {:else}
-          UNLOCK VAULT <kbd class="rounded border border-current/30 px-1 text-[10px] font-normal opacity-70">↵</kbd>
+          UNLOCK VAULT <span class="kbd border-white/25! bg-black/20! text-white/80!">Enter</span>
         {/if}
       </button>
     </form>
 
-    <p class="mt-6 flex items-center justify-center gap-1.5 font-mono text-[11px] text-zinc-500 [@media(max-height:640px)]:mt-3">
-      <Fingerprint class="size-3.5" aria-hidden="true" />
-      Windows Hello can be enabled after first unlock
-    </p>
+    {#if vault.kdf}
+      <p class="mt-5 text-center font-mono text-[10px] text-zinc-600 [@media(max-height:640px)]:mt-3" aria-live="polite">
+        {#if busy}<span class="text-ruby">reading</span>{:else}key schedule{/if}
+        <span class="text-zinc-400">{formatKdf(vault.kdf).toLowerCase()}</span>
+        <span class="text-zinc-700">/</span>
+        <span class="text-zinc-400">{(vault.cipher?.name ?? "").toLowerCase()}</span>
+      </p>
+    {/if}
   </div>
 </section>

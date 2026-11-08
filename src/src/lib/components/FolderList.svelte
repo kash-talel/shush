@@ -70,7 +70,7 @@
 </script>
 
 {#snippet editor()}
-  <div class="flex h-8 items-center gap-1 rounded-md border border-tactical/50 bg-surface pr-1 pl-2">
+  <div class="flex h-8 items-center gap-1 rounded-[3px] border border-crimson/50 bg-[#09090e] pr-1 pl-2">
     <Folder class="size-3.5 shrink-0 text-zinc-500" aria-hidden="true" />
     <input
       bind:this={input}
@@ -81,22 +81,22 @@
       aria-label="Folder name"
       class="min-w-0 flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-600"
     />
-    <button type="button" onclick={commit} class="grid size-6 place-items-center rounded text-tactical hover:bg-hairline" aria-label="Save folder">
+    <button type="button" onclick={commit} class="grid size-6 place-items-center rounded text-ruby hover:bg-raised" aria-label="Save folder">
       <Check class="size-3.5" />
     </button>
-    <button type="button" onclick={() => (editing = null)} class="grid size-6 place-items-center rounded text-zinc-500 hover:bg-hairline" aria-label="Cancel">
+    <button type="button" onclick={() => (editing = null)} class="grid size-6 place-items-center rounded text-zinc-500 hover:bg-raised" aria-label="Cancel">
       <X class="size-3.5" />
     </button>
   </div>
 {/snippet}
 
-<div class="mt-4 flex min-h-0 flex-col gap-0.5 border-t border-hairline pt-3" aria-label="Folders">
+<div class="mt-3 flex min-h-0 flex-col gap-0.5 border-t border-hairline pt-3" aria-label="Folders">
   <div class="flex items-center justify-between px-2 pb-1">
-    <span class="text-[11px] tracking-wider text-zinc-500 uppercase">Folders</span>
+    <span class="spec">folders</span>
     <button
       type="button"
       onclick={() => startEdit("", "")}
-      class="grid size-6 place-items-center rounded text-zinc-500 hover:bg-hairline hover:text-zinc-200"
+      class="grid size-6 place-items-center rounded text-zinc-500 hover:bg-raised hover:text-zinc-200"
       aria-label="New folder"
     >
       <FolderPlus class="size-3.5" />
@@ -114,19 +114,19 @@
             onclick={() => onselect(f.id)}
             aria-current={activeId === f.id ? "page" : undefined}
             class={[
-              "flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-sm transition",
-              activeId === f.id ? "bg-hairline text-zinc-100" : "text-zinc-400 hover:bg-hairline/60 hover:text-zinc-200",
+              "flex h-8 min-w-0 flex-1 items-center gap-2 rounded-[3px] px-2 text-[13px] transition",
+              activeId === f.id ? "rail-on bg-raised text-zinc-50" : "text-zinc-400 hover:bg-raised hover:text-zinc-200",
             ]}
           >
             <Folder class="size-4 shrink-0" aria-hidden="true" />
             <span class="min-w-0 flex-1 truncate text-left">{f.name}</span>
-            <span class="font-mono text-[11px] text-zinc-500 group-hover:hidden">{f.item_count}</span>
+            <span class="font-mono text-[10px] text-zinc-500 tabular-nums group-hover:hidden group-focus-within:hidden">{f.item_count}</span>
           </button>
           <span class="hidden items-center group-hover:flex group-focus-within:flex">
             <button
               type="button"
               onclick={() => startEdit(f.id, f.name)}
-              class="grid size-6 place-items-center rounded text-zinc-500 hover:bg-hairline hover:text-zinc-200"
+              class="grid size-6 place-items-center rounded text-zinc-500 hover:bg-raised hover:text-zinc-200"
               aria-label="Rename {f.name}"
             >
               <Pencil class="size-3" />
@@ -135,7 +135,7 @@
               type="button"
               onclick={() => remove(f.id)}
               onblur={() => (confirmDelete = null)}
-              class={["grid size-6 place-items-center rounded hover:bg-hairline", confirmDelete === f.id ? "text-danger" : "text-zinc-500 hover:text-danger"]}
+              class={["grid size-6 place-items-center rounded hover:bg-raised", confirmDelete === f.id ? "text-danger" : "text-zinc-500 hover:text-danger"]}
               aria-label={confirmDelete === f.id ? `Click again to delete ${f.name} (items are kept)` : `Delete ${f.name}`}
               title={confirmDelete === f.id ? "Click again: delete folder, keep its items" : "Delete folder"}
             >

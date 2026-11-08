@@ -14,8 +14,8 @@ $D fill "#new-password" "Onboarding-Test-2026" >/dev/null
 $D fill "#confirm-password" "Onboarding-Test-2026" >/dev/null
 $D click "input[type=checkbox]" >/dev/null
 $D click "button[type=submit]" >/dev/null
-waitfor "$body.includes('BRING_YOUR_PASSWORDS')" 30000
-check "onboarding shown right after creation" "$body.includes('BRING_YOUR_PASSWORDS')"
+waitfor "$body.includes('Bring your passwords')" 30000
+check "onboarding shown right after creation" "$body.includes('Bring your passwords')"
 check "skip offered before any import" "$body.includes('SKIP FOR NOW')"
 
 echo "--- browser detection matches this PC ($EXPECT)"
@@ -54,7 +54,7 @@ waitfor "document.querySelector('#master-password')"
 $D fill "#master-password" "Onboarding-Test-2026" >/dev/null
 $D click "button[type=submit]" >/dev/null
 waitfor "document.querySelector('nav[aria-label=\"Vault sections\"]')" 30000
-check "normal unlock goes straight to the dashboard" "document.querySelector('nav') && !$body.includes('BRING_YOUR_PASSWORDS')"
+check "normal unlock goes straight to the dashboard" "document.querySelector('nav') && !$body.includes('Bring your passwords')"
 
 echo "=== $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

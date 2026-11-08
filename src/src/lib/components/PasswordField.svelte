@@ -36,14 +36,9 @@
 </script>
 
 <div>
-  <label for={id} class="mb-1.5 block text-xs font-medium text-zinc-400">{label}</label>
-  <div
-    class="flex items-center rounded-lg border bg-surface transition
-      {invalid
-      ? 'border-danger/70 focus-within:shadow-[0_0_0_3px_rgb(239_68_68/0.14)]'
-      : 'border-hairline focus-within:border-tactical/60 focus-within:shadow-[0_0_0_3px_rgb(16_185_129/0.12)]'}"
-  >
-    <span class="pl-3 font-mono text-sm text-tactical/70 select-none" aria-hidden="true">&gt;</span>
+  <label for={id} class="mb-1.5 block text-xs font-medium text-zinc-300">{label}</label>
+  <div class={["well flex items-center", invalid && "invalid"]}>
+    <span class="pl-3 font-mono text-sm text-ruby select-none" aria-hidden="true">›</span>
     <input
       {id}
       bind:this={input}
@@ -57,12 +52,12 @@
       onkeydown={trackCapsLock}
       onkeyup={trackCapsLock}
       {oninput}
-      class="h-11 min-w-0 flex-1 bg-transparent px-2.5 font-mono text-sm tracking-wide text-zinc-100 outline-none placeholder:text-zinc-600 disabled:opacity-60"
+      class="h-11 min-w-0 flex-1 bg-transparent px-2.5 font-mono text-[13px] tracking-wide text-zinc-50 caret-ruby outline-none placeholder:text-zinc-600 disabled:opacity-60"
       {placeholder}
     />
     <button
       type="button"
-      class="mr-1 grid size-9 place-items-center rounded-md text-zinc-500 transition hover:bg-hairline hover:text-zinc-200 focus-visible:outline-2 focus-visible:outline-tactical"
+      class="mr-1 grid size-9 place-items-center rounded-[3px] text-zinc-500 transition hover:bg-raised hover:text-zinc-100"
       onclick={() => (reveal = !reveal)}
       aria-label={reveal ? "Hide password" : "Show password"}
       aria-pressed={reveal}
@@ -71,7 +66,7 @@
     </button>
   </div>
   {#if capsLock}
-    <p class="mt-1.5 flex items-center gap-1.5 text-xs text-amber-400">
+    <p class="mt-1.5 flex items-center gap-1.5 text-xs text-caution">
       <TriangleAlert class="size-3.5" aria-hidden="true" /> Caps Lock is on
     </p>
   {/if}

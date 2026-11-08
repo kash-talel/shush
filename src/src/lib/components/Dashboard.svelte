@@ -161,24 +161,28 @@
 
 <div class="flex min-h-0 flex-1">
   <!-- Sidebar -->
-  <nav class="flex w-52 shrink-0 flex-col border-r border-hairline bg-surface/40 p-2" aria-label="Vault sections">
-    <p class="px-2 pt-1 pb-3 font-mono text-[11px] tracking-[0.18em] text-tactical">// SHUSH</p>
+  <nav class="steel flex w-52 shrink-0 flex-col border-r border-hairline p-2 max-[1000px]:w-44" aria-label="Vault sections">
+    <p class="flex items-center gap-2 px-2 pt-1.5 pb-3">
+      <span class="font-display text-[19px] leading-none font-extrabold tracking-[-0.02em] text-zinc-50">shush</span>
+      <span class="led text-ruby" aria-hidden="true"></span>
+    </p>
     {#each filters as f (f.id)}
+      {@const on = filter === f.id && folderFilter === null}
       <button
         type="button"
         onclick={() => {
           filter = f.id;
           folderFilter = null;
         }}
-        aria-current={filter === f.id && folderFilter === null ? "page" : undefined}
+        aria-current={on ? "page" : undefined}
         class={[
-          "flex h-8 items-center gap-2 rounded-md px-2 text-sm transition",
-          filter === f.id && folderFilter === null ? "bg-hairline text-zinc-100" : "text-zinc-400 hover:bg-hairline/60 hover:text-zinc-200",
+          "flex h-8 items-center gap-2 rounded-[3px] px-2 text-[13px] transition",
+          on ? "rail-on bg-raised text-zinc-50" : "text-zinc-400 hover:bg-raised hover:text-zinc-200",
         ]}
       >
-        <f.icon class="size-4" aria-hidden="true" />
+        <f.icon class={["size-4", on && "text-ruby"]} aria-hidden="true" />
         <span class="flex-1 text-left">{f.label}</span>
-        <span class="font-mono text-[11px] text-zinc-500">{counts[f.id]}</span>
+        <span class="font-mono text-[10px] text-zinc-500 tabular-nums">{counts[f.id]}</span>
       </button>
     {/each}
 
@@ -195,19 +199,19 @@
       }}
     />
 
-    <div class="mt-4 flex flex-col gap-1 border-t border-hairline pt-3">
+    <div class="mt-3 flex flex-col gap-0.5 border-t border-hairline pt-3">
       <button
         type="button"
         onclick={() => (mode = { kind: "create", itemKind: "login" })}
-        class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-tactical hover:bg-tactical/10"
+        class="flex h-8 items-center gap-2 rounded-[3px] px-2 text-[13px] text-ruby hover:bg-crimson/10"
       >
         <Plus class="size-4" aria-hidden="true" /> New login
-        <kbd class="ml-auto font-mono text-[10px] text-zinc-600">CTRL+N</kbd>
+        <kbd class="kbd ml-auto max-[1000px]:hidden">Ctrl N</kbd>
       </button>
       <button
         type="button"
         onclick={() => (mode = { kind: "create", itemKind: "secure_note" })}
-        class="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-zinc-300 hover:bg-hairline/60"
+        class="flex h-8 items-center gap-2 rounded-[3px] px-2 text-[13px] text-zinc-300 hover:bg-raised"
       >
         <Plus class="size-4" aria-hidden="true" /> New secure note
       </button>
@@ -215,7 +219,10 @@
         type="button"
         onclick={() => (mode = { kind: "backup" })}
         aria-current={mode.kind === "backup" ? "page" : undefined}
-        class={["flex h-8 items-center gap-2 rounded-md px-2 text-sm hover:bg-hairline/60", mode.kind === "backup" ? "bg-hairline text-zinc-100" : "text-zinc-300"]}
+        class={[
+          "flex h-8 items-center gap-2 rounded-[3px] px-2 text-[13px] hover:bg-raised",
+          mode.kind === "backup" ? "rail-on bg-raised text-zinc-50" : "text-zinc-300",
+        ]}
       >
         <DatabaseBackup class="size-4" aria-hidden="true" /> Backup &amp; import
       </button>
@@ -224,19 +231,20 @@
     <button
       type="button"
       onclick={() => showSpotlight()}
-      class="mt-auto flex h-8 items-center gap-2 rounded-md px-2 text-sm text-zinc-400 hover:bg-hairline/60 hover:text-zinc-200"
+      class="mt-auto flex items-start gap-2 rounded-[3px] px-2 py-1.5 text-left text-[13px] text-zinc-400 hover:bg-raised hover:text-zinc-200"
       title={hotkey ? `Quick search from anywhere: ${hotkey}` : "Quick search (global hotkey unavailable: another app uses it)"}
     >
-      <Search class="size-4" aria-hidden="true" /> Quick search
-      <kbd class="ml-auto font-mono text-[9px] text-zinc-600">{hotkey ? hotkey.toUpperCase() : "TRAY"}</kbd>
+      <Search class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+      <span class="flex min-w-0 flex-col gap-1">
+        Quick search
+        <span class="flex gap-1">
+          {#each hotkey ? hotkey.split("+") : ["Tray"] as k (k)}<kbd class="kbd">{k}</kbd>{/each}
+        </span>
+      </span>
     </button>
-    <button
-      type="button"
-      onclick={onlock}
-      class="mt-2 flex h-9 items-center gap-2 rounded-md border border-danger/30 px-2 text-sm text-danger hover:bg-danger/10"
-    >
+    <button type="button" onclick={onlock} class="key-steel mt-2 h-9 justify-start! gap-2 px-2 text-[13px] text-ruby! hover:border-crimson/50!">
       <LockKeyhole class="size-4" aria-hidden="true" /> Lock vault
-      <kbd class="ml-auto font-mono text-[10px] opacity-70">CTRL+L</kbd>
+      <kbd class="kbd ml-auto">Ctrl L</kbd>
     </button>
   </nav>
 
@@ -245,7 +253,7 @@
   <!-- Detail / editor -->
   <div class="flex min-h-0 min-w-0 flex-1 flex-col">
     {#if error}
-      <p class="border-b border-danger/30 bg-danger/10 px-4 py-2 text-xs text-danger" role="alert">
+      <p class="hazard border-b border-danger/40 bg-danger/10 px-4 py-2 text-xs text-danger" role="alert">
         <span class="font-mono">[{error.code}]</span> {error.message}
       </p>
     {/if}
@@ -266,15 +274,17 @@
         onfavorite={toggleFavorite}
       />
     {:else}
-      <div class="flex flex-1 flex-col items-center justify-center gap-2 text-center">
-        <p class="font-mono text-xs tracking-[0.18em] text-zinc-500">
-          {items.length === 0 ? "// VAULT_EMPTY" : "// NO_ITEM_SELECTED"}
-        </p>
-        <p class="max-w-64 text-xs text-zinc-500">
-          {items.length === 0
-            ? "Add your first login with Ctrl+N."
-            : "Select an item, or search with Ctrl+F."}
-        </p>
+      <div class="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+        {#if items.length === 0}
+          <h2 class="font-display text-[22px] font-bold text-zinc-100">Empty vault</h2>
+          <p class="max-w-64 text-xs leading-5 text-zinc-500">Add your first login, or bring passwords over from Backup &amp; import.</p>
+          <button type="button" onclick={() => (mode = { kind: "create", itemKind: "login" })} class="key mt-1 h-9 px-4 text-[11px]">
+            NEW LOGIN <span class="kbd border-white/25! bg-black/20! text-white/80!">Ctrl N</span>
+          </button>
+        {:else}
+          <p class="font-display text-[15px] font-semibold text-zinc-500">Nothing selected</p>
+          <p class="max-w-64 text-xs text-zinc-600">Pick an item, or search with <kbd class="kbd">Ctrl F</kbd></p>
+        {/if}
       </div>
     {/if}
   </div>

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { save } from "@tauri-apps/plugin-dialog";
-  import { ChevronRight, FileKey2, KeyRound, LoaderCircle, ShieldPlus, TriangleAlert } from "@lucide/svelte";
+  import { ChevronRight, FileKey2, KeyRound, LoaderCircle, TriangleAlert } from "@lucide/svelte";
+  import Spindle from "./Spindle.svelte";
   import PasswordField from "./PasswordField.svelte";
   import KeyfileAttach from "./KeyfileAttach.svelte";
   import {
@@ -51,8 +52,8 @@
     const bits = Math.round(length * Math.log2(Math.max(pool, 1)));
     if (length === 0) return { bits: 0, label: "", tone: "bg-hairline", pct: 0 };
     if (length < minChars || bits < 50) return { bits, label: "WEAK", tone: "bg-danger", pct: 25 };
-    if (bits < 80) return { bits, label: "FAIR", tone: "bg-amber-400", pct: 60 };
-    return { bits, label: "STRONG", tone: "bg-tactical", pct: 100 };
+    if (bits < 80) return { bits, label: "FAIR", tone: "bg-caution", pct: 60 };
+    return { bits, label: "STRONG", tone: "bg-uv", pct: 100 };
   });
 
   const keyfileReady = $derived(
@@ -116,21 +117,23 @@
   ];
 </script>
 
-<section class="flex flex-1 justify-center overflow-y-auto px-6 py-8">
-  <div class="my-auto w-full max-w-[420px]">
-    <header class="mb-6 flex flex-col items-center gap-3 text-center">
-      <div class="grid size-12 place-items-center rounded-xl border border-hairline bg-surface [@media(max-height:700px)]:hidden">
-        <ShieldPlus class="size-5 text-tactical" strokeWidth={1.75} aria-hidden="true" />
+<section class="flex flex-1 justify-center overflow-y-auto px-6 py-6">
+  <div class="my-auto w-full max-w-[440px]">
+    <header class="mb-5 flex items-center gap-4">
+      <div class="shrink-0 [@media(max-height:620px)]:hidden">
+        <Spindle spinning={busy} size={76} />
       </div>
-      <h1 class="font-mono text-[13px] tracking-[0.18em] text-zinc-300">// SHUSH_VAULT_INITIALIZATION</h1>
-      <p class="text-xs text-zinc-400">No vault found. Create one to get started.</p>
-      <p class="flex max-w-full font-mono text-[11px] text-zinc-500" title={vault.path}>
-        <span class="truncate">{vault.path.slice(0, cut + 1)}</span>
-        <span class="shrink-0 text-cold/80">{vault.path.slice(cut + 1)}</span>
-      </p>
+      <div class="min-w-0 flex-1">
+        <h1 class="font-display text-[26px] leading-tight font-bold tracking-[-0.01em] text-zinc-50">New vault</h1>
+        <p class="mt-0.5 text-xs text-zinc-400">No vault found here yet. Set a master password to create one.</p>
+        <p class="mt-1.5 flex max-w-full font-mono text-[10.5px] text-zinc-500" title={vault.path}>
+          <span class="truncate">{vault.path.slice(0, cut + 1)}</span>
+          <span class="shrink-0 text-uv">{vault.path.slice(cut + 1)}</span>
+        </p>
+      </div>
     </header>
 
-    <form class="flex flex-col gap-4" onsubmit={submit} novalidate>
+    <form class="flex flex-col gap-3.5" onsubmit={submit} novalidate>
       <div>
         <PasswordField
           id="new-password"
@@ -144,10 +147,13 @@
           oninput={() => (error = null)}
         />
         <div id="strength" class="mt-2 flex items-center gap-2" aria-live="polite">
-          <div class="h-1 flex-1 overflow-hidden rounded-full bg-hairline">
-            <div class="h-full rounded-full transition-all {strength.tone}" style="width: {strength.pct}%"></div>
+          <!-- Segmented meter: 12 cells lit to the strength level. -->
+          <div class="flex h-1.5 flex-1 gap-[3px]" aria-hidden="true">
+            {#each { length: 12 } as _, i (i)}
+              <span class={["flex-1 rounded-[1px] transition-colors", i < Math.round((strength.pct / 100) * 12) ? strength.tone : "bg-hairline"]}></span>
+            {/each}
           </div>
-          <span class="w-28 text-right font-mono text-[10px] text-zinc-500">
+          <span class="w-32 text-right font-mono text-[10px] text-zinc-500">
             {#if length === 0}
               min {minChars} chars
             {:else if length < minChars}
@@ -159,25 +165,27 @@
         </div>
       </div>
 
-      <PasswordField
-        id="confirm-password"
-        label="Confirm master password"
-        autocomplete="new-password"
-        placeholder="type it again"
-        bind:value={confirm}
-        invalid={mismatch}
-        disabled={busy}
-      />
-      {#if mismatch}
-        <p class="-mt-2 text-xs text-danger">Passwords do not match.</p>
-      {/if}
+      <div>
+        <PasswordField
+          id="confirm-password"
+          label="Confirm master password"
+          autocomplete="new-password"
+          placeholder="type it again"
+          bind:value={confirm}
+          invalid={mismatch}
+          disabled={busy}
+        />
+        {#if mismatch}
+          <p class="mt-1.5 text-xs text-danger">Passwords do not match.</p>
+        {/if}
+      </div>
 
       <!-- fieldset defaults to min-width:min-content; min-w-0 lets long paths truncate. -->
       <fieldset class="min-w-0">
-        <legend class="mb-1.5 flex w-full items-baseline justify-between text-xs font-medium text-zinc-400">
-          Keyfile <span class="font-normal text-zinc-500">second factor, optional</span>
+        <legend class="mb-1.5 flex w-full items-baseline justify-between text-xs font-medium text-zinc-300">
+          Keyfile <span class="spec">second factor, optional</span>
         </legend>
-        <div class="mb-2 grid grid-cols-3 gap-1 rounded-lg border border-hairline bg-surface p-1" role="radiogroup">
+        <div class="mb-2 grid grid-cols-3 gap-1 rounded-[5px] border border-hairline bg-[#09090e] p-1" role="radiogroup">
           {#each modes as m (m.id)}
             <button
               type="button"
@@ -188,8 +196,10 @@
                 mode = m.id;
                 error = null;
               }}
-              class="rounded-md px-2 py-1.5 text-xs transition focus-visible:outline-2 focus-visible:outline-tactical
-                {mode === m.id ? 'bg-hairline text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}"
+              class={[
+                "h-8 rounded-[3px] px-2 text-xs transition",
+                mode === m.id ? "key-steel w-full text-zinc-50" : "text-zinc-500 hover:text-zinc-200",
+              ]}
             >
               {m.label}
             </button>
@@ -201,14 +211,16 @@
             type="button"
             onclick={chooseGeneratePath}
             disabled={busy}
-            class="flex h-14 w-full items-center gap-2.5 rounded-lg border px-3 text-left text-xs transition focus-visible:outline-2 focus-visible:outline-tactical
-              {generatePath ? 'border-tactical/40 bg-tactical/5' : 'border-dashed border-hairline text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'}"
+            class={[
+              "flex h-14 w-full items-center gap-2.5 rounded-[4px] border px-3 text-left text-xs transition",
+              generatePath ? "border-crimson/40 bg-crimson/5" : "border-dashed border-edge text-zinc-400 hover:border-zinc-500 hover:text-zinc-200",
+            ]}
           >
-            <KeyRound class="size-4 shrink-0 {generatePath ? 'text-tactical' : ''}" aria-hidden="true" />
+            <KeyRound class={["size-4 shrink-0", generatePath && "text-ruby"]} aria-hidden="true" />
             {#if generatePath}
               {@const [dir, file] = splitPath(generatePath)}
               <span class="min-w-0 flex-1 font-mono">
-                <span class="flex text-tactical" title={generatePath}>
+                <span class="flex text-ruby" title={generatePath}>
                   <span class="truncate">{dir}</span><span class="shrink-0">{file}</span>
                 </span>
                 <span class="block truncate text-zinc-500">new 32-byte keyfile · click to change</span>
@@ -222,7 +234,7 @@
         {/if}
 
         {#if mode !== "none"}
-          <p class="mt-2 flex items-start gap-1.5 text-[11px] leading-4 {keyfileNextToVault ? 'text-amber-300' : 'text-zinc-500'}">
+          <p class={["mt-2 flex items-start gap-1.5 text-[11px] leading-4", keyfileNextToVault ? "text-caution" : "text-zinc-500"]}>
             <FileKey2 class="mt-px size-3.5 shrink-0" aria-hidden="true" />
             {#if keyfileNextToVault}
               The keyfile is in the same folder as the vault, which defeats its purpose. Store it on a USB drive.
@@ -233,50 +245,45 @@
         {/if}
       </fieldset>
 
-      <details class="group rounded-lg border border-hairline">
+      <details class="group rounded-[5px] border border-hairline bg-surface/50">
         <summary class="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-xs text-zinc-400 select-none hover:text-zinc-200">
           <ChevronRight class="size-3.5 transition group-open:rotate-90" aria-hidden="true" />
           Advanced cryptography
+          <span class="ml-auto font-mono text-[10px] text-zinc-600">
+            {(info?.supported_ciphers.find((c) => c.id === cipherId)?.name ?? "").toLowerCase()}
+          </span>
         </summary>
         <div class="flex flex-col gap-2 border-t border-hairline px-3 py-3">
           {#each info?.supported_ciphers ?? [] as c (c.id)}
             <label class="flex cursor-pointer items-center gap-2 text-xs text-zinc-300">
-              <input type="radio" name="cipher" value={c.id} bind:group={cipherId} disabled={busy} class="accent-emerald-500" />
-              <span class="font-mono">{c.name}</span>
-              {#if c.id === 0x01}<span class="text-zinc-500">default · hardware-accelerated</span>{/if}
-              {#if c.id === 0x02}<span class="text-zinc-500">192-bit nonce · constant-time</span>{/if}
+              <input type="radio" name="cipher" value={c.id} bind:group={cipherId} disabled={busy} class="accent-crimson" />
+              <span class="font-mono text-[11px]">{c.name}</span>
+              {#if c.id === 0x01}<span class="text-zinc-500">default, hardware-accelerated</span>{/if}
+              {#if c.id === 0x02}<span class="text-zinc-500">192-bit nonce, constant-time</span>{/if}
             </label>
           {/each}
           {#if info}
-            <p class="font-mono text-[11px] text-zinc-500">KDF: <span class="text-cold">{formatKdf(info.default_kdf)}</span></p>
+            <p class="font-mono text-[10.5px] text-zinc-500">kdf <span class="text-uv">{formatKdf(info.default_kdf).toLowerCase()}</span></p>
           {/if}
         </div>
       </details>
 
       <label class="flex cursor-pointer items-start gap-2 text-xs leading-5 text-zinc-400">
-        <input type="checkbox" bind:checked={acknowledged} disabled={busy} class="mt-1 accent-emerald-500" />
+        <input type="checkbox" bind:checked={acknowledged} disabled={busy} class="mt-1 accent-crimson" />
         <span>
-          I understand shush has <span class="text-zinc-200">no recovery</span>: if I forget the master
+          I understand shush has <span class="text-zinc-100">no recovery</span>: if I forget the master
           password{#if mode !== "none"}&nbsp;or lose the keyfile{/if}, the vault cannot be opened by anyone.
         </span>
       </label>
 
-      <div aria-live="polite" class="min-h-5">
-        {#if error}
-          <p class="flex items-start gap-1.5 text-xs leading-5 text-danger">
-            <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span><span class="font-mono">[{error.code}]</span> {error.message}</span>
-          </p>
-        {/if}
-      </div>
+      {#if error}
+        <p class="flex items-start gap-1.5 text-xs leading-5 text-danger" role="alert">
+          <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          <span><span class="font-mono">[{error.code}]</span> {error.message}</span>
+        </p>
+      {/if}
 
-      <button
-        type="submit"
-        disabled={!canSubmit}
-        class="flex h-11 items-center justify-center gap-2 rounded-lg bg-tactical font-mono text-sm font-semibold tracking-wider text-obsidian transition
-          hover:bg-emerald-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tactical
-          disabled:cursor-not-allowed disabled:bg-hairline disabled:text-zinc-500"
-      >
+      <button type="submit" disabled={!canSubmit} class="key mt-1 h-11 text-[13px]">
         {#if busy}
           <LoaderCircle class="size-4 animate-spin" aria-hidden="true" /> DERIVING KEY & ENCRYPTING…
         {:else}

@@ -57,3 +57,4 @@ set for. Neither changes anything for a normal install.
 | 6a backups | `phase6/e2e-phase6.sh` | 14/14 |
 | 6b CSV import | `phase6b/e2e-phase6b.sh` | 13/13 |
 | 7a first run | `phase7a/e2e-phase7a.sh` | 10/10 |
+| Design overhaul | `design-audit/audit.sh` (17-view screenshot walk, fresh vault) + 5b and 7a re-run | 11/11, 10/10 |

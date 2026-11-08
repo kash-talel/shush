@@ -81,16 +81,16 @@
 
 <form class="flex min-h-0 min-w-0 flex-1 flex-col" onsubmit={submit} novalidate>
   <header class="flex h-12 shrink-0 items-center gap-2 border-b border-hairline px-4">
-    <h2 class="flex-1 font-mono text-xs tracking-[0.15em] text-zinc-400">
-      // {existing ? "EDIT" : "NEW"}_{isLogin ? "LOGIN" : "SECURE_NOTE"}
+    <h2 class="flex-1 font-display text-[17px] font-bold text-zinc-50">
+      {existing ? "Edit" : "New"} {isLogin ? "login" : "secure note"}
     </h2>
-    <button type="button" onclick={oncancel} disabled={busy} class="h-8 rounded-md px-3 text-xs text-zinc-400 hover:bg-hairline">
-      Cancel <kbd class="ml-1 font-mono text-[10px] text-zinc-600">ESC</kbd>
+    <button type="button" onclick={oncancel} disabled={busy} class="key-steel h-8 px-2.5 text-xs">
+      Cancel <kbd class="kbd">Esc</kbd>
     </button>
     <button
       type="submit"
       disabled={!canSave}
-      class="flex h-8 items-center gap-1.5 rounded-md bg-tactical px-3 font-mono text-xs font-semibold tracking-wider text-obsidian hover:bg-emerald-400 disabled:bg-hairline disabled:text-zinc-500"
+      class="key h-8 px-3.5 text-[11px]"
     >
       {#if busy}<LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />{/if}
       SAVE
@@ -99,7 +99,7 @@
 
   <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
     {#snippet label(id: string, text: string)}
-      <label for={id} class="mb-1.5 block text-xs font-medium text-zinc-400">{text}</label>
+      <label for={id} class="mb-1.5 block text-xs font-medium text-zinc-300">{text}</label>
     {/snippet}
 
     <div>
@@ -109,7 +109,7 @@
         bind:this={titleInput}
         bind:value={title}
         maxlength="256"
-        class="h-10 w-full rounded-lg border border-hairline bg-surface px-3 text-sm text-zinc-100 outline-none focus:border-tactical/60"
+        class="well h-10 w-full px-3 text-sm text-zinc-100 outline-none"
         placeholder={isLogin ? "e.g. GitHub" : "e.g. Wi-Fi recovery codes"}
       />
     </div>
@@ -122,7 +122,7 @@
           bind:value={username}
           autocomplete="off"
           spellcheck="false"
-          class="h-10 w-full rounded-lg border border-hairline bg-surface px-3 font-mono text-sm text-zinc-100 outline-none focus:border-tactical/60"
+          class="well h-10 w-full px-3 font-mono text-[13px] text-zinc-100 outline-none"
         />
       </div>
 
@@ -136,11 +136,11 @@
             bind:value={password}
           />
         {:else}
-          <span class="mb-1.5 block text-xs font-medium text-zinc-400">Password</span>
+          <span class="mb-1.5 block text-xs font-medium text-zinc-300">Password</span>
           <button
             type="button"
             onclick={() => (passwordTouched = true)}
-            class="flex h-11 w-full items-center rounded-lg border border-dashed border-hairline px-3 font-mono text-sm text-zinc-500 hover:border-zinc-600 hover:text-zinc-300"
+            class="flex h-11 w-full items-center rounded-[5px] border border-dashed border-edge px-3 font-mono text-sm text-zinc-500 hover:border-zinc-600 hover:text-zinc-300"
           >
             •••••••••• <span class="ml-auto text-xs">unchanged · click to replace</span>
           </button>
@@ -149,7 +149,7 @@
           type="button"
           onclick={() => (showGenerator = !showGenerator)}
           aria-expanded={showGenerator}
-          class="mt-2 flex items-center gap-1.5 text-xs text-tactical hover:text-emerald-300"
+          class="mt-2 flex items-center gap-1.5 text-xs text-ruby hover:text-zinc-100"
         >
           <Sparkles class="size-3.5" aria-hidden="true" /> {showGenerator ? "Hide generator" : "Generate password"}
         </button>
@@ -173,7 +173,7 @@
           bind:value={url}
           spellcheck="false"
           placeholder="https://"
-          class="h-10 w-full rounded-lg border border-hairline bg-surface px-3 font-mono text-sm text-zinc-100 outline-none focus:border-tactical/60"
+          class="well h-10 w-full px-3 font-mono text-[13px] text-zinc-100 outline-none"
         />
       </div>
 
@@ -186,14 +186,14 @@
             spellcheck="false"
             autocomplete="off"
             placeholder={existing?.has_totp ? "leave empty to remove" : "optional"}
-            class="h-10 w-full rounded-lg border border-hairline bg-surface px-3 font-mono text-sm text-zinc-100 outline-none focus:border-tactical/60"
+            class="well h-10 w-full px-3 font-mono text-[13px] text-zinc-100 outline-none"
           />
         {:else}
           <button
             id="f-totp"
             type="button"
             onclick={() => (totpTouched = true)}
-            class="flex h-10 w-full items-center rounded-lg border border-dashed border-hairline px-3 text-left text-sm text-zinc-500 hover:border-zinc-600 hover:text-zinc-300"
+            class="flex h-10 w-full items-center rounded-[5px] border border-dashed border-edge px-3 text-left text-sm text-zinc-500 hover:border-zinc-600 hover:text-zinc-300"
           >
             {existing?.has_totp ? "configured · click to replace or remove" : "none · click to add"}
           </button>
@@ -206,7 +206,7 @@
           id="f-content"
           bind:value={content}
           spellcheck="false"
-          class="min-h-48 w-full flex-1 resize-none rounded-lg border border-hairline bg-surface p-3 font-mono text-sm leading-6 text-zinc-100 outline-none focus:border-tactical/60"
+          class="well min-h-48 w-full flex-1 resize-none p-3 font-mono text-sm leading-6 text-zinc-100 outline-none"
         ></textarea>
       </div>
     {/if}
@@ -217,7 +217,7 @@
         id="f-notes"
         bind:value={notes}
         rows="3"
-        class="w-full resize-y rounded-lg border border-hairline bg-surface p-3 text-sm text-zinc-100 outline-none focus:border-tactical/60"
+        class="well w-full resize-y p-3 text-sm text-zinc-100 outline-none"
       ></textarea>
     </div>
 
@@ -228,7 +228,7 @@
           id="f-tags"
           bind:value={tags}
           spellcheck="false"
-          class="h-10 w-full rounded-lg border border-hairline bg-surface px-3 font-mono text-sm text-cold outline-none focus:border-tactical/60"
+          class="well h-10 w-full px-3 font-mono text-sm text-uv outline-none"
         />
       </div>
       <div>
@@ -236,7 +236,7 @@
         <select
           id="f-folder"
           bind:value={folderId}
-          class="h-10 rounded-lg border border-hairline bg-surface px-2 text-sm text-zinc-100 outline-none focus:border-tactical/60"
+          class="well h-10 px-2 text-sm text-zinc-100 outline-none"
         >
           <option value={null}>No folder</option>
           {#each folders as f (f.id)}
@@ -245,7 +245,7 @@
         </select>
       </div>
       <label class="flex h-10 items-center gap-2 text-xs text-zinc-400">
-        <input type="checkbox" bind:checked={favorite} class="accent-emerald-500" /> Favorite
+        <input type="checkbox" bind:checked={favorite} class="accent-crimson" /> Favorite
       </label>
     </div>
 
