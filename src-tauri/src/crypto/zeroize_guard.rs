@@ -3,7 +3,8 @@
 //! Scope and limits (see issue #6): these types guarantee that *our* copy of a
 //! secret is overwritten when dropped. They cannot scrub copies made by the
 //! OS (pagefile, hibernation), by the WebView, or by third-party code that
-//! does not zeroize its internal state.
+//! does not zeroize its internal state. Long-lived keys are additionally
+//! page-locked by `os::memory::LockedBox`.
 
 use core::fmt;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};

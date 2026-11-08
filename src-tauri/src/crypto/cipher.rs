@@ -9,6 +9,8 @@ use sha2::Sha256;
 
 use super::zeroize_guard::{SecretBytes, SecretKey};
 use super::{fill_random, CryptoError};
+use crate::os::memory::LockedBox;
+use zeroize::Zeroize;
 
 /// AEAD authentication tag length (both suites).
 pub const TAG_LEN: usize = 16;
@@ -106,8 +108,15 @@ pub struct SealedPayload {
 }
 
 /// Sub-keys expanded from the master key with HKDF-SHA256.
+///
+/// They live for as long as the vault is unlocked, so they sit on their own
+/// `VirtualLock`ed page (best effort, issue #6) and are derived in place there,
+/// leaving no unwiped stack copies.
 #[derive(Debug)]
-pub struct VaultKeys {
+pub struct VaultKeys(LockedBox<KeyBlock>);
+
+#[derive(Zeroize)]
+struct KeyBlock {
     vek: SecretKey,
     canary: SecretKey,
     attachment: SecretKey,
@@ -118,36 +127,34 @@ impl VaultKeys {
     pub fn derive(master: &SecretKey) -> Self {
         // The master key is already uniformly random, so no HKDF salt is needed.
         let hk = Hkdf::<Sha256>::new(None, master.expose());
-        let mut vek = SecretKey::zeroed();
-        let mut canary = SecretKey::zeroed();
-        let mut attachment = SecretKey::zeroed();
+        let mut block = LockedBox::new(KeyBlock {
+            vek: SecretKey::zeroed(),
+            canary: SecretKey::zeroed(),
+            attachment: SecretKey::zeroed(),
+        });
         // 32 bytes is far below HKDF-SHA256's 8160-byte limit; cannot fail.
-        hk.expand(INFO_VEK, vek.as_mut_bytes())
+        hk.expand(INFO_VEK, block.vek.as_mut_bytes())
             .expect("valid HKDF length");
-        hk.expand(INFO_CANARY, canary.as_mut_bytes())
+        hk.expand(INFO_CANARY, block.canary.as_mut_bytes())
             .expect("valid HKDF length");
-        hk.expand(INFO_ATTACHMENT, attachment.as_mut_bytes())
+        hk.expand(INFO_ATTACHMENT, block.attachment.as_mut_bytes())
             .expect("valid HKDF length");
-        Self {
-            vek,
-            canary,
-            attachment,
-        }
+        Self(block)
     }
 
     /// Key that encrypts the vault payload.
     pub fn vault_encryption_key(&self) -> &SecretKey {
-        &self.vek
+        &self.0.vek
     }
 
     /// Key that encrypts the canary block.
     pub fn canary_key(&self) -> &SecretKey {
-        &self.canary
+        &self.0.canary
     }
 
     /// Key that encrypts attachment sidecar blobs.
     pub fn attachment_key(&self) -> &SecretKey {
-        &self.attachment
+        &self.0.attachment
     }
 
     /// Per-save payload key (format v2, issue #2):
@@ -159,7 +166,7 @@ impl VaultKeys {
     /// restore, a future bug) cannot become a two-time pad or leak the GHASH
     /// key, and GCM's 2^32-messages-per-key bound applies per save, not per vault.
     pub fn payload_save_key(&self, save_id: &[u8; SAVE_ID_LEN]) -> SecretKey {
-        let hk = Hkdf::<Sha256>::new(Some(save_id), self.vek.expose());
+        let hk = Hkdf::<Sha256>::new(Some(save_id), self.0.vek.expose());
         let mut key = SecretKey::zeroed();
         hk.expand(INFO_SAVE_KEY, key.as_mut_bytes())
             .expect("valid HKDF length");

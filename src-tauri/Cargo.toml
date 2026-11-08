@@ -58,6 +58,8 @@ windows-sys = { version = "0.52", features = [
     "Win32_System_IO",
     "Win32_System_Pipes",
     "Win32_System_Threading",
+    # Crash reports exclude heap memory (issue #6).
+    "Win32_System_ErrorReporting",
 ] }
 # --- Additions ---
 thiserror = "2"

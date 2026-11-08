@@ -1475,6 +1475,8 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
                 .build(),
         )
         .setup(|app| {
+            // Keep the unlocked vault out of crash reports (issue #6).
+            os::memory::harden_process();
             create_windows(app)?;
             setup_tray(app)?;
             // Another application may own the combination; Spotlight then stays

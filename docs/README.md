@@ -97,9 +97,9 @@ keyfile ─SHA-256┘   64 MiB · t=3 · p=4                          ├─► 
 - **Padding.** PADMÉ, so file size reveals little about item count.
 - **Rust owns the secrets.** The UI gets list rows and redacted item views. Copying, TOTP and
   password generation run in Rust. Editing an item never loads its current password into the UI.
-- **Memory.** Keys and decrypted data live in `zeroize` types and are wiped on lock. Known gaps
-  across the WebView2 and OS boundary are tracked in
-  [#6](https://github.com/kash-talel/shush/issues/6).
+- **Memory (best effort).** Keys and decrypted data live in `zeroize` types and are wiped on lock.
+  Vault keys sit on a `VirtualLock`ed page, and crash reports exclude the heap. Text typed or
+  revealed in the UI lives in WebView2 and can't be wiped; see spec §6.1 for the residual risks.
 
 ## Building
 
