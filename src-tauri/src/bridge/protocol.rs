@@ -33,7 +33,7 @@ use serde_json::{json, Value};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::origin::{item_matches, Origin};
-use super::pairing::{AuthError, Pairing, PairingOffer, NONCE_LEN};
+use super::pairing::{AuthError, Pairing, PairingOffer};
 use crate::vault::models::VaultItem;
 use crate::vault::VaultData;
 
@@ -64,6 +64,7 @@ impl Drop for Envelope {
 enum Request {
     Hello,
     Pair {
+        #[serde(alias = "ext_msg")]
         ext_nonce: String,
         proof: String,
     },
@@ -237,11 +238,9 @@ impl Bridge {
                 }))
             }
             Request::Pair { ext_nonce, proof } => {
-                let ext: [u8; NONCE_LEN] = B64
+                let ext = B64
                     .decode(ext_nonce)
-                    .ok()
-                    .and_then(|v| v.try_into().ok())
-                    .ok_or("BAD_REQUEST")?;
+                    .map_err(|_| "BAD_REQUEST")?;
                 let proof = B64.decode(proof).map_err(|_| "BAD_REQUEST")?;
                 let offer = self.offer.as_mut().ok_or(code(AuthError::NoOffer))?;
                 let result = offer.redeem(&ext, &proof, now);
@@ -357,7 +356,7 @@ fn wipe_value(v: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bridge::pairing::{extension_proof, request_mac};
+    use crate::bridge::pairing::{extension_pair, request_mac};
     use crate::vault::models::{BaseItem, LoginItem, PasswordHistoryEntry};
 
     struct Ext {
@@ -430,24 +429,16 @@ mod tests {
     fn paired(b: &mut Bridge) -> Ext {
         let code = b.start_pairing(Instant::now()).unwrap();
         let hello = open(b, json!({"type":"hello"}));
-        let host_nonce = B64
+        let host_msg = B64
             .decode(hello["result"]["pairing_nonce"].as_str().unwrap())
             .unwrap();
-        let ext_nonce = [3u8; NONCE_LEN];
-        let proof = extension_proof(&code, &ext_nonce, &host_nonce);
+        let (ext_msg, proof, key) = extension_pair(&code, &host_msg).unwrap();
         let r = open(
             b,
-            json!({"type":"pair","ext_nonce":B64.encode(ext_nonce),"proof":B64.encode(proof)}),
+            json!({"type":"pair","ext_nonce":B64.encode(ext_msg),"proof":B64.encode(proof)}),
         );
         assert_eq!(r["ok"], true, "{r}");
         let pair_id = r["result"]["pair_id"].as_str().unwrap().to_string();
-        // The extension derives the same key with HKDF; take it from the bridge here.
-        let key = b
-            .pairings
-            .iter()
-            .find(|p| p.id() == pair_id)
-            .unwrap()
-            .key_for_tests();
         Ext {
             pair_id,
             key,
