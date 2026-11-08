@@ -133,7 +133,7 @@ Argon2, `@noble/ciphers`) and by single-bit tamper tests.
 | `src-tauri/src/lib.rs` | Tauri commands: the only bridge between UI and core |
 | `src/` | Svelte 5 + Tailwind v4 UI: main window and Quick search window |
 | `docs/` | Specs, file format, roadmap, end-to-end test harness |
-| `site/` | Landing page (GitHub Pages) and design previews |
+| `site/` | Landing page (GitHub Pages) |
 
 ## Status
 

@@ -21,7 +21,7 @@ the real app (see [`testing/`](testing/README.md)), and its PR is merged into `m
 | 7b | Native messaging host + extension with one-time-code pairing (#16), extension-verified auto-type | 🔨 next, [plan](#phase-7b-plan) | |
 | 8 | Deniable duress vault (#8), on-demand PAKE LAN sync (#18), air-gapped mode (#25) | ⏳ [plan](#phase-8-plan) | |
 
-Not a phase: the punk industrial UI redesign and site previews (branch `design/punk-industrial`) are
+Not a phase: the punk industrial UI redesign and the liner-notes site (branch `design/punk-industrial`) are
 verified with a 17-view CDP screenshot audit and the 5b and 7a scripts; see `testing/design-audit/`.
 
 ## Owner decisions (2026-11-07)
