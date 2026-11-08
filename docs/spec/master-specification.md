@@ -341,9 +341,12 @@ The visual identity of `shush` merges the clandestine authority of a terminal/ha
      - **Reused Passwords**: Visual graph of credentials shared across multiple accounts.
      - **Weak Passwords**: Identifies entries with entropy below 60 bits.
      - **Stale Passwords**: Alerts on credentials untouched for over 180 days.
-6. **Emergency Recovery Kit Generator**:
-   - Printable 1-page tactical PDF / HTML recovery sheet generated during vault creation.
-   - Includes: Vault Identifier, Salt, Keyfile checksum, recovery checklist, and blank lines to handwrite the Master Password for safe-deposit box storage.
+6. **Emergency Recovery Kit Generator (revised, issue #27)**:
+   - In-window printable tactical recovery sheet (`window.print()` / `@media print` styling), generated on demand or during vault creation.
+   - **Zero disk residue**: Never generates intermediate PDF or HTML files on disk by default. Temporary files on disk leave traces in unallocated clusters, Windows Volume Shadow Copies, and cloud-synced folders (OneDrive/Dropbox). Direct in-memory rendering and printing prevents disk leakage.
+   - **Public metadata only**: Includes only public, non-secret metadata necessary for disaster recovery: Vault Name, Vault Identifier, KDF Salt (hex), KDF parameters (`m`, `t`, `p`), Cipher Suite ID, Keyfile SHA-256 fingerprint (if configured), creation timestamp, and a disaster recovery checklist.
+   - **Strictly no key material**: Never includes derived keys, VEK, CanaryKey, or raw keyfile bytes.
+   - **Opt-in password handwriting field with warning**: Does not include handwriting lines for the Master Password by default, as storing the master password on the same paper that identifies the vault creates a single point of compromise. Users storing the kit in a physical safe-deposit box may explicitly toggle an optional handwriting field (`[ ] Include Master Password handwriting box`), accompanied by a prominent warning that physical separation of credentials and identifiers is strongly recommended.
 
 ---
 
@@ -403,7 +406,7 @@ shush/
 │   │   │   │   ├── ItemDetail.svelte
 │   │   │   │   ├── PasswordGenerator.svelte
 │   │   │   │   ├── HealthRadar.svelte
-│   │   │   │   ├── EmergencyKitModal.svelte
+│   │   │   │   ├── EmergencyKitModal.svelte # In-window printable kit (window.print, zero disk residue)
 │   │   │   │   ├── TotpBadge.svelte
 │   │   │   │   └── SettingsModal.svelte
 │   │   │   ├── stores/

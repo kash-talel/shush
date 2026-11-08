@@ -1,10 +1,11 @@
 <script lang="ts">
   import { open, save } from "@tauri-apps/plugin-dialog";
-  import { ArchiveRestore, DatabaseBackup, FileArchive, LoaderCircle, TriangleAlert } from "@lucide/svelte";
+  import { ArchiveRestore, DatabaseBackup, FileArchive, FileKey, LoaderCircle, TriangleAlert } from "@lucide/svelte";
   import PasswordField from "./PasswordField.svelte";
   import KeyfileAttach from "./KeyfileAttach.svelte";
   import CsvImport from "./CsvImport.svelte";
   import DuressCard from "./DuressCard.svelte";
+  import EmergencyKitModal from "./EmergencyKitModal.svelte";
   import {
     applyImport,
     exportBackup,
@@ -29,6 +30,7 @@
   let exporting = $state(false);
   let exportResult = $state<string | null>(null);
   let exportError = $state<CmdError | null>(null);
+  let showRecoveryKit = $state(false);
 
   async function doExport() {
     exportError = null;
@@ -284,5 +286,26 @@
     </div>
     <CsvImport {onimported} />
     <DuressCard />
+
+    <!-- Emergency Recovery Kit (spec §7.2 item 6, issue #27) -->
+    <div class="flex flex-col gap-3 rounded-[7px] border border-hairline bg-surface/60 p-4 shadow-[inset_0_1px_0_rgb(255_255_255/0.03)]">
+      <h3 class="flex items-center gap-2 font-display text-[15px] font-bold text-zinc-50">
+        <FileKey class="size-4 text-emerald" aria-hidden="true" /> Emergency recovery kit
+      </h3>
+      <p class="text-xs leading-5 text-zinc-400">
+        Print a 1-page offline recovery sheet with envelope metadata and disaster instructions. Rendered directly in-window with <span class="font-semibold text-emerald">zero temporary files</span> written to disk.
+      </p>
+      <button
+        type="button"
+        onclick={() => (showRecoveryKit = true)}
+        class="key-steel h-9 text-xs font-semibold text-zinc-200 hover:text-white"
+      >
+        VIEW &amp; PRINT RECOVERY KIT…
+      </button>
+    </div>
   </div>
+
+  {#if showRecoveryKit}
+    <EmergencyKitModal onclose={() => (showRecoveryKit = false)} />
+  {/if}
 </section>
