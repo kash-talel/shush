@@ -108,3 +108,4 @@ CET, manifest) and a startup check in `.github/workflows/release.yml`.
 | Design overhaul | `design-audit/audit.sh` (17-view screenshot walk, fresh vault) + 5b and 7a re-run | 11/11, 10/10 |
 | Unseal unlock ritual | `unlock-ritual/e2e-unlock-ritual.sh`, reduced motion and full motion | 19/19, 19/19 |
 | Multiple vaults | `multi-vault/e2e-multi-vault.sh` (fresh scratch vault; uses `cdp.mjs` from `phase5b`) | 34/34 |
+| 8a duress vault | `phase8a/e2e-phase8a.sh` (fresh scratch vault, attachment rejection, decoy isolation) | 24/24 |
