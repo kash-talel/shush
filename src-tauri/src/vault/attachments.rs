@@ -185,12 +185,21 @@ fn all_attachment_ids(data: &VaultData) -> impl Iterator<Item = &str> {
     })
 }
 
+/// Whether any item has an attachment.
+pub fn has_attachments(data: &VaultData) -> bool {
+    all_attachment_ids(data).next().is_some()
+}
+
 fn write_blob(
     vault: &OpenVault,
     vault_path: &Path,
     id: &str,
     data: &[u8],
 ) -> Result<(), VaultError> {
+    // Blob files are visible to whoever opens the decoy (issue #8).
+    if vault.duress_enabled() {
+        return Err(VaultError::AttachmentsDisabled);
+    }
     let h = vault.header();
     let blob = seal_blob(vault.keys(), h.suite, &h.salt, id, data)?;
     let path = blob_path(vault_path, id)?;
@@ -329,7 +338,13 @@ impl OpenVault {
 
 /// Deletes blobs that no attachment references (crash leftovers, deleted
 /// items, merge conflicts). Returns how many were removed.
+///
+/// Skipped while a duress password is set: the decoy's own attachments live
+/// in the same folder and this vault cannot tell them apart (issue #8).
 pub fn gc_orphans(vault_path: &Path, data: &VaultData) -> usize {
+    if data.settings.duress_pin_enabled {
+        return 0;
+    }
     let Ok(entries) = std::fs::read_dir(blob_dir(vault_path)) else {
         return 0;
     };
@@ -509,6 +524,27 @@ mod tests {
             v2.read_attachment(&path2, &meta.id).unwrap().as_slice(),
             b"-----BEGIN KEY-----"
         );
+    }
+
+    #[test]
+    fn attachments_and_duress_exclude_each_other() {
+        let (_d, path, mut v, item) = setup();
+        let a = v.add_attachment(&path, &item, "k", "x", b"data").unwrap();
+        assert_eq!(
+            v.set_duress(&path, b"duress", None),
+            Err(VaultError::DuressWithAttachments)
+        );
+        v.delete_attachment(&path, &item, &a.id).unwrap();
+        v.set_duress(&path, b"duress", None).unwrap();
+        assert_eq!(
+            v.add_attachment(&path, &item, "k", "x", b"data").err(),
+            Some(VaultError::AttachmentsDisabled)
+        );
+        // The decoy's blobs are never collected by the real vault.
+        let decoy_blob = blob_path(&path, &new_id()).unwrap();
+        std::fs::write(&decoy_blob, b"decoy attachment").unwrap();
+        assert_eq!(gc_orphans(&path, v.data()), 0);
+        assert!(decoy_blob.exists());
     }
 
     #[test]

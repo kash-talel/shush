@@ -19,7 +19,7 @@ the real app (see [`testing/`](testing/README.md)), and its PR is merged into `m
 | 6b | CSV migration (Bitwarden / 1Password / KeePass / Chrome / Firefox) with conflict handling | ✅ complete | #35 |
 | 7a | First-run onboarding: browser detection (folder existence only) + guided CSV import (#17) | ✅ complete | #36 |
 | 7b | Native messaging host + extension with one-time-code pairing (#16), extension-verified auto-type | 🔨 in progress (steps 1, 2, 4 done), [plan](#phase-7b-plan) | #50 |
-| 8 | Deniable duress vault (#8), on-demand PAKE LAN sync (#18), air-gapped mode (#25) | ⏳ [plan](#phase-8-plan) | |
+| 8 | Deniable duress vault (#8), on-demand PAKE LAN sync (#18), air-gapped mode (#25) | 🔨 8a duress vault done (CDP script pending), [plan](#phase-8-plan) | |
 
 Not a phase: the punk industrial UI redesign and the liner-notes site (branch `design/punk-industrial`) are
 verified with a 17-view CDP screenshot audit and the 5b and 7a scripts; see `testing/design-audit/`.
@@ -150,8 +150,8 @@ Owner order: duress vault → LAN sync → air-gapped mode (lands with the first
   duress password cost the same work and time.
 - **Saves.** The open slot is re-sealed; the other slot is rewritten unchanged, byte for byte,
   without being readable. Both slots get fresh-looking framing on every write.
-- **Attachments.** Sidecar blob counts would reveal hidden items. Owner decision needed: store
-  attachments inside the slot (vault size cap) or disable attachments while a duress slot exists.
+- **Attachments.** Sidecar blob counts would reveal hidden items. Owner decision (2026-11-08):
+  disable attachments while a duress slot exists; the decoy starts empty.
 - **Migration.** v1 → v2 on the first save after an explicit upgrade prompt (#26), keeping v1 as
   `.bak`.
 - **Accept when:** a v2 file with and without a duress slot is indistinguishable by size, structure

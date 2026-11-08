@@ -44,6 +44,9 @@ const COMMANDS: &[&str] = &[
     "add_attachment",
     "save_attachment",
     "delete_attachment",
+    "duress_status",
+    "set_duress_password",
+    "clear_duress_password",
 ];
 
 fn main() {

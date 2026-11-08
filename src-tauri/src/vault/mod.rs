@@ -18,6 +18,7 @@ pub mod items;
 pub mod lock;
 pub mod models;
 pub mod registry;
+pub mod slots;
 pub mod state;
 
 use std::io::ErrorKind;
@@ -29,7 +30,7 @@ use crate::crypto::{
     derive_master_key, kdf, CipherSuite, CryptoError, KdfParams, KeyfileDigest, SecretBytes,
     VaultKeys,
 };
-use container::{FileKind, Header, HEADER_LEN, MAX_PAYLOAD_LEN};
+use container::{FileKind, Header, FORMAT_VERSION, HEADER_LEN};
 pub use models::VaultData;
 
 /// Largest decompressed JSON payload accepted (256 MiB).
@@ -87,6 +88,15 @@ pub enum VaultError {
     /// (another writer replaced it); saving would discard its changes (issue #9).
     #[error("the vault file was changed by another program since it was opened")]
     ChangedOnDisk,
+    /// Attachments are sidecar files a decoy could count (issue #8).
+    #[error("remove all attachments before setting a duress password")]
+    DuressWithAttachments,
+    /// Adding attachments would reveal the duress vault (issue #8).
+    #[error("attachments are turned off while a duress password is set")]
+    AttachmentsDisabled,
+    /// The duress password must differ from the master password.
+    #[error("the duress password must differ from the master password")]
+    DuressSameAsMaster,
     /// Underlying cryptographic failure.
     #[error(transparent)]
     Crypto(#[from] CryptoError),
@@ -120,27 +130,49 @@ pub struct OpenVault {
     /// wrote; `None` until it exists on disk. A save only replaces exactly
     /// that file (optimistic concurrency, issue #9).
     disk_id: Option<DiskId>,
+    /// Where this vault lives in the two-slot file (format v3, issue #8).
+    slot: SlotState,
 }
 
-/// Identifies one written file image: SHA-256 of its header, which holds the
-/// random nonces and (v2) `SAVE_ID` drawn on every save, so two saves never
+/// This vault's slot and the opaque bytes of the other slot.
+struct SlotState {
+    /// The slot these credentials open.
+    index: usize,
+    /// The other slot, copied verbatim on every save (it cannot be read).
+    /// Empty when there is none yet: it is then written as random bytes.
+    other: Vec<u8>,
+    /// Current slot size; 0 before the first v3 write.
+    len: usize,
+}
+
+impl SlotState {
+    /// A random slot for a vault that has no v3 file yet, so the position of
+    /// the first vault reveals nothing about whether a second one exists.
+    fn fresh() -> Result<Self, VaultError> {
+        let mut b = [0u8; 1];
+        crate::crypto::fill_random(&mut b)?;
+        Ok(Self {
+            index: usize::from(b[0] & 1),
+            other: Vec::new(),
+            len: 0,
+        })
+    }
+}
+
+/// Identifies one written file image: SHA-256 of the whole file, which holds
+/// the random nonces and `SAVE_ID` drawn on every save, so two saves never
 /// share it. Not a secret and not an integrity check (the AEAD is).
 type DiskId = [u8; 32];
 
 fn disk_id(bytes: &[u8]) -> DiskId {
     use sha2::{Digest, Sha256};
-    Sha256::digest(&bytes[..bytes.len().min(HEADER_LEN)]).into()
+    Sha256::digest(bytes).into()
 }
 
 /// The [`DiskId`] of the file currently at `path`, or `None` if there is none.
 fn disk_id_at(path: &Path) -> Result<Option<DiskId>, VaultError> {
-    use std::io::Read;
-    let mut buf = Vec::with_capacity(HEADER_LEN);
-    match std::fs::File::open(path) {
-        Ok(f) => {
-            f.take(HEADER_LEN as u64).read_to_end(&mut buf)?;
-            Ok(Some(disk_id(&buf)))
-        }
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(disk_id(&bytes))),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.into()),
     }
@@ -176,20 +208,33 @@ impl OpenVault {
             header,
             data: VaultData::new(),
             disk_id: None,
+            slot: SlotState::fresh()?,
         })
     }
 
-    /// Decrypts a vault file image.
+    /// Decrypts a vault file image (format v3, or legacy v1 / v2).
+    ///
+    /// A v3 file runs Argon2id once and then tries the credentials on every
+    /// slot, so it costs the same whichever slot they open (issue #8).
     pub fn unlock(
         bytes: &[u8],
         password: &[u8],
         keyfile: Option<&KeyfileDigest>,
     ) -> Result<Self, VaultError> {
-        let sealed = container::parse(bytes)?;
-        let header = sealed.header.clone();
+        let header = Header::parse(bytes)?;
         if header.kind != FileKind::Vault {
             return Err(VaultError::WrongKind(header.kind));
         }
+        // Structure is checked before the expensive KDF runs.
+        enum Parsed<'a> {
+            Slots(slots::SlotFile<'a>),
+            Single(container::Sealed<'a>),
+        }
+        let parsed = if container::read_version(bytes) == FORMAT_VERSION {
+            Parsed::Slots(slots::parse(bytes)?)
+        } else {
+            Parsed::Single(container::parse(bytes)?)
+        };
         match (header.keyfile_required, keyfile.is_some()) {
             (true, false) => return Err(VaultError::KeyfileRequired),
             (false, true) => return Err(VaultError::KeyfileNotExpected),
@@ -197,21 +242,44 @@ impl OpenVault {
         }
         let master = derive_master_key(password, keyfile, &header.salt, &header.kdf)?;
         let keys = VaultKeys::derive(&master);
-        sealed.verify_canary(&keys)?;
-        let plaintext = sealed.open_payload(&keys)?;
+        let (plaintext, slot) = match parsed {
+            Parsed::Slots(f) => {
+                let (index, h) = f.find_slot(&keys)?;
+                let plaintext = f.open_payload(index, &h, &keys)?;
+                let slot = SlotState {
+                    index,
+                    other: f.slot(1 - index).to_vec(),
+                    len: f.slot_len(),
+                };
+                (plaintext, slot)
+            }
+            Parsed::Single(s) => {
+                s.verify_canary(&keys)?;
+                // The next save upgrades the file to v3 (`.bak` keeps the old one).
+                (s.open_payload(&keys)?, SlotState::fresh()?)
+            }
+        };
         let data: VaultData = decode_json(&plaintext)?;
         Ok(Self {
             header,
             keys,
             data,
             disk_id: Some(disk_id(bytes)),
+            slot,
         })
     }
 
-    /// Serializes and seals the vault into a complete file image.
+    /// Serializes and seals the vault into a complete (format v3) file image.
     pub fn to_bytes(&self) -> Result<Vec<u8>, VaultError> {
         let plaintext = encode_json(&self.data)?;
-        container::seal(&self.header, &self.keys, &plaintext)
+        let own = slots::seal_slot(&self.header, &self.keys, self.slot.index, &plaintext)?;
+        slots::assemble(
+            &self.header,
+            self.slot.index,
+            &own,
+            &self.slot.other,
+            self.slot.len,
+        )
     }
 
     /// Writes the vault crash-safely, verifying the written bytes decrypt
@@ -221,24 +289,124 @@ impl OpenVault {
     /// the one this vault was loaded from or last wrote, so a concurrent
     /// writer's changes are never silently overwritten (issue #9).
     pub fn save(&mut self, path: &Path) -> Result<(), VaultError> {
+        self.save_checked(path, None)
+    }
+
+    /// [`Self::save`], additionally requiring that `other_keys` open the other
+    /// slot of the written file (used right after sealing a duress slot).
+    fn save_checked(
+        &mut self,
+        path: &Path,
+        other_keys: Option<&VaultKeys>,
+    ) -> Result<(), VaultError> {
         let bytes = self.to_bytes()?;
         let expected = self.disk_id;
+        let index = self.slot.index;
         container::write_atomic(path, &bytes, |written| {
             // Checked as late as possible: right before the old file is replaced.
             if disk_id_at(path)? != expected {
                 return Err(VaultError::ChangedOnDisk);
             }
-            let sealed = container::parse(written)?;
-            sealed.verify_canary(&self.keys)?;
-            let data: VaultData = decode_json(&sealed.open_payload(&self.keys)?)?;
-            if data == self.data {
-                Ok(())
-            } else {
-                Err(VaultError::WriteVerifyFailed)
+            let f = slots::parse(written)?;
+            let h = f.open_header(index, &self.keys)?;
+            let data: VaultData = decode_json(&f.open_payload(index, &h, &self.keys)?)?;
+            if data != self.data || !f.slot(1 - index).starts_with(&self.slot.other) {
+                return Err(VaultError::WriteVerifyFailed);
             }
+            if let Some(k) = other_keys {
+                let h = f.open_header(1 - index, k)?;
+                decode_json::<VaultData>(&f.open_payload(1 - index, &h, k)?)?;
+            }
+            Ok(())
         })?;
+        let f = slots::parse(&bytes)?;
+        self.slot.other = f.slot(1 - index).to_vec();
+        self.slot.len = f.slot_len();
         self.disk_id = Some(disk_id(&bytes));
         Ok(())
+    }
+
+    /// Re-seals the vault without changing its contents.
+    ///
+    /// Called after every unlock, so `vault.shush.bak` and the current file
+    /// always differ only in the slot that was opened last. Otherwise
+    /// comparing them after a decoy unlock could show that the *other* slot
+    /// changed most recently, revealing a second vault (issue #8).
+    pub fn refresh(&mut self, path: &Path) -> Result<(), VaultError> {
+        self.save(path)
+    }
+
+    /// Whether the file on disk is already format v3 (legacy files are only
+    /// upgraded by an actual change, not by unlocking).
+    pub fn is_current_format(&self) -> bool {
+        self.slot.len != 0
+    }
+
+    /// Whether this vault has set a duress password. Only the vault that set
+    /// it knows: the decoy cannot tell that it is one.
+    pub fn duress_enabled(&self) -> bool {
+        self.data.settings.duress_pin_enabled
+    }
+
+    /// Seals a new, empty decoy vault into the other slot under a duress
+    /// password (same keyfile, salt and KDF parameters), replacing whatever
+    /// was there. Refused while the vault has attachments, whose sidecar
+    /// files the decoy could not account for (issue #8).
+    pub fn set_duress(
+        &mut self,
+        path: &Path,
+        password: &[u8],
+        keyfile: Option<&KeyfileDigest>,
+    ) -> Result<(), VaultError> {
+        if attachments::has_attachments(&self.data) {
+            return Err(VaultError::DuressWithAttachments);
+        }
+        match (self.header.keyfile_required, keyfile.is_some()) {
+            (true, false) => return Err(VaultError::KeyfileRequired),
+            (false, true) => return Err(VaultError::KeyfileNotExpected),
+            _ => {}
+        }
+        let master = derive_master_key(password, keyfile, &self.header.salt, &self.header.kdf)?;
+        let keys = VaultKeys::derive(&master);
+        if keys.canary_key().ct_eq(self.keys.canary_key()) {
+            return Err(VaultError::DuressSameAsMaster);
+        }
+        let other_index = 1 - self.slot.index;
+        let decoy = slots::seal_slot(
+            &self.header,
+            &keys,
+            other_index,
+            &encode_json(&VaultData::new())?,
+        )?;
+        self.replace_other(path, decoy, true, Some(&keys))?;
+        // A second write, so `.bak` holds the duress state too and a diff of
+        // the two files shows only this slot changing (see [`Self::refresh`]).
+        let _ = self.refresh(path);
+        Ok(())
+    }
+
+    /// Overwrites the other slot with random bytes, destroying the decoy.
+    pub fn clear_duress(&mut self, path: &Path) -> Result<(), VaultError> {
+        self.replace_other(path, Vec::new(), false, None)?;
+        let _ = self.refresh(path);
+        Ok(())
+    }
+
+    fn replace_other(
+        &mut self,
+        path: &Path,
+        other: Vec<u8>,
+        enabled: bool,
+        check: Option<&VaultKeys>,
+    ) -> Result<(), VaultError> {
+        let prev_other = std::mem::replace(&mut self.slot.other, other);
+        let prev_enabled = std::mem::replace(&mut self.data.settings.duress_pin_enabled, enabled);
+        let result = self.save_checked(path, check);
+        if result.is_err() {
+            self.slot.other = prev_other;
+            self.data.settings.duress_pin_enabled = prev_enabled;
+        }
+        result
     }
 
     /// Applies `f` to a copy of the data, saves it, and only then commits it in
@@ -293,7 +461,7 @@ pub fn read_header(path: &Path) -> Result<Header, VaultError> {
 /// before loading it into memory.
 pub fn read_vault_file(path: &Path) -> Result<Vec<u8>, VaultError> {
     let len = std::fs::metadata(path)?.len();
-    if len > HEADER_LEN as u64 + u64::from(MAX_PAYLOAD_LEN) {
+    if len > slots::MAX_FILE_LEN {
         return Err(VaultError::TooLarge);
     }
     Ok(std::fs::read(path)?)
@@ -651,6 +819,162 @@ mod tests {
         assert_eq!(
             OpenVault::unlock(&bytes, b"pw", None).err(),
             Some(VaultError::WrongKind(FileKind::Backup))
+        );
+    }
+
+    fn unlock_file(path: &Path, pw: &[u8]) -> Result<OpenVault, VaultError> {
+        OpenVault::unlock(&read_vault_file(path).unwrap(), pw, None)
+    }
+
+    #[test]
+    fn duress_password_opens_an_empty_decoy_and_saves_never_touch_the_other_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.shush");
+        let mut real = create_vault_file(&path, b"real pw", None, FAST).unwrap();
+        real.modify::<_, VaultError>(&path, |d| {
+            d.items.push(note("bank", "real secret"));
+            Ok(())
+        })
+        .unwrap();
+        let size_without = std::fs::metadata(&path).unwrap().len();
+
+        assert_eq!(
+            real.set_duress(&path, b"real pw", None),
+            Err(VaultError::DuressSameAsMaster)
+        );
+        real.set_duress(&path, b"duress pw", None).unwrap();
+        assert!(real.duress_enabled());
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), size_without);
+
+        let mut decoy = unlock_file(&path, b"duress pw").unwrap();
+        assert!(decoy.data().items.is_empty(), "decoy starts empty");
+        assert!(!decoy.duress_enabled(), "decoy cannot tell it is one");
+        assert_ne!(decoy.slot.index, real.slot.index);
+
+        // Saving from the decoy leaves the real slot bit-identical, and back.
+        let real_slot = |bytes: &[u8], i| slots::parse(bytes).unwrap().slot(i).to_vec();
+        let before = read_vault_file(&path).unwrap();
+        decoy
+            .modify::<_, VaultError>(&path, |d| {
+                d.items.push(note("netflix", "decoy"));
+                Ok(())
+            })
+            .unwrap();
+        let after = read_vault_file(&path).unwrap();
+        assert_eq!(
+            real_slot(&before, real.slot.index),
+            real_slot(&after, real.slot.index)
+        );
+        assert_ne!(
+            real_slot(&before, decoy.slot.index),
+            real_slot(&after, decoy.slot.index)
+        );
+
+        let mut real = unlock_file(&path, b"real pw").unwrap();
+        assert_eq!(real.data().items.len(), 1);
+        assert!(real.duress_enabled());
+        real.modify::<_, VaultError>(&path, |d| {
+            d.items.push(note("mail", "x"));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            unlock_file(&path, b"duress pw").unwrap().data().items.len(),
+            1,
+            "decoy edits survive real saves"
+        );
+        assert_eq!(
+            unlock_file(&path, b"wrong").err(),
+            Some(VaultError::Crypto(CryptoError::WrongCredentials))
+        );
+
+        // Removing the duress password destroys the decoy.
+        real.clear_duress(&path).unwrap();
+        assert!(!real.duress_enabled());
+        assert_eq!(
+            unlock_file(&path, b"duress pw").err(),
+            Some(VaultError::Crypto(CryptoError::WrongCredentials))
+        );
+        assert_eq!(
+            unlock_file(&path, b"real pw").unwrap().data().items.len(),
+            2
+        );
+    }
+
+    #[test]
+    fn duress_needs_the_vault_keyfile() {
+        let kf = keyfile::digest_bytes(b"usb").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.shush");
+        let mut v = create_vault_file(&path, b"pw", Some(&kf), FAST).unwrap();
+        assert_eq!(
+            v.set_duress(&path, b"duress", None),
+            Err(VaultError::KeyfileRequired)
+        );
+        v.set_duress(&path, b"duress", Some(&kf)).unwrap();
+        let bytes = read_vault_file(&path).unwrap();
+        assert!(OpenVault::unlock(&bytes, b"duress", Some(&kf)).is_ok());
+    }
+
+    #[test]
+    fn legacy_v2_vault_is_upgraded_to_v3_on_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.shush");
+        let v = OpenVault::create(b"pw", None, FAST).unwrap();
+        let v2 = container::seal(&v.header, &v.keys, &encode_json(v.data()).unwrap()).unwrap();
+        std::fs::write(&path, &v2).unwrap();
+        let mut opened = unlock_file(&path, b"pw").unwrap();
+        opened.refresh(&path).unwrap();
+        let bytes = read_vault_file(&path).unwrap();
+        assert_eq!(container::read_version(&bytes), FORMAT_VERSION);
+        assert!(unlock_file(&path, b"pw").is_ok());
+        assert_eq!(
+            std::fs::read(container::sibling(&path, "bak")).unwrap(),
+            v2,
+            "the v2 file is kept as .bak"
+        );
+    }
+
+    /// Acceptance check for issue #8: unlock time does not depend on which
+    /// slot the password opens. Timing-sensitive, so run on demand:
+    /// `cargo test --release -- --ignored unlock_timing`.
+    #[test]
+    #[ignore]
+    fn unlock_timing_is_independent_of_the_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.shush");
+        let opts = CreateOptions {
+            kdf: KdfParams {
+                mem_kib: 64 * 1024,
+                iterations: 2,
+                parallelism: 1,
+            },
+            ..FAST
+        };
+        let mut v = create_vault_file(&path, b"real", None, opts).unwrap();
+        v.set_duress(&path, b"decoy", None).unwrap();
+        let bytes = read_vault_file(&path).unwrap();
+        let once = |pw: &[u8]| {
+            let s = std::time::Instant::now();
+            let _ = OpenVault::unlock(&bytes, pw, None);
+            s.elapsed().as_secs_f64()
+        };
+        // Interleaved, so machine load drifts affect both series alike.
+        let (mut real, mut decoy) = (Vec::new(), Vec::new());
+        for _ in 0..41 {
+            real.push(once(b"real"));
+            decoy.push(once(b"decoy"));
+        }
+        let median = |mut t: Vec<f64>| {
+            t.sort_by(f64::total_cmp);
+            t[t.len() / 2]
+        };
+        // Real vs decoy is what matters: a wrong password is a little faster
+        // (no payload to decrypt) but reveals nothing about a second slot.
+        let (real, decoy) = (median(real), median(decoy));
+        assert!(
+            (real - decoy).abs() / real.min(decoy) < 0.05,
+            "median unlock times differ: real {real:.4}s, decoy {decoy:.4}s"
         );
     }
 

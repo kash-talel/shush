@@ -48,6 +48,15 @@ impl SecretKey {
     pub(crate) fn is_all_zero(&self) -> bool {
         self.0.iter().fold(0u8, |acc, b| acc | b) == 0
     }
+
+    /// Equality without an early exit on the first differing byte.
+    pub(crate) fn ct_eq(&self, other: &Self) -> bool {
+        self.0
+            .iter()
+            .zip(other.0.iter())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0
+    }
 }
 
 impl fmt::Debug for SecretKey {

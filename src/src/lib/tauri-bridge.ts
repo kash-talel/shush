@@ -357,3 +357,13 @@ export const saveAttachment = (attachmentId: string, dest: string) =>
   invoke<void>("save_attachment", { attachmentId, dest });
 export const deleteAttachment = (itemId: string, attachmentId: string) =>
   invoke<ItemDetail>("delete_attachment", { itemId, attachmentId });
+
+// ---- duress vault (issue #8) ----------------------------------------------------
+
+/** Whether the unlocked vault has a duress password. A decoy always reports false. */
+export const duressStatus = () => invoke<boolean>("duress_status");
+/** Seals an empty decoy vault under `password`, replacing any previous decoy. */
+export const setDuressPassword = (password: string, keyfilePath: string | null) =>
+  invoke<void>("set_duress_password", { password, keyfilePath });
+/** Destroys the decoy vault. */
+export const clearDuressPassword = () => invoke<void>("clear_duress_password");

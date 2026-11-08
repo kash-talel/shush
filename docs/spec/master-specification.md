@@ -277,6 +277,7 @@ export interface VaultSettings {
      - The application exhibits zero visual difference or warnings.
      - Instead of the real database, `shush` unlocks a realistic **Decoy Vault** pre-populated with harmless sample logins (Netflix, Spotify, Amazon, random social media).
      - Cryptographically, the decoy vault is encrypted under a completely separate key derived from the Duress PIN; an adversary inspecting disk bytes cannot mathematically determine whether an encrypted blob is primary or decoy.
+     - Implemented as format v3 (see `docs/FORMAT.md`, issue #8): two fixed-size slots, an unused slot is random bytes, one Argon2id run tries both slots. The decoy starts **empty** (the user fills it; shared sample data would be a fingerprint). Attachments are disabled while a duress password is set. Several old copies of the file can still reveal which slot changes between them.
 
 ---
 
