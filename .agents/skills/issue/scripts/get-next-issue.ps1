@@ -7,7 +7,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Read the MAIN checkout's routing file, even when running inside an /issue worktree
+# (the worktree's copy is a stale snapshot of origin/main).
 $repoRoot = (Get-Item $PSScriptRoot).Parent.Parent.Parent.Parent.FullName
+$gitCommon = (& git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir 2>$null)
+if ($LASTEXITCODE -eq 0 -and $gitCommon) {
+    $repoRoot = Split-Path ([System.IO.Path]::GetFullPath($gitCommon.Trim())) -Parent
+}
 $routingPath = Join-Path $repoRoot '.claude\issue-routing.json'
 
 if (-not (Test-Path $routingPath)) {
