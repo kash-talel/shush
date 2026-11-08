@@ -19,20 +19,21 @@ One encrypted file on your disk. No account, no cloud, no telemetry.
 
 <br>
 
-<a href="https://kash-talel.github.io/shush/"><img src="https://img.shields.io/badge/Website-dc2626?style=for-the-badge&logo=googlechrome&logoColor=ffffff" alt="Website" height="36"></a>&nbsp;
-<a href="https://github.com/kash-talel/shush/releases"><img src="https://img.shields.io/badge/Releases-18181b?style=for-the-badge&logo=github&logoColor=dc2626" alt="Releases" height="36"></a>&nbsp;
-<a href="https://github.com/kash-talel/shush/blob/main/docs/README.md"><img src="https://img.shields.io/badge/Docs-18181b?style=for-the-badge&logo=readthedocs&logoColor=dc2626" alt="Docs" height="36"></a>
+<a href="https://kash-talel.github.io/shush/"><img src="https://img.shields.io/badge/Website-06b6d4?style=for-the-badge&logo=googlechrome&logoColor=ffffff" alt="Website" height="36"></a>&nbsp;
+<a href="https://github.com/kash-talel/shush/releases"><img src="https://img.shields.io/badge/Releases-18181b?style=for-the-badge&logo=github&logoColor=06b6d4" alt="Releases" height="36"></a>&nbsp;
+<a href="https://github.com/kash-talel/shush/blob/main/docs/README.md"><img src="https://img.shields.io/badge/Docs-18181b?style=for-the-badge&logo=gitbook&logoColor=06b6d4" alt="Docs" height="36"></a>
 
 <br>
 
 [![CI](https://github.com/kash-talel/shush/actions/workflows/ci.yml/badge.svg)](https://github.com/kash-talel/shush/actions/workflows/ci.yml)
-![status](https://img.shields.io/badge/status-alpha-orange)
+![status](https://img.shields.io/badge/status-alpha-06b6d4)
 ![platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6)
-![stack](https://img.shields.io/badge/stack-Tauri%20v2%20%7C%20Rust%20%7C%20Svelte%205-24C8DB)
-![crypto](https://img.shields.io/badge/crypto-Argon2id%20%C2%B7%20AES--256--GCM%20%C2%B7%20XChaCha20--Poly1305-10b981)
-![tests](https://img.shields.io/badge/tests-118%20passing-brightgreen)
-[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+![stack](https://img.shields.io/badge/stack-Tauri%20v2%20%7C%20Rust%20%7C%20Svelte%205-a855f7)
+![crypto](https://img.shields.io/badge/crypto-Argon2id%20%C2%B7%20AES--256--GCM%20%C2%B7%20XChaCha20--Poly1305-06b6d4)
+![tests](https://img.shields.io/badge/tests-118%20passing-06b6d4)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
+[Docs](docs/README.md) •
 [Quick start](#quick-start) •
 [Why shush?](#why-shush) •
 [Security model](#security-model) •
