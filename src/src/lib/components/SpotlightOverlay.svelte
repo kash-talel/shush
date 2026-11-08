@@ -136,9 +136,13 @@
 
 <svelte:window {onkeydown} />
 
-<div class="flex h-full flex-col overflow-hidden border border-hairline bg-obsidian">
-  <label class="flex h-14 shrink-0 items-center gap-2 border-b border-hairline px-4">
-    <span class="font-mono text-sm text-tactical select-none" aria-hidden="true">shush &gt;</span>
+<div class="acrylic flex h-full flex-col overflow-hidden">
+  <label class="flex h-14 shrink-0 items-center gap-3 border-b border-hairline px-4">
+    <span class="flex items-center gap-2 select-none" aria-hidden="true">
+      <span class={["led", unlocked ? "text-ruby" : "text-zinc-600"]}></span>
+      <span class="font-display text-[17px] font-extrabold tracking-[-0.02em] text-zinc-50">shush</span>
+      <span class="font-mono text-base text-ruby">›</span>
+    </span>
     <input
       bind:this={input}
       bind:value={query}
@@ -149,27 +153,30 @@
       disabled={!unlocked}
       spellcheck="false"
       autocomplete="off"
-      placeholder={unlocked ? "search logins…" : "vault locked"}
+      placeholder={unlocked ? "search logins" : "vault locked"}
       aria-label="Search logins"
-      class="min-w-0 flex-1 bg-transparent font-mono text-base text-zinc-100 outline-none placeholder:text-zinc-600"
+      class="min-w-0 flex-1 bg-transparent font-mono text-[15px] text-zinc-50 caret-ruby outline-none placeholder:text-zinc-600"
     />
+    <kbd class="kbd">Esc</kbd>
   </label>
 
   {#if unlocked === false}
     <div class="flex flex-1 flex-col items-center justify-center gap-2 text-center">
-      <LockKeyhole class="size-6 text-danger" aria-hidden="true" />
-      <p class="font-mono text-xs tracking-[0.18em] text-zinc-400">// VAULT_LOCKED</p>
-      <p class="text-xs text-zinc-500">Press <kbd class="font-mono text-zinc-300">Enter</kbd> to open shush and unlock.</p>
+      <LockKeyhole class="size-6 text-ruby" aria-hidden="true" />
+      <p class="font-display text-[17px] font-bold text-zinc-100">Vault locked</p>
+      <p class="text-xs text-zinc-500">Press <kbd class="kbd">Enter</kbd> to open shush and unlock.</p>
     </div>
   {:else}
     {#if contextMatch}
-      <p class="flex items-center gap-1.5 border-b border-hairline px-4 py-1.5 text-[11px] text-cold" role="status">
-        <Sparkles class="size-3" aria-hidden="true" /> Matched the active window: <span class="truncate text-zinc-400">{contextMatch}</span>
+      <p class="flex items-center gap-1.5 border-b border-hairline bg-uv/5 px-4 py-1.5 text-[11px] text-uv" role="status">
+        <Sparkles class="size-3 shrink-0" aria-hidden="true" /> Matched the active window:
+        <span class="truncate font-mono text-[10.5px] text-zinc-400">{contextMatch}</span>
       </p>
     {/if}
     <ul class="min-h-0 flex-1 overflow-y-auto py-1" role="listbox" aria-label="Results">
       {#each results as item, i (item.id)}
-        <li role="option" aria-selected={item === current}>
+        {@const on = item === current}
+        <li role="option" aria-selected={on}>
           <button
             type="button"
             tabindex="-1"
@@ -178,18 +185,24 @@
               void copy("password");
             }}
             onmousemove={() => (selected = i)}
-            class={["flex w-full items-center gap-3 px-4 py-2 text-left", item === current ? "bg-surface shadow-[inset_2px_0_0_var(--color-tactical)]" : ""]}
+            class={["flex w-full items-center gap-3 px-4 py-2 text-left", on && "rail-on bg-white/[0.03]"]}
           >
-            <span class="grid size-8 shrink-0 place-items-center rounded-md border border-hairline font-mono text-xs text-zinc-400 uppercase">
+            <span
+              class={[
+                "grid size-8 shrink-0 place-items-center rounded-[3px] border font-mono text-[10.5px] font-semibold uppercase",
+                on ? "border-crimson/50 bg-crimson/10 text-ruby" : "border-hairline bg-raised text-zinc-400",
+              ]}
+            >
               {#if item.host}{item.host.slice(0, 2)}{:else}<KeyRound class="size-4" aria-hidden="true" />{/if}
             </span>
             <span class="min-w-0 flex-1">
-              <span class="flex items-center gap-1.5 truncate text-sm text-zinc-100">
+              <span class="flex items-center gap-1.5 truncate text-[13px] text-zinc-50">
                 {item.title}
-                {#if item.has_totp}<ShieldCheck class="size-3 shrink-0 text-tactical" aria-label="Has 2FA" />{/if}
+                {#if item.has_totp}<ShieldCheck class="size-3 shrink-0 text-uv" aria-label="Has 2FA" />{/if}
               </span>
-              <span class="block truncate font-mono text-[11px] text-zinc-500">{item.subtitle || item.host || "—"}</span>
+              <span class="block truncate font-mono text-[10.5px] text-zinc-500">{item.subtitle || item.host || "—"}</span>
             </span>
+            {#if on}<span class="kbd">Enter</span>{/if}
           </button>
         </li>
       {:else}
@@ -198,16 +211,13 @@
     </ul>
   {/if}
 
-  <footer class="flex h-8 shrink-0 items-center gap-3 border-t border-hairline px-4 font-mono text-[10px] text-zinc-500">
+  <footer class="flex h-9 shrink-0 items-center gap-4 border-t border-hairline px-4 text-[11px] text-zinc-500">
     {#if message}
       <span class="text-danger" role="alert">{message}</span>
     {:else if unlocked}
-      <span><kbd class="text-zinc-300">↵</kbd> password</span>
-      <span><kbd class="text-zinc-300">Ctrl+↵</kbd> username</span>
-      <span><kbd class="text-zinc-300">Alt+↵</kbd> 2FA code</span>
-      <span class="ml-auto"><kbd class="text-zinc-300">Esc</kbd> close</span>
-    {:else}
-      <span class="ml-auto"><kbd class="text-zinc-300">Esc</kbd> close</span>
+      <span class="flex items-center gap-1.5"><kbd class="kbd">Enter</kbd> password</span>
+      <span class="flex items-center gap-1.5"><kbd class="kbd">Ctrl Enter</kbd> username</span>
+      <span class="flex items-center gap-1.5"><kbd class="kbd">Alt Enter</kbd> 2FA code</span>
     {/if}
   </footer>
 </div>

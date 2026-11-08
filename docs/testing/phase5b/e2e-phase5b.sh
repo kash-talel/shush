@@ -20,11 +20,11 @@ r=$($WIN hotkey-owned | tr -d '\r')
 
 echo "--- unlock main, open Spotlight from the sidebar button"
 if [ "$($M eval "!!document.querySelector('#master-password')")" = "true" ]; then
-  $M fill "#master-password" "Onboarding-Test-2026" >/dev/null
+  $M click "#unseal" >/dev/null; $M fill "#master-password" "Onboarding-Test-2026" >/dev/null
   $M click "button[type=submit]" >/dev/null
 fi
 mwait "document.querySelector('nav[aria-label=\"Vault sections\"]')" 30000
-mcheck "sidebar shows the hotkey" "document.body.textContent.includes('CTRL+ALT+SPACE')"
+mcheck "sidebar shows the hotkey" "[...document.querySelectorAll('nav kbd')].map((k) => k.textContent).join('+').includes('Ctrl+Alt+Space')"
 [ "$(spot_visible)" = "False" ] && ok "Spotlight starts hidden (prewarmed)" || bad "starts hidden" "visible"
 $M click "text:Quick search" >/dev/null; sleep 1
 [ "$(spot_visible)" = "True" ] && ok "Quick search shows the Spotlight window" || bad "show" "hidden"
@@ -54,8 +54,8 @@ echo "--- locking the vault locks Spotlight"
 $M eval "window.dispatchEvent(new KeyboardEvent('keydown',{key:'l',ctrlKey:true})), 1" >/dev/null
 mwait "document.querySelector('#master-password')"
 emit_open "null"
-swait "document.body.textContent.includes('VAULT_LOCKED')"
-scheck "Spotlight shows VAULT_LOCKED and hides logins" "document.body.textContent.includes('VAULT_LOCKED') && document.querySelectorAll('[role=option]').length === 0"
+swait "document.body.textContent.includes('Vault locked')"
+scheck "Spotlight shows 'Vault locked' and hides logins" "document.body.textContent.includes('Vault locked') && document.querySelectorAll('[role=option]').length === 0"
 
 echo "=== $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

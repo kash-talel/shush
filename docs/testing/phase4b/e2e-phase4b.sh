@@ -12,7 +12,7 @@ opts="[...document.querySelectorAll('[role=option]')]"
 
 echo "--- unlock"
 if [ "$($D eval "!!document.querySelector('#master-password')")" = "true" ]; then
-  $D fill "#master-password" "Onboarding-Test-2026" >/dev/null
+  $D click "#unseal" >/dev/null; $D fill "#master-password" "Onboarding-Test-2026" >/dev/null
   $D click "button[type=submit]" >/dev/null
 fi
 waitfor "document.querySelector('nav[aria-label=\"Vault sections\"]')" 30000

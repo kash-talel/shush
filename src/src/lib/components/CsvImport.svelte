@@ -76,17 +76,17 @@
     preview
       ? [
           ["rows", preview.total, "text-zinc-200"],
-          ["new", preview.new_items, "text-tactical"],
+          ["new", preview.new_items, "text-uv"],
           ["already saved", preview.identical, "text-zinc-400"],
-          ["conflicts", preview.conflicts, "text-amber-300"],
+          ["conflicts", preview.conflicts, "text-caution"],
         ]
       : [],
   );
 </script>
 
-<div class="flex flex-col gap-3 rounded-lg border border-hairline p-4">
-  <h3 class="flex items-center gap-2 text-sm font-medium text-zinc-100">
-    <FileSpreadsheet class="size-4 text-amber-300" aria-hidden="true" /> Import from another password manager
+<div class="flex flex-col gap-3 rounded-[7px] border border-hairline bg-surface/60 p-4 shadow-[inset_0_1px_0_rgb(255_255_255/0.03)]">
+  <h3 class="flex items-center gap-2 font-display text-[15px] font-bold text-zinc-50">
+    <FileSpreadsheet class="size-4 text-uv" aria-hidden="true" /> Import from another password manager
   </h3>
   <p class="text-xs leading-5 text-zinc-400">
     Export a CSV from Chrome, Edge, Brave, Firefox, Bitwarden, 1Password, KeePass or KeePassXC, then pick it
@@ -98,14 +98,14 @@
     onclick={pick}
     disabled={busy}
     class={[
-      "flex h-12 items-center gap-2.5 rounded-lg border px-3 text-left text-xs transition",
-      path ? "border-amber-300/40 bg-amber-300/5" : "border-dashed border-hairline text-zinc-400 hover:border-zinc-600",
+      "flex h-12 items-center gap-2.5 rounded-[5px] border px-3 text-left text-xs transition",
+      path ? "border-uv/40 bg-uv/5" : "border-dashed border-edge text-zinc-400 hover:border-zinc-500",
     ]}
   >
     <FileSpreadsheet class="size-4 shrink-0" aria-hidden="true" />
     {#if path}
       {@const [dir, file] = splitPath(path)}
-      <span class="flex min-w-0 flex-1 font-mono text-amber-200" title={path}>
+      <span class="flex min-w-0 flex-1 font-mono text-[11px] text-uv" title={path}>
         <span class="truncate">{dir}</span><span class="shrink-0">{file}</span>
       </span>
     {:else}
@@ -115,14 +115,14 @@
 
   {#if preview}
     <p class="font-mono text-[11px] text-zinc-500">
-      Detected: <span class="text-cold">{preview.format ? CSV_FORMAT_LABEL[preview.format] : "?"}</span>
+      Detected: <span class="text-uv">{preview.format ? CSV_FORMAT_LABEL[preview.format] : "?"}</span>
       {#if preview.skipped}· {preview.skipped} incomplete row{preview.skipped === 1 ? "" : "s"} will be skipped{/if}
     </p>
-    <dl class="grid grid-cols-4 divide-x divide-hairline rounded-lg border border-hairline bg-surface text-center font-mono" aria-label="CSV preview">
+    <dl class="grid grid-cols-4 divide-x divide-hairline rounded-[4px] border border-hairline bg-[#09090e] text-center font-mono shadow-[inset_0_1px_2px_rgb(0_0_0/0.6)]" aria-label="CSV preview">
       {#each stats as [label, n, tone] (label)}
         <div class="px-2 py-2">
-          <dd class={["text-lg", tone]}>{n}</dd>
-          <dt class="text-[10px] text-zinc-500 uppercase">{label}</dt>
+          <dd class={["text-lg tabular-nums", tone]}>{n}</dd>
+          <dt class="text-[9.5px] text-zinc-500">{label}</dt>
         </div>
       {/each}
     </dl>
@@ -130,7 +130,7 @@
       type="button"
       onclick={run}
       disabled={busy || preview.new_items + preview.conflicts === 0}
-      class="flex h-9 items-center justify-center gap-2 rounded-lg bg-amber-300 font-mono text-xs font-semibold tracking-wider text-obsidian hover:bg-amber-200 disabled:bg-hairline disabled:text-zinc-500"
+      class="key h-9 text-xs"
     >
       {#if busy}<LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />{/if}
       {preview.new_items + preview.conflicts === 0 ? "NOTHING NEW TO IMPORT" : `IMPORT ${preview.new_items} NEW`}
@@ -138,15 +138,15 @@
   {/if}
 
   {#if done}
-    <p class="text-xs text-tactical" role="status">
+    <p class="text-xs text-uv" role="status">
       Imported {done.new_items} item{done.new_items === 1 ? "" : "s"}{done.conflicts
         ? `; ${done.conflicts} different password${done.conflicts === 1 ? "" : "s"} archived in history`
         : ""}{done.invalid_totp ? `; ${done.invalid_totp} invalid 2FA secret${done.invalid_totp === 1 ? "" : "s"} dropped` : ""}.
     </p>
     {#if shredded}
-      <p class="text-xs text-tactical" role="status">The CSV file was overwritten and deleted.</p>
+      <p class="text-xs text-uv" role="status">The CSV file was overwritten and deleted.</p>
     {:else}
-      <div class="flex flex-col gap-2 rounded-lg border border-danger/30 bg-danger/5 p-3">
+      <div class="flex flex-col gap-2 rounded-[5px] border border-danger/40 bg-danger/5 p-3">
         <p class="flex items-start gap-1.5 text-xs leading-5 text-zinc-300">
           <ShieldAlert class="mt-0.5 size-3.5 shrink-0 text-danger" aria-hidden="true" />
           The CSV still contains every password in plain text. Delete it now, then empty the browser's own
@@ -156,7 +156,7 @@
           type="button"
           onclick={shred}
           disabled={busy}
-          class="flex h-8 items-center justify-center gap-1.5 rounded-md border border-danger/50 text-xs text-danger hover:bg-danger/10"
+          class="key-steel hazard h-8 border-danger/50! text-xs text-danger!"
         >
           <Trash2 class="size-3.5" aria-hidden="true" /> Overwrite &amp; delete the CSV
         </button>

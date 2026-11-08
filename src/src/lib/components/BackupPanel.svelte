@@ -148,49 +148,49 @@
 {/snippet}
 
 <section class="flex min-h-0 min-w-0 flex-1 flex-col">
-  <header class="flex h-12 shrink-0 items-center border-b border-hairline px-4">
-    <h2 class="font-mono text-xs tracking-[0.15em] text-zinc-400">// BACKUP_AND_RESTORE</h2>
+  <header class="flex h-12 shrink-0 items-center border-b border-hairline px-5">
+    <h2 class="font-display text-[17px] font-bold text-zinc-50">Backup &amp; restore</h2>
   </header>
 
-  <div class="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-4">
+  <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-5 max-[1000px]:p-3">
     <!-- Export -->
-    <div class="flex flex-col gap-3 rounded-lg border border-hairline p-4">
-      <h3 class="flex items-center gap-2 text-sm font-medium text-zinc-100">
-        <DatabaseBackup class="size-4 text-tactical" aria-hidden="true" /> Create encrypted backup
+    <div class="flex flex-col gap-3 rounded-[7px] border border-hairline bg-surface/60 p-4 shadow-[inset_0_1px_0_rgb(255_255_255/0.03)]">
+      <h3 class="flex items-center gap-2 font-display text-[15px] font-bold text-zinc-50">
+        <DatabaseBackup class="size-4 text-ruby" aria-hidden="true" /> Create encrypted backup
       </h3>
       <p class="text-xs leading-5 text-zinc-400">
-        Writes a <span class="font-mono text-cold">.shushbackup</span> file: the whole vault, encrypted and
+        Writes a <span class="font-mono text-uv">.shushbackup</span> file: the whole vault, encrypted and
         tamper-proof. Store it on an external drive.
       </p>
-      <div class="grid grid-cols-2 gap-1 rounded-lg border border-hairline bg-surface p-1" role="radiogroup" aria-label="Backup credentials">
+      <div class="grid grid-cols-2 gap-1 rounded-[5px] border border-hairline bg-[#09090e] p-1" role="radiogroup" aria-label="Backup credentials">
         {#each [{ id: "same_as_vault", label: "Vault password" }, { id: "dedicated", label: "Separate password" }] as m (m.id)}
           <button
             type="button"
             role="radio"
             aria-checked={exportMode === m.id}
             onclick={() => (exportMode = m.id as typeof exportMode)}
-            class={["rounded-md px-2 py-1.5 text-xs transition", exportMode === m.id ? "bg-hairline text-zinc-100" : "text-zinc-500 hover:text-zinc-300"]}
+            class={["h-8 truncate rounded-[3px] px-2 text-xs whitespace-nowrap transition", exportMode === m.id ? "key-steel w-full text-zinc-50" : "text-zinc-500 hover:text-zinc-200"]}
           >
             {m.label}
           </button>
         {/each}
       </div>
       {#if exportMode === "dedicated"}
-        <PasswordField id="backup-password" label="Backup password" autocomplete="new-password" placeholder="at least 8 characters" bind:value={exportPassword} />
+        <PasswordField id="backup-password" label="Backup password" autocomplete="new-password" placeholder="8+ characters" bind:value={exportPassword} />
         <div>
-          <span class="mb-1.5 flex justify-between text-xs font-medium text-zinc-400">Backup keyfile <span class="font-normal text-zinc-500">optional</span></span>
+          <span class="mb-1.5 flex items-baseline justify-between text-xs font-medium text-zinc-300">Backup keyfile <span class="spec">optional</span></span>
           <KeyfileAttach bind:keyfile={exportKeyfile} acceptDrop={false} onerror={(e) => (exportError = e)} />
         </div>
       {:else}
         <p class="text-[11px] text-zinc-500">Opens with the same master password and keyfile as this vault.</p>
       {/if}
       {@render errorLine(exportError)}
-      {#if exportResult}<p class="text-xs text-tactical" role="status">{exportResult}</p>{/if}
+      {#if exportResult}<p class="text-xs text-uv" role="status">{exportResult}</p>{/if}
       <button
         type="button"
         onclick={doExport}
         disabled={exporting || (exportMode === "dedicated" && exportPassword.length < 8)}
-        class="flex h-9 items-center justify-center gap-2 rounded-lg bg-tactical font-mono text-xs font-semibold tracking-wider text-obsidian hover:bg-emerald-400 disabled:bg-hairline disabled:text-zinc-500"
+        class="key h-9 text-xs"
       >
         {#if exporting}<LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />{/if}
         EXPORT BACKUP…
@@ -198,22 +198,22 @@
     </div>
 
     <!-- Import -->
-    <div class="flex flex-col gap-3 rounded-lg border border-hairline p-4">
-      <h3 class="flex items-center gap-2 text-sm font-medium text-zinc-100">
-        <ArchiveRestore class="size-4 text-cold" aria-hidden="true" /> Import from backup
+    <div class="flex flex-col gap-3 rounded-[7px] border border-hairline bg-surface/60 p-4 shadow-[inset_0_1px_0_rgb(255_255_255/0.03)]">
+      <h3 class="flex items-center gap-2 font-display text-[15px] font-bold text-zinc-50">
+        <ArchiveRestore class="size-4 text-uv" aria-hidden="true" /> Import from backup
       </h3>
       <button
         type="button"
         onclick={pickBackup}
         class={[
-          "flex h-12 items-center gap-2.5 rounded-lg border px-3 text-left text-xs transition",
-          importPath ? "border-cold/40 bg-cold/5" : "border-dashed border-hairline text-zinc-400 hover:border-zinc-600",
+          "flex h-12 items-center gap-2.5 rounded-[5px] border px-3 text-left text-xs transition",
+          importPath ? "border-uv/40 bg-uv/5" : "border-dashed border-edge text-zinc-400 hover:border-zinc-500",
         ]}
       >
         <FileArchive class="size-4 shrink-0" aria-hidden="true" />
         {#if importPath}
           {@const [dir, file] = splitPath(importPath)}
-          <span class="flex min-w-0 flex-1 font-mono text-cold" title={importPath}>
+          <span class="flex min-w-0 flex-1 font-mono text-[11px] text-uv" title={importPath}>
             <span class="truncate">{dir}</span><span class="shrink-0">{file}</span>
           </span>
         {:else}
@@ -230,43 +230,43 @@
         />
         {#if importInfo?.keyfile_required}
           <div>
-            <span class="mb-1.5 block text-xs font-medium text-amber-300">This backup requires its keyfile</span>
+            <span class="mb-1.5 block text-xs font-medium text-caution">This backup requires its keyfile</span>
             <KeyfileAttach bind:keyfile={importKeyfile} required onerror={(e) => (importError = e)} onchange={resetImport} />
           </div>
         {/if}
 
         {#if preview}
-          <dl class="grid grid-cols-4 divide-x divide-hairline rounded-lg border border-hairline bg-surface text-center font-mono" aria-label="Import preview">
-            {#each [["in backup", preview.total, "text-zinc-200"], ["new", preview.new_items, "text-tactical"], ["identical", preview.identical, "text-zinc-400"], ["conflicts", preview.conflicts, "text-amber-300"]] as [label, n, tone] (label)}
+          <dl class="grid grid-cols-4 divide-x divide-hairline rounded-[4px] border border-hairline bg-[#09090e] text-center font-mono shadow-[inset_0_1px_2px_rgb(0_0_0/0.6)]" aria-label="Import preview">
+            {#each [["in backup", preview.total, "text-zinc-200"], ["new", preview.new_items, "text-uv"], ["identical", preview.identical, "text-zinc-400"], ["conflicts", preview.conflicts, "text-caution"]] as [label, n, tone] (label)}
               <div class="px-2 py-2">
-                <dd class={["text-lg", tone]}>{n}</dd>
-                <dt class="text-[10px] text-zinc-500 uppercase">{label}</dt>
+                <dd class={["text-lg tabular-nums", tone]}>{n}</dd>
+                <dt class="text-[9.5px] text-zinc-500">{label}</dt>
               </div>
             {/each}
           </dl>
           <fieldset class="flex flex-col gap-2 text-xs text-zinc-300">
             <legend class="sr-only">Import mode</legend>
             <label class="flex items-start gap-2">
-              <input type="radio" bind:group={importMode} value="merge" onchange={() => (confirmReplace = false)} class="mt-0.5 accent-emerald-500" />
+              <input type="radio" bind:group={importMode} value="merge" onchange={() => (confirmReplace = false)} class="mt-0.5 accent-crimson" />
               <span><span class="text-zinc-100">Merge</span>: add new items. For conflicts your current password stays active; the backup's is archived in history.</span>
             </label>
             <label class="flex items-start gap-2">
-              <input type="radio" bind:group={importMode} value="replace" class="mt-0.5 accent-emerald-500" />
+              <input type="radio" bind:group={importMode} value="replace" class="mt-0.5 accent-crimson" />
               <span><span class="text-zinc-100">Clean restore</span>: replace the vault's contents with the backup.</span>
             </label>
           </fieldset>
         {/if}
 
         {@render errorLine(importError)}
-        {#if importResult}<p class="text-xs text-tactical" role="status">{importResult}</p>{/if}
+        {#if importResult}<p class="text-xs text-uv" role="status">{importResult}</p>{/if}
 
         <button
           type="button"
           onclick={preview ? doImport : doPreview}
           disabled={importing || !canPreview}
           class={[
-            "flex h-9 items-center justify-center gap-2 rounded-lg font-mono text-xs font-semibold tracking-wider disabled:bg-hairline disabled:text-zinc-500",
-            confirmReplace ? "bg-danger text-white hover:bg-red-400" : "bg-cold text-obsidian hover:bg-cyan-400",
+            "key h-9 text-xs",
+            confirmReplace && "hazard bg-danger! shadow-[0_2px_0_#7a2410]!",
           ]}
         >
           {#if importing}<LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />{/if}

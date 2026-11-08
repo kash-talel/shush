@@ -11,7 +11,7 @@ waitfor() { $D wait "$1" "${2:-15000}" >/dev/null || echo "TIMEOUT waiting for: 
 KEY=$(powershell -NoProfile -Command "(Get-Item '$(cygpath -w "$1/e2e/usb/vault.key")').FullName")
 
 unlock() {
-  $D fill "#master-password" "Tactical-Vault-2026" >/dev/null
+  $D click "#unseal" >/dev/null; $D fill "#master-password" "Tactical-Vault-2026" >/dev/null
   $D click "text:browse" >/dev/null; sleep 2
   powershell -NoProfile -ExecutionPolicy Bypass -File dialog.ps1 -Title "Select keyfile" -Path "$KEY" >/dev/null
   waitfor "document.body.textContent.includes('KEYFILE ATTACHED')"

@@ -19,6 +19,8 @@ install command, and continue with the closest equivalent approach.
   Svelte skills (vendored from `sveltejs/ai-tools`, MIT). Follow them for every `.svelte` /
   `.svelte.ts` change. The `npx @sveltejs/mcp svelte-autofixer` step needs the user to allow
   running that package; until then validate with `npm run check` in `src/`.
+- `.claude/skills/frontend-design`: Anthropic's design-direction skill (vendored). Follow it for any UI or
+  site redesign: write a token plan, review it against the brief, then build and screenshot.
 - `web-design-guidelines` (user-level): UI / accessibility review.
 
 ## Testing the desktop app

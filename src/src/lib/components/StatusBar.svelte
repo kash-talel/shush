@@ -33,19 +33,23 @@
 </script>
 
 <footer
-  class="flex h-7 shrink-0 items-center gap-2 overflow-hidden border-t border-hairline bg-surface px-3 font-mono text-[11px] whitespace-nowrap text-zinc-500"
+  class="steel flex h-7 shrink-0 items-center gap-3 overflow-hidden border-t border-hairline px-3 font-mono text-[10px] whitespace-nowrap text-zinc-600"
   aria-label="Vault status"
 >
-  <span>
-    [VAULT: <span class={locked ? "text-danger" : "text-tactical"}>{locked ? "LOCKED" : "UNLOCKED"}</span>]
+  <span class="flex items-center gap-1.5">
+    <span class={["led", locked ? "text-ruby" : "text-uv"]} aria-hidden="true"></span>
+    vault <span class={locked ? "text-ruby" : "text-uv"}>{locked ? "LOCKED" : "UNLOCKED"}</span>
   </span>
-  <span aria-hidden="true" class="text-hairline">│</span>
-  <span>[CIPHER: <span class="text-cold">{cipherName}</span>]</span>
-  <span aria-hidden="true" class="text-hairline max-sm:hidden">│</span>
-  <span class="max-sm:hidden">[KDF: <span class="text-cold">{kdfLabel}</span>]</span>
+  <span aria-hidden="true" class="h-3 w-px bg-hairline"></span>
+  <span>cipher <span class="text-zinc-300">{cipherName.toLowerCase()}</span></span>
+  <span aria-hidden="true" class="h-3 w-px bg-hairline max-sm:hidden"></span>
+  <span class="max-sm:hidden">kdf <span class="text-zinc-300">{kdfLabel.toLowerCase()}</span></span>
   {#if clipboardSecs > 0}
-    <span aria-hidden="true" class="text-hairline">│</span>
-    <span aria-live="polite">[CLIPBOARD: <span class="text-amber-300">{clipboardSecs}s</span>]</span>
+    <span aria-hidden="true" class="h-3 w-px bg-hairline"></span>
+    <span class="flex items-center gap-1.5" aria-live="polite">
+      <span class="led animate-pulse text-caution" aria-hidden="true"></span>
+      clipboard clears in <span class="text-caution tabular-nums">{clipboardSecs}s</span>
+    </span>
   {/if}
-  <span class="ml-auto text-zinc-600">v{info?.version ?? "?"}</span>
+  <span class="ml-auto text-zinc-700">shush v{info?.version ?? "?"}</span>
 </footer>

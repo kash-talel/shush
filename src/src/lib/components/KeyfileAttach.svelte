@@ -70,17 +70,17 @@
 </script>
 
 {#if keyfile}
-  <div class="flex h-14 items-center gap-2.5 rounded-lg border border-tactical/40 bg-tactical/5 px-3">
-    <FileKey2 class="size-4 shrink-0 text-tactical" aria-hidden="true" />
-    <div class="min-w-0 flex-1 font-mono text-xs">
-      <p class="truncate text-tactical" title={keyfile.path}>[KEYFILE ATTACHED: {keyfile.info.file_name}]</p>
+  <div class="flex h-14 items-center gap-2.5 rounded-[5px] border border-crimson/40 bg-crimson/5 px-3">
+    <FileKey2 class="size-4 shrink-0 text-ruby" aria-hidden="true" />
+    <div class="min-w-0 flex-1 font-mono text-[11px]">
+      <p class="truncate text-ruby" title={keyfile.path}>[KEYFILE ATTACHED: {keyfile.info.file_name}]</p>
       <p class="text-zinc-500">{formatBytes(keyfile.info.size_bytes)} · read &amp; hashed (SHA-256)</p>
     </div>
     <button
       type="button"
       onclick={detach}
       {disabled}
-      class="grid size-8 place-items-center rounded-md text-zinc-500 hover:bg-hairline hover:text-zinc-200 focus-visible:outline-2 focus-visible:outline-tactical"
+      class="grid size-8 place-items-center rounded-[4px] text-zinc-500 hover:bg-raised hover:text-zinc-200 focus-visible:outline-2 focus-visible:outline-crimson"
       aria-label="Remove keyfile"
     >
       <X class="size-4" />
@@ -91,13 +91,13 @@
     type="button"
     onclick={browse}
     disabled={disabled || busy}
-    class="flex h-14 w-full items-center justify-center gap-2 rounded-lg border border-dashed px-3 text-xs transition
-      focus-visible:outline-2 focus-visible:outline-tactical
+    class="flex h-14 w-full items-center justify-center gap-2 rounded-[5px] border border-dashed px-3 text-xs transition
+      focus-visible:outline-2 focus-visible:outline-crimson
       {dragging
-      ? 'border-tactical bg-tactical/10 text-tactical'
+      ? 'border-crimson bg-crimson/10 text-ruby'
       : required
-        ? 'border-amber-400/40 text-zinc-300 hover:border-amber-300/60'
-        : 'border-hairline text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'}"
+        ? 'border-caution/40 text-zinc-300 hover:border-caution/60'
+        : 'border-edge text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'}"
   >
     {#if busy}
       <LoaderCircle class="size-4 animate-spin" aria-hidden="true" /> Reading keyfile…

@@ -54,15 +54,15 @@
 </script>
 
 {#snippet field(label: string, value: string, copyAs: SecretField | null, mono = false)}
-  <div class="group border-b border-hairline px-4 py-3">
-    <dt class="mb-1 text-[11px] tracking-wider text-zinc-500 uppercase">{label}</dt>
+  <div class="group border-b border-hairline px-5 py-3">
+    <dt class="spec mb-1">{label.toLowerCase()}</dt>
     <dd class="flex items-center gap-2">
-      <span class={["min-w-0 flex-1 truncate text-sm text-zinc-100 select-text", mono && "font-mono"]}>{value || "—"}</span>
+      <span class={["min-w-0 flex-1 truncate text-zinc-50 select-text", mono ? "font-mono text-[12.5px]" : "text-sm"]}>{value || "—"}</span>
       {#if copyAs && value}
         <button
           type="button"
           onclick={() => oncopy(copyAs)}
-          class="grid size-7 place-items-center rounded-md text-zinc-500 opacity-60 transition group-hover:opacity-100 hover:bg-hairline hover:text-zinc-100"
+          class="grid size-7 place-items-center rounded-[3px] text-zinc-500 opacity-60 transition group-hover:opacity-100 hover:bg-raised hover:text-zinc-50 focus-visible:opacity-100"
           aria-label="Copy {label.toLowerCase()}"
         >
           <Copy class="size-3.5" />
@@ -73,11 +73,11 @@
 {/snippet}
 
 <article class="flex min-h-0 min-w-0 flex-1 flex-col">
-  <header class="flex h-12 shrink-0 items-center gap-2 border-b border-hairline px-4">
-    <h2 class="min-w-0 truncate text-sm font-medium text-zinc-100">{item.title}</h2>
+  <header class="flex h-12 shrink-0 items-center gap-2 border-b border-hairline px-5">
+    <h2 class="min-w-0 truncate font-display text-[17px] font-bold text-zinc-50">{item.title}</h2>
     <span class="min-w-0 flex-1">
       {#if folderName}
-        <span class="inline-flex max-w-full items-center gap-1 rounded border border-hairline px-1.5 py-0.5 text-[11px] text-zinc-400" aria-label="Folder">
+        <span class="inline-flex max-w-full items-center gap-1 rounded-[2px] border border-hairline bg-raised px-1.5 py-0.5 font-mono text-[10px] text-zinc-400" aria-label="Folder">
           <Folder class="size-3 shrink-0" aria-hidden="true" /> <span class="truncate">{folderName}</span>
         </span>
       {/if}
@@ -85,27 +85,20 @@
     <button
       type="button"
       onclick={onfavorite}
-      class="grid size-8 place-items-center rounded-md hover:bg-hairline"
+      class="grid size-8 place-items-center rounded-[3px] hover:bg-raised"
       aria-label={item.favorite ? "Remove from favorites" : "Add to favorites"}
       aria-pressed={item.favorite}
     >
-      <Star class={["size-4", item.favorite ? "fill-amber-300 text-amber-300" : "text-zinc-500"]} />
+      <Star class={["size-4", item.favorite ? "fill-caution text-caution" : "text-zinc-500"]} />
     </button>
-    <button
-      type="button"
-      onclick={onedit}
-      class="flex h-8 items-center gap-1.5 rounded-md border border-hairline px-2.5 text-xs text-zinc-300 hover:bg-hairline"
-    >
+    <button type="button" onclick={onedit} class="key-steel h-8 px-2.5 text-xs">
       <Pencil class="size-3.5" aria-hidden="true" /> Edit
     </button>
     <button
       type="button"
       onclick={remove}
       onblur={() => (confirmDelete = null)}
-      class={[
-        "flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs transition",
-        confirmDelete === item.id ? "border-danger bg-danger/15 text-danger" : "border-hairline text-zinc-400 hover:text-danger",
-      ]}
+      class={["key-steel h-8 px-2.5 text-xs", confirmDelete === item.id ? "hazard border-danger! text-danger!" : "hover:text-danger!"]}
     >
       <Trash2 class="size-3.5" aria-hidden="true" />
       {confirmDelete === item.id ? "Click again to delete" : "Delete"}
@@ -116,17 +109,17 @@
     {#if item.kind === "login"}
       {@render field("Username", item.username, "username")}
 
-      <div class="group border-b border-hairline px-4 py-3">
-        <dt class="mb-1 text-[11px] tracking-wider text-zinc-500 uppercase">Password</dt>
+      <div class="group border-b border-hairline px-5 py-3">
+        <dt class="spec mb-1">password</dt>
         <dd class="flex items-center gap-2">
-          <span class="min-w-0 flex-1 truncate font-mono text-sm text-zinc-100 select-text">
+          <span class={["min-w-0 flex-1 truncate font-mono text-[12.5px] select-text", shown !== null ? "text-uv-soft" : "text-zinc-50"]}>
             {#if !item.has_password}—{:else if shown !== null}{shown}{:else}••••••••••••{/if}
           </span>
           {#if item.has_password}
             <button
               type="button"
               onclick={toggleReveal}
-              class="grid size-7 place-items-center rounded-md text-zinc-500 hover:bg-hairline hover:text-zinc-100"
+              class="grid size-7 place-items-center rounded-[3px] text-zinc-500 hover:bg-raised hover:text-zinc-50"
               aria-label={shown !== null ? "Hide password" : "Reveal password"}
               aria-pressed={shown !== null}
             >
@@ -135,7 +128,7 @@
             <button
               type="button"
               onclick={() => oncopy("password")}
-              class="grid size-7 place-items-center rounded-md text-zinc-500 hover:bg-hairline hover:text-zinc-100"
+              class="grid size-7 place-items-center rounded-[3px] text-zinc-500 hover:bg-raised hover:text-zinc-50"
               aria-label="Copy password"
             >
               <Copy class="size-3.5" />
@@ -144,31 +137,31 @@
         </dd>
         {#if revealError}<p class="mt-1 text-xs text-danger">{revealError}</p>{/if}
         {#if item.history_count > 0}
-          <p class="mt-1.5 flex items-center gap-1 font-mono text-[11px] text-zinc-500">
+          <p class="mt-1.5 flex items-center gap-1 font-mono text-[10.5px] text-zinc-500">
             <History class="size-3" aria-hidden="true" /> {item.history_count} previous password{item.history_count === 1 ? "" : "s"} archived
           </p>
         {/if}
       </div>
 
       {#if item.has_totp}
-        <div class="border-b border-hairline px-4 py-3">
-          <dt class="mb-1.5 text-[11px] tracking-wider text-zinc-500 uppercase">One-time code</dt>
+        <div class="border-b border-hairline px-5 py-3">
+          <dt class="spec mb-1.5">one-time code</dt>
           <dd><TotpBadge id={item.id} oncopy={() => oncopy("totp")} /></dd>
         </div>
       {/if}
 
       {@render field("Website", item.url, null, true)}
     {:else}
-      <div class="border-b border-hairline px-4 py-3">
-        <dt class="mb-1 text-[11px] tracking-wider text-zinc-500 uppercase">Note</dt>
+      <div class="border-b border-hairline px-5 py-3">
+        <dt class="spec mb-1">note</dt>
         <!-- Plain text only: never render stored content as HTML (issue #20). -->
-        <dd class="font-mono text-sm leading-6 whitespace-pre-wrap text-zinc-200 select-text">{item.content || "—"}</dd>
+        <dd class="font-mono text-[12.5px] leading-6 whitespace-pre-wrap text-zinc-200 select-text">{item.content || "—"}</dd>
       </div>
     {/if}
 
     {#if item.notes}
-      <div class="border-b border-hairline px-4 py-3">
-        <dt class="mb-1 text-[11px] tracking-wider text-zinc-500 uppercase">Notes</dt>
+      <div class="border-b border-hairline px-5 py-3">
+        <dt class="spec mb-1">notes</dt>
         <dd class="text-sm whitespace-pre-wrap text-zinc-300 select-text">{item.notes}</dd>
       </div>
     {/if}
@@ -176,14 +169,14 @@
     <AttachmentList {item} onchange={onupdated} />
 
     {#if item.tags.length}
-      <div class="flex flex-wrap gap-1.5 border-b border-hairline px-4 py-3">
+      <div class="flex flex-wrap gap-1.5 border-b border-hairline px-5 py-3">
         {#each item.tags as tag (tag)}
-          <span class="rounded border border-cold/30 px-1.5 py-0.5 font-mono text-[11px] text-cold">#{tag}</span>
+          <span class="rounded-[2px] border border-uv/30 bg-uv/5 px-1.5 py-0.5 font-mono text-[10.5px] text-uv">#{tag}</span>
         {/each}
       </div>
     {/if}
 
-    <p class="px-4 py-3 font-mono text-[10px] leading-4 text-zinc-600">
+    <p class="px-5 py-3 font-mono text-[10px] leading-4 text-zinc-600">
       created {created}<br />updated {updated}
     </p>
   </dl>

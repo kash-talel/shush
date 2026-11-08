@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
-  import { Fingerprint, LoaderCircle, Lock, TriangleAlert } from "@lucide/svelte";
+  import { LoaderCircle, TriangleAlert } from "@lucide/svelte";
+  import Spindle from "./Spindle.svelte";
   import PasswordField from "./PasswordField.svelte";
   import KeyfileAttach from "./KeyfileAttach.svelte";
   import {
     describeAutoLock,
+    formatKdf,
     toCmdError,
     unlock,
     type AutoLockReason,
@@ -26,6 +28,13 @@
   // Seeded once from the header check; the screen re-mounts after every lock.
   let error = $state<CmdError | null>(untrack(() => vault.error));
   let passwordInput: HTMLInputElement | undefined = $state();
+  let caseButton: HTMLElement | undefined = $state();
+
+  // The unlock ritual: the vault starts sealed (lid shut, disc still). Opening
+  // the case reveals the credentials; the screen re-mounts sealed after every lock.
+  let unsealed = $state(false);
+  let shudder = $state(false);
+  const spin = $derived(busy ? "fast" : unsealed ? "idle" : "off");
 
   const keyfileRequired = $derived(vault.keyfile_required === true);
   const unreadable = $derived(vault.error !== null);
@@ -37,6 +46,13 @@
     !busy && !unreadable && password.length > 0 && (!keyfileRequired || keyfile !== null),
   );
   const cut = $derived(Math.max(vault.path.lastIndexOf("\\"), vault.path.lastIndexOf("/")));
+
+  async function unseal() {
+    unsealed = true;
+    // The form stops being inert on the next render; then type straight away.
+    await tick();
+    passwordInput?.focus({ preventScroll: true });
+  }
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -56,94 +72,165 @@
       onunlocked(summary);
       return;
     }
+    // Failed: shake the case (restarting the animation if it is mid-shudder).
+    shudder = false;
     // The input was disabled while busy; wait for Svelte to re-enable it.
     await tick();
+    shudder = true;
     passwordInput?.focus();
     passwordInput?.select();
   }
 
-  onMount(() => passwordInput?.focus());
+  // Enter or Space on the focused case unseals it, so the keyboard path is one key.
+  onMount(() => caseButton?.focus());
 </script>
 
-<section class="flex flex-1 items-center justify-center overflow-y-auto px-6 py-10 [@media(max-height:640px)]:py-4">
-  <div class="w-full max-w-[380px]">
-    <header class="mb-8 flex flex-col items-center gap-3 text-center [@media(max-height:640px)]:mb-5">
-      <div class="grid size-12 place-items-center rounded-xl border border-hairline bg-surface [@media(max-height:640px)]:hidden">
-        <Lock class="size-5 text-tactical" strokeWidth={1.75} aria-hidden="true" />
-      </div>
-      <h1 class="font-mono text-[13px] tracking-[0.18em] text-zinc-300">// SHUSH_VAULT_AUTHENTICATION</h1>
-      {#if autoLockReason}
-        <p class="rounded-full border border-cold/30 bg-cold/10 px-2.5 py-0.5 font-mono text-[10px] tracking-wider text-cold" role="status">
-          AUTO-LOCKED · {describeAutoLock(autoLockReason)}
-        </p>
-      {/if}
-      <!-- Middle-truncate: the directory may shrink, the file name never does. -->
-      <p class="flex max-w-full font-mono text-[11px] text-zinc-500" title={vault.path}>
-        <span class="truncate">{vault.path.slice(0, cut + 1)}</span>
-        <span class="shrink-0 text-cold/80">{vault.path.slice(cut + 1)}</span>
-      </p>
-    </header>
-
-    <form class="flex flex-col gap-3" onsubmit={submit} novalidate>
-      <PasswordField
-        id="master-password"
-        label="Master password"
-        bind:value={password}
-        bind:input={passwordInput}
-        invalid={passwordError}
-        disabled={busy || unreadable}
-        describedby="unlock-feedback"
-        oninput={() => (error = null)}
+<section class="flex flex-1 items-center justify-center overflow-y-auto px-6 py-8 [@media(max-height:640px)]:py-4">
+  <div class="flex w-full max-w-[380px] flex-col items-center">
+    <!-- The case glides up as the credentials unfold beneath it. -->
+    <div class={["transition-transform duration-700 ease-out", unsealed && "-translate-y-2"]}>
+      <Spindle
+        id="unseal"
+        bind:element={caseButton}
+        open={unsealed}
+        {spin}
+        {shudder}
+        size="clamp(128px, 29vh, 212px)"
+        label={unsealed ? "Vault case (open)" : "Unseal the vault"}
+        expanded={unsealed}
+        controls="unlock-form"
+        onclick={unsealed ? () => passwordInput?.focus() : unseal}
+        onshudderend={() => (shudder = false)}
       />
+    </div>
 
-      <div>
-        <span class="mb-1.5 flex items-baseline justify-between text-xs font-medium text-zinc-400">
-          Keyfile
-          {#if keyfileRequired}
-            <span class="font-normal text-amber-300">required for this vault</span>
-          {:else}
-            <span class="font-normal text-zinc-500">not used by this vault</span>
-          {/if}
-        </span>
-        {#if keyfileRequired}
-          <KeyfileAttach
-            bind:keyfile
-            required
-            disabled={busy || unreadable}
-            onerror={(e) => (error = e)}
-            onchange={() => passwordInput?.focus()}
-          />
+    <!-- Sealed: only the case and the prompt. -->
+    <div class={["unfold w-full", !unsealed && "open"]} aria-hidden={unsealed}>
+      <div class="flex flex-col items-center gap-3 pt-7">
+        <p class="font-mono text-[11px] tracking-[0.08em] text-zinc-400">[ CLICK DISC TO UNSEAL VAULT ]</p>
+      </div>
+    </div>
+
+    <!-- Status that matters even while sealed. -->
+    {#if autoLockReason || (!unsealed && unreadable && error)}
+      <div class="mt-4 flex flex-col items-center gap-2 text-center">
+        {#if autoLockReason}
+          <p class="flex items-center gap-2 rounded-[3px] border border-uv/30 bg-uv/10 px-2 py-1 font-mono text-[10px] text-uv-soft" role="status">
+            <span class="led text-uv"></span> AUTO-LOCKED: {describeAutoLock(autoLockReason)}
+          </p>
+        {/if}
+        {#if !unsealed && unreadable && error}
+          <p class="text-xs text-danger" role="alert"><span class="font-mono">[{error.code}]</span> {error.message}</p>
         {/if}
       </div>
+    {/if}
 
-      <!-- Reserve two lines so an error never shifts the centred layout. -->
-      <div id="unlock-feedback" aria-live="polite" class="min-h-10">
-        {#if error}
-          <p class="flex items-start gap-1.5 text-xs leading-5 text-danger">
-            <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span><span class="font-mono">[{error.code}]</span> {error.message}</span>
+    <!-- Unsealed: the credentials slide and fade in. Inert until then. -->
+    <div id="unlock-form" class={["unfold w-full", unsealed && "open"]} inert={!unsealed}>
+      <div>
+        <header class="mt-6 mb-5 flex flex-col items-center gap-2 text-center [@media(max-height:640px)]:mt-3 [@media(max-height:640px)]:mb-3">
+          <h1 class="font-display text-[26px] leading-none font-bold tracking-[-0.01em] text-zinc-50">Unlock vault</h1>
+          <!-- Middle-truncate: the directory may shrink, the file name never does. -->
+          <p class="flex max-w-full font-mono text-[10.5px] text-zinc-500" title={vault.path}>
+            <span class="truncate">{vault.path.slice(0, cut + 1)}</span>
+            <span class="shrink-0 text-uv">{vault.path.slice(cut + 1)}</span>
+          </p>
+        </header>
+
+        <form class="flex flex-col gap-3" onsubmit={submit} novalidate>
+          <PasswordField
+            id="master-password"
+            label="Master password"
+            bind:value={password}
+            bind:input={passwordInput}
+            invalid={passwordError}
+            disabled={busy || unreadable}
+            describedby="unlock-feedback"
+            oninput={() => (error = null)}
+          />
+
+          {#if keyfileRequired}
+            <div>
+              <span class="mb-1.5 flex items-baseline justify-between text-xs font-medium text-zinc-300">
+                Keyfile <span class="spec text-caution!">required for this vault</span>
+              </span>
+              <KeyfileAttach
+                bind:keyfile
+                required
+                disabled={busy || unreadable}
+                acceptDrop={unsealed}
+                onerror={(e) => (error = e)}
+                onchange={() => passwordInput?.focus()}
+              />
+            </div>
+          {/if}
+
+          <!-- Reserve two lines so an error never shifts the layout. -->
+          <div id="unlock-feedback" aria-live="polite" class="min-h-10">
+            {#if error}
+              <p class="flex items-start gap-1.5 rounded-[3px] border border-danger/40 bg-danger/10 px-2 py-1.5 text-xs leading-5 text-danger">
+                <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                <span><span class="font-mono">[{error.code}]</span> {error.message}</span>
+              </p>
+            {/if}
+          </div>
+
+          <button type="submit" disabled={!canSubmit} class="key h-11 text-[13px]">
+            {#if busy}
+              <LoaderCircle class="size-4 animate-spin" aria-hidden="true" /> DERIVING KEY…
+            {:else}
+              UNLOCK VAULT <span class="kbd border-white/25! bg-black/20! text-white/80!">Enter</span>
+            {/if}
+          </button>
+        </form>
+
+        {#if vault.kdf}
+          <p class="mt-5 text-center font-mono text-[10px] text-zinc-600 [@media(max-height:640px)]:mt-3" aria-live="polite">
+            {#if busy}<span class="text-ruby">reading</span>{:else}key schedule{/if}
+            <span class="text-zinc-400">{formatKdf(vault.kdf).toLowerCase()}</span>
+            <span class="text-zinc-700">/</span>
+            <span class="text-zinc-400">{(vault.cipher?.name ?? "").toLowerCase()}</span>
           </p>
         {/if}
       </div>
-
-      <button
-        type="submit"
-        disabled={!canSubmit}
-        class="flex h-11 items-center justify-center gap-2 rounded-lg bg-tactical font-mono text-sm font-semibold tracking-wider text-obsidian transition
-          hover:bg-emerald-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tactical
-          disabled:cursor-not-allowed disabled:bg-hairline disabled:text-zinc-500"
-      >
-        {#if busy}
-          <LoaderCircle class="size-4 animate-spin" aria-hidden="true" /> DERIVING KEY…
-        {:else}
-          UNLOCK VAULT <kbd class="rounded border border-current/30 px-1 text-[10px] font-normal opacity-70">↵</kbd>
-        {/if}
-      </button>
-    </form>
-
-    <p class="mt-6 flex items-center justify-center gap-1.5 font-mono text-[11px] text-zinc-500 [@media(max-height:640px)]:mt-3">
-      <Fingerprint class="size-3.5" aria-hidden="true" />
-      Windows Hello can be enabled after first unlock
-    </p>
+    </div>
   </div>
 </section>
+
+<style>
+  /* Height-animating reveal: grid rows go 0fr → 1fr, so the centred column
+     (and the case above it) glide smoothly as the content grows. */
+  .unfold {
+    display: grid;
+    /* minmax(0, …): long vault paths must truncate, not widen the column. */
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 0fr;
+    opacity: 0;
+    translate: 0 10px;
+    transition:
+      grid-template-rows 0.6s cubic-bezier(0.2, 0.9, 0.2, 1),
+      opacity 0.45s ease,
+      translate 0.6s cubic-bezier(0.2, 0.9, 0.2, 1);
+  }
+  .unfold.open {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    translate: 0 0;
+  }
+  /* The credentials wait for the lid to swing before they arrive. */
+  #unlock-form.open {
+    transition-delay: 0.18s;
+  }
+  .unfold > :global(*) {
+    min-height: 0;
+    min-width: 0;
+    /* Clip during the reveal without cutting off focus rings. */
+    overflow: clip;
+    overflow-clip-margin: 8px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .unfold {
+      transition: none;
+    }
+  }
+</style>

@@ -20,8 +20,8 @@
   const strength = $derived.by(() => {
     const bits = result?.entropy_bits ?? 0;
     if (bits < 60) return { label: "WEAK", tone: "bg-danger", pct: 30 };
-    if (bits < 90) return { label: "FAIR", tone: "bg-amber-400", pct: 65 };
-    return { label: "STRONG", tone: "bg-tactical", pct: 100 };
+    if (bits < 90) return { label: "FAIR", tone: "bg-caution", pct: 65 };
+    return { label: "STRONG", tone: "bg-uv", pct: 100 };
   });
 
   async function regenerate() {
@@ -44,15 +44,15 @@
   ];
 </script>
 
-<div class="flex flex-col gap-3 rounded-lg border border-hairline bg-obsidian p-3">
-  <div class="flex items-center gap-2">
-    <output class="min-w-0 flex-1 truncate font-mono text-sm text-zinc-100 select-text" aria-live="polite">
+<div class="acrylic flex flex-col gap-3 rounded-[8px] p-3">
+  <div class="well flex items-center gap-2 pl-3">
+    <output class="min-w-0 flex-1 truncate font-mono text-[13px] text-uv-soft select-text" aria-live="polite">
       {result?.password ?? error ?? "…"}
     </output>
     <button
       type="button"
       onclick={regenerate}
-      class="grid size-8 place-items-center rounded-md text-zinc-400 hover:bg-hairline hover:text-zinc-100"
+      class="grid size-9 place-items-center rounded-[3px] text-zinc-400 hover:bg-raised hover:text-zinc-50 active:rotate-90"
       aria-label="Generate another"
     >
       <RefreshCw class="size-4" />
@@ -60,36 +60,38 @@
   </div>
 
   <div class="flex items-center gap-2">
-    <div class="h-1 flex-1 overflow-hidden rounded-full bg-hairline">
-      <div class={["h-full rounded-full transition-all", strength.tone]} style:width="{strength.pct}%"></div>
+    <div class="flex h-1.5 flex-1 gap-[3px]" aria-hidden="true">
+      {#each { length: 16 } as _, i (i)}
+        <span class={["flex-1 rounded-[1px] transition-colors", i < Math.round((strength.pct / 100) * 16) ? strength.tone : "bg-hairline"]}></span>
+      {/each}
     </div>
-    <span class="font-mono text-[10px] text-zinc-500">
+    <span class="font-mono text-[10px] text-zinc-500 tabular-nums">
       {strength.label} · {Math.round(result?.entropy_bits ?? 0)} bits
     </span>
   </div>
 
-  <label class="flex items-center gap-3 text-xs text-zinc-400">
+  <label class="flex items-center gap-3 text-xs text-zinc-300">
     Length
-    <input type="range" min="8" max="64" bind:value={options.length} oninput={regenerate} class="flex-1 accent-emerald-500" />
-    <span class="w-6 text-right font-mono text-zinc-200">{options.length}</span>
+    <input type="range" min="8" max="64" bind:value={options.length} oninput={regenerate} class="flex-1 accent-crimson" />
+    <span class="w-6 text-right font-mono text-[12px] text-zinc-50 tabular-nums">{options.length}</span>
   </label>
 
   <div class="flex flex-wrap gap-1.5">
     {#each sets as s (s.key)}
       <label
         class={[
-          "cursor-pointer rounded-md border px-2 py-1 font-mono text-[11px] transition select-none",
-          options[s.key] ? "border-tactical/50 bg-tactical/10 text-tactical" : "border-hairline text-zinc-500",
+          "cursor-pointer rounded-[3px] border px-2 py-1 font-mono text-[10.5px] transition select-none has-focus-visible:outline-2 has-focus-visible:outline-ruby",
+          options[s.key] ? "border-crimson/60 bg-crimson/15 text-ruby shadow-[inset_0_-2px_0_var(--color-crimson)]" : "border-hairline bg-raised text-zinc-500",
         ]}
       >
         <input type="checkbox" class="sr-only" bind:checked={options[s.key]} onchange={regenerate} />
-        [{s.label}]
+        {s.label}
       </label>
     {/each}
     <label
       class={[
-        "cursor-pointer rounded-md border px-2 py-1 text-[11px] transition select-none",
-        options.exclude_ambiguous ? "border-cold/50 bg-cold/10 text-cold" : "border-hairline text-zinc-500",
+        "cursor-pointer rounded-[3px] border px-2 py-1 text-[11px] transition select-none has-focus-visible:outline-2 has-focus-visible:outline-ruby",
+        options.exclude_ambiguous ? "border-uv/50 bg-uv/10 text-uv" : "border-hairline bg-raised text-zinc-500",
       ]}
     >
       <input type="checkbox" class="sr-only" bind:checked={options.exclude_ambiguous} onchange={regenerate} />
@@ -97,12 +99,7 @@
     </label>
   </div>
 
-  <button
-    type="button"
-    disabled={!result}
-    onclick={() => result && onuse(result.password)}
-    class="h-8 rounded-md bg-tactical font-mono text-xs font-semibold tracking-wider text-obsidian hover:bg-emerald-400 disabled:bg-hairline disabled:text-zinc-500"
-  >
+  <button type="button" disabled={!result} onclick={() => result && onuse(result.password)} class="key h-9 text-[11px]">
     USE THIS PASSWORD
   </button>
 </div>
