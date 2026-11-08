@@ -1,7 +1,7 @@
 <script lang="ts">
   import tray from "../assets/case-tray.png";
   import lid from "../assets/case-lid.png";
-  import disc from "../assets/disc.png";
+  import { vaultColor } from "../vault-colors";
 
   // The shush jewel case, built from the same three layers as the website:
   // back tray, the embroidered disc, and the crystal lid hinged on the left.
@@ -13,6 +13,7 @@
     spin = "idle",
     size = 168,
     shudder = false,
+    color = "crimson",
     id,
     label,
     expanded,
@@ -26,6 +27,8 @@
     /** px, or any CSS length such as clamp(…) */
     size?: number | string;
     shudder?: boolean;
+    /** Vault disc colour (see vault-colors.ts). */
+    color?: string;
     id?: string;
     /** Accessible name; only used when the case is clickable. */
     label?: string;
@@ -35,6 +38,8 @@
     onclick?: () => void;
     onshudderend?: () => void;
   } = $props();
+
+  const tint = $derived(vaultColor(color));
 
   // 1 = 18 s per turn. With Windows animation effects off (prefers-reduced-motion)
   // the disc only turns while the key is derived, where it is the progress indicator.
@@ -95,12 +100,13 @@
   style:--size={typeof size === "number" ? `${size}px` : size}
   style:--tray="url({tray})"
   style:--lid="url({lid})"
+  style:--glow={tint.glow}
   {onclick}
   onanimationend={(e: AnimationEvent) => e.animationName.endsWith("flash") && onshudderend?.()}
 >
   <span class="box">
     <span class="tray"></span>
-    <img src={disc} alt="" class="disc" draggable="false" {@attach motor} />
+    <img src={tint.disc} alt="" class="disc" draggable="false" {@attach motor} />
     <span class="lid"><span class="sheen"></span></span>
     <span class="flash"></span>
   </span>
@@ -122,7 +128,7 @@
     cursor: pointer;
   }
   .interactive:focus-visible {
-    outline: 2px solid var(--color-ruby);
+    outline: 2px solid rgb(var(--glow));
     outline-offset: 14px;
     border-radius: 8px;
   }
@@ -145,7 +151,7 @@
     background: var(--tray) center / cover;
     box-shadow:
       0 22px 50px rgb(0 0 0 / 0.85),
-      0 0 46px rgb(225 29 72 / 0.2);
+      0 0 46px rgb(var(--glow) / 0.2);
   }
   .disc {
     position: absolute;

@@ -3,5 +3,6 @@
 
 pub mod browsers;
 pub mod clipboard;
+pub mod recycle;
 pub mod session;
 pub mod win_context;

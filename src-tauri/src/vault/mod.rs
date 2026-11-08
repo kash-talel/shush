@@ -16,6 +16,7 @@ pub mod container;
 pub mod importer;
 pub mod items;
 pub mod models;
+pub mod registry;
 pub mod state;
 
 use std::io::ErrorKind;

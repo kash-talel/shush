@@ -22,6 +22,7 @@ use zeroize::Zeroizing;
 use crypto::{CipherSuite, CryptoError, KdfParams, KeyfileDigest};
 use vault::container::Header;
 use vault::items::{ItemDetail, ItemDraft, ItemError, ItemKind, ItemSummary, SecretField};
+use vault::registry::{DeleteThrottle, Registry, RegistryError, VaultEntry, VAULT_COLORS};
 use vault::state::{Unlocked, VaultState};
 use vault::{CreateOptions, OpenVault, VaultData, VaultError};
 
@@ -164,22 +165,91 @@ fn app_info() -> AppInfo {
     }
 }
 
-fn vault_path(app: &tauri::AppHandle) -> Result<PathBuf, CmdError> {
-    // Debug builds only: point the app at a scratch vault for testing without
-    // touching the real one. Compiled out of release builds.
+/// The registry folder and the default vault path.
+fn vault_home(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), CmdError> {
+    // Debug builds only: point the app at a scratch vault (and keep the vault
+    // list next to it) for testing without touching the real one. Compiled
+    // out of release builds.
     #[cfg(debug_assertions)]
     if let Some(p) = std::env::var_os("SHUSH_VAULT_PATH") {
-        return Ok(PathBuf::from(p));
+        let p = PathBuf::from(p);
+        let dir = p.parent().map(Path::to_path_buf).unwrap_or_default();
+        return Ok((dir, p));
     }
-    app.path()
+    let dir = app
+        .path()
         .app_data_dir()
-        .map(|d| d.join(VAULT_FILE_NAME))
-        .map_err(|e| CmdError::new("APP_DATA_UNAVAILABLE", e.to_string()))
+        .map_err(|e| CmdError::new("APP_DATA_UNAVAILABLE", e.to_string()))?;
+    let def = dir.join(VAULT_FILE_NAME);
+    Ok((dir, def))
+}
+
+impl From<RegistryError> for CmdError {
+    fn from(e: RegistryError) -> Self {
+        let code = match e {
+            RegistryError::BadName => "BAD_VAULT_NAME",
+            RegistryError::DuplicateName => "DUPLICATE_VAULT_NAME",
+            RegistryError::BadColor => "BAD_VAULT_COLOR",
+            RegistryError::AlreadyListed => "VAULT_ALREADY_LISTED",
+            RegistryError::UnknownVault => "UNKNOWN_VAULT",
+            RegistryError::NoSuchFolder => "NO_SUCH_FOLDER",
+            RegistryError::LocationTaken => "LOCATION_TAKEN",
+            RegistryError::NotAbsolute => "BAD_LOCATION",
+            RegistryError::DefaultPinned => "DEFAULT_VAULT_PINNED",
+            RegistryError::Io(_) => "REGISTRY_IO",
+        };
+        Self::new(code, e.to_string())
+    }
+}
+
+/// Serialises every read-modify-write of `vaults.json`.
+static REGISTRY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Loads the vault list, applies `f`, and saves it if `f` succeeded.
+fn edit_registry<R>(
+    app: &tauri::AppHandle,
+    f: impl FnOnce(&mut Registry, &Path) -> Result<R, CmdError>,
+) -> Result<R, CmdError> {
+    let (dir, def) = vault_home(app)?;
+    let _g = REGISTRY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut reg = Registry::load_persisted(&dir, &def)?;
+    let before = reg.clone();
+    let out = f(&mut reg, &def)?;
+    if reg != before {
+        reg.save(&dir)?;
+    }
+    Ok(out)
+}
+
+/// The vault the unlock / create screens act on: the selected entry, or the
+/// default location on first run.
+fn selected_vault(app: &tauri::AppHandle) -> Result<(Option<VaultEntry>, PathBuf), CmdError> {
+    edit_registry(app, |reg, def| {
+        Ok(match reg.selected_entry() {
+            Some(e) => (Some(e.clone()), e.path.clone()),
+            None => (None, def.to_path_buf()),
+        })
+    })
+}
+
+/// Refuses vault-list changes that would pull the rug from an open vault.
+fn require_locked(app: &tauri::AppHandle) -> Result<(), CmdError> {
+    if app.state::<VaultState>().is_unlocked() {
+        return Err(CmdError::new(
+            "VAULT_UNLOCKED",
+            "Lock the open vault first.",
+        ));
+    }
+    Ok(())
 }
 
 /// What the unlock/create screens need to know before any credentials.
 #[derive(Debug, Serialize)]
 struct VaultStatus {
+    /// Registry id; `None` on first run before any vault exists.
+    id: Option<String>,
+    name: Option<String>,
+    color: String,
     path: String,
     exists: bool,
     unlocked: bool,
@@ -191,8 +261,13 @@ struct VaultStatus {
     error: Option<CmdError>,
 }
 
-fn status_for(path: &Path, unlocked: bool) -> VaultStatus {
+fn status_for(entry: Option<&VaultEntry>, path: &Path, unlocked: bool) -> VaultStatus {
     let mut status = VaultStatus {
+        id: entry.map(|e| e.id.clone()),
+        name: entry.map(|e| e.name.clone()),
+        color: entry
+            .map_or(VAULT_COLORS[0], |e| e.color.as_str())
+            .to_string(),
         path: path.display().to_string(),
         exists: path.is_file(),
         unlocked,
@@ -201,6 +276,12 @@ fn status_for(path: &Path, unlocked: bool) -> VaultStatus {
         kdf: None,
         error: None,
     };
+    if entry.is_some() && !status.exists {
+        status.error = Some(CmdError::new(
+            "VAULT_MISSING",
+            "The vault file is not there. Was it moved, or is its drive disconnected?",
+        ));
+    }
     if status.exists {
         match vault::read_header(path) {
             Ok(h) => {
@@ -217,7 +298,236 @@ fn status_for(path: &Path, unlocked: bool) -> VaultStatus {
 #[tauri::command]
 fn vault_status(app: tauri::AppHandle) -> Result<VaultStatus, CmdError> {
     let unlocked = app.state::<VaultState>().is_unlocked();
-    Ok(status_for(&vault_path(&app)?, unlocked))
+    let (entry, path) = selected_vault(&app)?;
+    Ok(status_for(entry.as_ref(), &path, unlocked))
+}
+
+// ---- Vault list: switch, add, create elsewhere, delete ----------------------
+
+/// One vault on the unlock screen's shelf. No secrets, no item data.
+#[derive(Debug, Serialize)]
+struct VaultCard {
+    id: String,
+    name: String,
+    path: String,
+    color: String,
+    /// The vault in the app data folder (created on first run).
+    is_default: bool,
+    selected: bool,
+    exists: bool,
+    keyfile_required: Option<bool>,
+    /// Set when the file is missing or unreadable.
+    error: Option<CmdError>,
+}
+
+#[derive(Debug, Serialize)]
+struct VaultList {
+    vaults: Vec<VaultCard>,
+    colors: Vec<&'static str>,
+    max_name_chars: usize,
+}
+
+#[tauri::command]
+fn list_vaults(app: tauri::AppHandle) -> Result<VaultList, CmdError> {
+    let (reg, def) = edit_registry(&app, |reg, def| Ok((reg.clone(), def.to_path_buf())))?;
+    let vaults = reg
+        .vaults
+        .iter()
+        .map(|e| {
+            let s = status_for(Some(e), &e.path, false);
+            VaultCard {
+                id: e.id.clone(),
+                name: e.name.clone(),
+                path: s.path,
+                color: e.color.clone(),
+                is_default: vault::registry::same_file(&e.path, &def),
+                selected: reg.selected.as_deref() == Some(e.id.as_str()),
+                exists: s.exists,
+                keyfile_required: s.keyfile_required,
+                error: s.error,
+            }
+        })
+        .collect();
+    Ok(VaultList {
+        vaults,
+        colors: VAULT_COLORS.to_vec(),
+        max_name_chars: vault::registry::MAX_NAME_CHARS,
+    })
+}
+
+/// Switches the unlock screen to another vault.
+#[tauri::command]
+fn select_vault(app: tauri::AppHandle, id: String) -> Result<VaultStatus, CmdError> {
+    require_locked(&app)?;
+    let entry = edit_registry(&app, |reg, _| {
+        reg.select(&id)?;
+        Ok(reg.get(&id).cloned().expect("just selected"))
+    })?;
+    Ok(status_for(Some(&entry), &entry.path, false))
+}
+
+/// Validates a location and name for a new vault before the user sets a
+/// password. Returns the final path (`.shush` added when missing).
+#[tauri::command]
+fn check_new_vault(app: tauri::AppHandle, path: String, name: String) -> Result<String, CmdError> {
+    edit_registry(&app, |reg, _| {
+        let (p, _) = reg.check_new(Path::new(&path), &name)?;
+        Ok(p.display().to_string())
+    })
+}
+
+/// Adds an existing `.shush` file (another folder, a USB drive) to the list
+/// and selects it. Only a readable vault header is accepted.
+#[tauri::command]
+async fn add_existing_vault(
+    app: tauri::AppHandle,
+    path: String,
+    name: String,
+    color: Option<String>,
+) -> Result<VaultStatus, CmdError> {
+    require_locked(&app)?;
+    blocking(move || {
+        let p = PathBuf::from(&path);
+        vault::read_header(&p)?;
+        let entry = edit_registry(&app, |reg, _| {
+            Ok(reg.add(p.clone(), &name, color.as_deref())?)
+        })?;
+        Ok(status_for(Some(&entry), &entry.path, false))
+    })
+    .await
+}
+
+/// Renames or recolours a vault. Only the list changes; the file does not.
+#[tauri::command]
+fn update_vault(
+    app: tauri::AppHandle,
+    id: String,
+    name: String,
+    color: String,
+) -> Result<(), CmdError> {
+    edit_registry(&app, |reg, _| Ok(reg.update(&id, &name, &color)?))
+}
+
+/// Removes a vault from the list without touching its file.
+#[tauri::command]
+fn forget_vault(app: tauri::AppHandle, id: String) -> Result<(), CmdError> {
+    require_locked(&app)?;
+    edit_registry(&app, |reg, def| {
+        let e = reg.get(&id).ok_or(RegistryError::UnknownVault)?;
+        // It would reappear on the next load anyway.
+        if def.is_file() && vault::registry::same_file(&e.path, def) {
+            return Err(RegistryError::DefaultPinned.into());
+        }
+        reg.remove(&id)?;
+        Ok(())
+    })
+}
+
+/// Deletes a vault: its file, backup generation, temp file and attachments
+/// go to the Recycle Bin. Guarded against accidents and pranks:
+///
+/// - only while every vault is locked;
+/// - the vault's name must be typed exactly;
+/// - the master password (and keyfile, if the vault uses one) must actually
+///   decrypt the vault: a full Argon2id unlock, not a header check;
+/// - wrong passwords are throttled with a doubling wait;
+/// - only the vault's own known files are touched, and only after the file
+///   has been verified as a shush vault;
+/// - nothing is destroyed outright: Windows asks first if the drive has no
+///   Recycle Bin.
+#[tauri::command]
+async fn delete_vault(
+    app: tauri::AppHandle,
+    id: String,
+    password: String,
+    keyfile_path: Option<String>,
+    confirm_name: String,
+) -> Result<(), CmdError> {
+    let password = Zeroizing::new(password);
+    require_locked(&app)?;
+    let entry = edit_registry(&app, |reg, _| {
+        Ok(reg.get(&id).cloned().ok_or(RegistryError::UnknownVault)?)
+    })?;
+    if confirm_name.trim() != entry.name {
+        return Err(CmdError::new(
+            "CONFIRM_MISMATCH",
+            "Type the vault's name exactly as shown to confirm.",
+        ));
+    }
+    let throttle = app.state::<std::sync::Mutex<DeleteThrottle>>();
+    let now = std::time::Instant::now();
+    if let Some(s) = throttle
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .wait_secs(&id, now)
+    {
+        return Err(wait_error(s));
+    }
+
+    blocking(move || {
+        let path = entry.path.clone();
+        // Must still be a shush vault: never delete whatever a hand-edited
+        // vault list points at.
+        vault::read_header(&path)?;
+        let throttle = app.state::<std::sync::Mutex<DeleteThrottle>>();
+        match unlock_blocking(&path, password.as_bytes(), keyfile_path.as_deref()) {
+            Ok(v) => {
+                drop(v); // keys and data wiped
+                throttle.lock().unwrap_or_else(|e| e.into_inner()).succeed(&id);
+            }
+            Err(e) if e.code == "WRONG_CREDENTIALS" => {
+                let wait = throttle
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .fail(&id, std::time::Instant::now());
+                return Err(match wait {
+                    Some(s) => CmdError::new(
+                        "WRONG_CREDENTIALS",
+                        format!("Wrong master password or keyfile. Try again in {}.", human_secs(s)),
+                    ),
+                    None => e,
+                });
+            }
+            Err(e) => return Err(e),
+        }
+        // Someone may have unlocked during the slow KDF.
+        require_locked(&app)?;
+
+        let files: Vec<PathBuf> = vault::registry::vault_files(&path)
+            .into_iter()
+            .filter(|p| p.exists())
+            .collect();
+        let refs: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
+        os::recycle::recycle(&refs).map_err(|e| match e {
+            os::recycle::RecycleError::Cancelled => {
+                CmdError::new("DELETE_CANCELLED", "Deletion cancelled. The vault was kept.")
+            }
+            os::recycle::RecycleError::Failed(code) => CmdError::new(
+                "DELETE_FAILED",
+                format!("Windows could not move the vault to the Recycle Bin (error {code}). Is a file open elsewhere?"),
+            ),
+        })?;
+        edit_registry(&app, |reg, _| {
+            reg.remove(&id)?;
+            Ok(())
+        })
+    })
+    .await
+}
+
+fn human_secs(s: u64) -> String {
+    if s < 90 {
+        format!("{s} seconds")
+    } else {
+        format!("{} minutes", s.div_ceil(60))
+    }
+}
+
+fn wait_error(s: u64) -> CmdError {
+    CmdError::new(
+        "DELETE_COOLDOWN",
+        format!("Too many wrong passwords. Try again in {}.", human_secs(s)),
+    )
 }
 
 /// Non-secret facts about a candidate keyfile. The digest itself never
@@ -372,16 +682,37 @@ fn create_vault_blocking(
     Ok(result?)
 }
 
+/// Where and under which name to create an additional vault.
+#[derive(Debug, Clone, Deserialize)]
+struct NewVaultTarget {
+    path: String,
+    name: String,
+    color: Option<String>,
+}
+
 #[tauri::command]
 async fn create_vault(
     app: tauri::AppHandle,
     password: String,
     keyfile: KeyfileChoice,
     cipher_id: u8,
+    target: Option<NewVaultTarget>,
 ) -> Result<VaultSummary, CmdError> {
     // Move the IPC-owned string into a wiped buffer immediately (issue #6).
     let password = Zeroizing::new(password);
-    let path = vault_path(&app)?;
+    require_locked(&app)?;
+    // A chosen location is validated now; without one, this is the first-run
+    // vault at the selected (default) location.
+    let (path, name) = match &target {
+        Some(t) => edit_registry(&app, |reg, _| {
+            Ok(reg.check_new(Path::new(&t.path), &t.name)?)
+        })?,
+        None => {
+            let (entry, path) = selected_vault(&app)?;
+            (path, entry.map(|e| e.name).unwrap_or_default())
+        }
+    };
+    let color = target.as_ref().and_then(|t| t.color.clone());
     blocking(move || {
         let state = app.state::<VaultState>();
         let ticket = state.begin_unlock();
@@ -392,6 +723,23 @@ async fn create_vault(
             cipher_id,
             KdfParams::default(),
         )?;
+        // List the new vault (first run: the default one) and select it.
+        edit_registry(&app, |reg, def| {
+            if let Some(e) = reg.find_path(&path) {
+                let id = e.id.clone();
+                reg.select(&id)?;
+            } else {
+                let is_default = vault::registry::same_file(&path, def);
+                let name = if name.is_empty() {
+                    reg.unique_name("Personal")
+                } else {
+                    name
+                };
+                let color = color.as_deref().or(is_default.then_some(VAULT_COLORS[0]));
+                reg.add(path.clone(), &name, color)?;
+            }
+            Ok(())
+        })?;
         let s = summary(&path, &vault);
         state
             .finish_unlock(ticket, Unlocked { path, vault })
@@ -420,9 +768,23 @@ async fn unlock(
     app: tauri::AppHandle,
     password: String,
     keyfile_path: Option<String>,
+    vault_id: Option<String>,
 ) -> Result<VaultSummary, CmdError> {
     let password = Zeroizing::new(password);
-    let path = vault_path(&app)?;
+    // The UI names the vault it shows, so a switch in another window can
+    // never make this unlock a different vault than the one on screen.
+    let path = match vault_id {
+        Some(id) => edit_registry(&app, |reg, _| {
+            let p = reg
+                .get(&id)
+                .ok_or(RegistryError::UnknownVault)?
+                .path
+                .clone();
+            reg.select(&id)?;
+            Ok(p)
+        })?,
+        None => selected_vault(&app)?.1,
+    };
     blocking(move || {
         let state = app.state::<VaultState>();
         let ticket = state.begin_unlock();
@@ -1062,6 +1424,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
 
     tauri::Builder::default()
         .manage(VaultState::default())
+        .manage(std::sync::Mutex::new(DeleteThrottle::default()))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -1108,6 +1471,13 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
         .invoke_handler(tauri::generate_handler![
             app_info,
             vault_status,
+            list_vaults,
+            select_vault,
+            check_new_vault,
+            add_existing_vault,
+            update_vault,
+            forget_vault,
+            delete_vault,
             inspect_keyfile,
             create_vault,
             unlock,
@@ -1196,7 +1566,7 @@ mod tests {
         assert_eq!(v.header().suite, CipherSuite::XChaCha20Poly1305);
         assert_eq!(std::fs::metadata(&key).unwrap().len(), 32);
 
-        let status = status_for(&vault_file, false);
+        let status = status_for(None, &vault_file, false);
         assert!(status.exists);
         assert_eq!(status.keyfile_required, Some(true));
         assert!(status.error.is_none());
@@ -1281,7 +1651,7 @@ mod tests {
             b"definitely not a vault, just text of some length",
         )
         .unwrap();
-        let status = status_for(&vault_file, false);
+        let status = status_for(None, &vault_file, false);
         assert!(status.exists);
         assert_eq!(status.error.unwrap().code, "VAULT_UNREADABLE");
         assert_eq!(
