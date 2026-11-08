@@ -65,12 +65,24 @@
       "nsis",
       "msi"
     ],
+    "publisher": "Mahdi Ghozzi",
+    "copyright": "Copyright (c) 2026 Mahdi Ghozzi. MIT License.",
+    "category": "Utility",
+    "shortDescription": "Local-first password vault for Windows",
+    "licenseFile": "../LICENSE",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "installerHooks": "windows/installer-hooks.nsh"
+      }
+    }
   }
 }
