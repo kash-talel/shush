@@ -64,8 +64,12 @@
   const canSubmit = $derived(
     !busy && name.trim().length > 0 && !nameTaken && (mode === "edit" || path !== null),
   );
-  // The default vault keeps showing while its file exists, so it cannot be removed.
-  const canForget = $derived(mode === "edit" && vault !== null && !(vault.is_default && vault.exists));
+  // The default vault can only be removed if another reachable vault exists.
+  const canForget = $derived(
+    mode === "edit" &&
+      vault !== null &&
+      (!vault.is_default || list.vaults.some((v) => v.id !== vault.id && v.exists)),
+  );
 
   async function pick() {
     error = null;
