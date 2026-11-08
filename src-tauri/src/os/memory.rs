@@ -300,11 +300,8 @@ impl LockedBytes {
         } else if new_len < self.len {
             // Zeroize truncated portion
             unsafe {
-                core::slice::from_raw_parts_mut(
-                    self.ptr.as_ptr().add(new_len),
-                    self.len - new_len,
-                )
-                .zeroize();
+                core::slice::from_raw_parts_mut(self.ptr.as_ptr().add(new_len), self.len - new_len)
+                    .zeroize();
             }
         }
         self.len = new_len;
@@ -314,11 +311,8 @@ impl LockedBytes {
     pub fn truncate(&mut self, len: usize) {
         if len < self.len {
             unsafe {
-                core::slice::from_raw_parts_mut(
-                    self.ptr.as_ptr().add(len),
-                    self.len - len,
-                )
-                .zeroize();
+                core::slice::from_raw_parts_mut(self.ptr.as_ptr().add(len), self.len - len)
+                    .zeroize();
             }
             self.len = len;
         }
@@ -665,7 +659,10 @@ mod tests {
         #[cfg(windows)]
         {
             let count_before = count_occurrences_in_process_memory(canary);
-            assert_eq!(count_before, 0, "Canary should not exist prior to allocation");
+            assert_eq!(
+                count_before, 0,
+                "Canary should not exist prior to allocation"
+            );
         }
 
         // Allocate canary inside LockedBytes
@@ -674,7 +671,10 @@ mod tests {
             #[cfg(windows)]
             {
                 let count_during = count_occurrences_in_process_memory(canary);
-                assert!(count_during >= 1, "Canary must be detected while active in memory");
+                assert!(
+                    count_during >= 1,
+                    "Canary must be detected while active in memory"
+                );
             }
             drop(locked);
         }

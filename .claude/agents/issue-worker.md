@@ -43,9 +43,11 @@ You run inside an isolated git worktree, not the owner's checkout. Stay in it: n
 2. Branch from a fresh main:
    `git fetch origin main; git checkout -B fix/issue-<NUMBER>-<short-slug> origin/main`
 3. Implement the change.
-4. Verify. Both must pass with 0 errors; fix any failure before going on:
+4. Verify. All must pass with 0 errors; fix any failure before going on:
    ```powershell
    $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+   cargo fmt --manifest-path src-tauri/Cargo.toml --check
+   cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
    cargo test --manifest-path src-tauri/Cargo.toml
    cd src; npm run check; cd ..
    ```

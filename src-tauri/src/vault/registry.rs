@@ -530,8 +530,7 @@ impl DeleteThrottle {
         std::fs::create_dir_all(dir)?;
         let file = dir.join(THROTTLE_FILE);
         let tmp = dir.join(format!("{THROTTLE_FILE}.tmp"));
-        let bytes = serde_json::to_vec_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let bytes = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
         std::fs::write(&tmp, bytes)?;
         std::fs::rename(&tmp, &file)
     }
@@ -572,7 +571,7 @@ impl DeleteThrottle {
         }
 
         let rem_ms = dt - now.monotonic_millis;
-        let rem_secs = (rem_ms + 999) / 1000;
+        let rem_secs = rem_ms.div_ceil(1000);
         Some(rem_secs.max(1))
     }
 

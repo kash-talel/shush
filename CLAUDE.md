@@ -41,7 +41,7 @@ When resolving issues via `/issue`:
 - **`/issue`**: Resolves one issue (top severity or specific number), files discovered bugs/features, runs tests, PRs & merges, then stops and prompts for `/clear` to save tokens.
 - **Prioritize by severity**: `severity:critical` > `severity:high` > `severity:medium` > `severity:low`.
 - **File discovered issues**: If bugs, architectural flaws, or high-value feature ideas are spotted during work, file them immediately with `gh issue create`.
-- **Verify rigorously**: Ensure both `cargo test --manifest-path src-tauri/Cargo.toml` and `npm run check` in `src/` pass cleanly.
+- **Verify rigorously**: Ensure `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --manifest-path src-tauri/Cargo.toml`, and `npm run check` in `src/` all pass cleanly.
 - **Branch & PR Lifecycle**: Always create a feature branch (`fix/issue-<num>-<slug>`), commit, push, create a PR (`gh pr create`), and squash-merge (`gh pr merge --squash --delete-branch --admin`).
 - **Context discipline**: Run `/clear` after completing an issue to keep token usage minimal.
 
