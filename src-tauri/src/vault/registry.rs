@@ -45,6 +45,9 @@ pub struct Registry {
     /// Id of the vault the unlock screen shows (the last one used).
     #[serde(default)]
     pub selected: Option<String>,
+    /// Whether the default vault is hidden from the shelf.
+    #[serde(default)]
+    pub hide_default: bool,
 }
 
 fn one() -> u32 {
@@ -78,8 +81,8 @@ pub enum RegistryError {
     /// Path is not absolute.
     #[error("Choose a full file location.")]
     NotAbsolute,
-    /// The default vault cannot be removed from the list while it exists.
-    #[error("The default vault always shows while its file exists. Delete it instead.")]
+    /// The default vault cannot be removed while no other vault is reachable.
+    #[error("The default vault cannot be removed while no other vault is reachable.")]
     DefaultPinned,
     /// Disk error writing the registry.
     #[error("Could not save the vault list ({0}).")]
@@ -144,8 +147,9 @@ fn new_id() -> String {
 
 impl Registry {
     /// Loads `dir/vaults.json` and makes sure the default vault is listed if
-    /// its file exists. A missing or unreadable registry starts empty (an
-    /// unreadable one is kept aside as `vaults.json.corrupt`).
+    /// its file exists (unless hidden while other vaults are reachable).
+    /// A missing or unreadable registry starts empty (an unreadable one is
+    /// kept aside as `vaults.json.corrupt`).
     pub fn load(dir: &Path, default_vault: &Path) -> Self {
         let file = dir.join(REGISTRY_FILE);
         let mut reg = match std::fs::read(&file) {
@@ -157,22 +161,54 @@ impl Registry {
         };
         reg.version = 1;
         reg.repair();
-        if default_vault.is_file() && reg.find_path(default_vault).is_none() {
-            let name = reg.unique_name("Personal");
-            reg.vaults.insert(
-                0,
-                VaultEntry {
+        reg.ensure_safety_net(default_vault);
+        reg
+    }
+
+    /// Checks whether any vault in the registry (other than `default_vault`)
+    /// exists on disk and is reachable.
+    pub fn has_other_reachable_vault(&self, default_vault: &Path) -> bool {
+        self.vaults
+            .iter()
+            .any(|v| !same_file(&v.path, default_vault) && v.path.is_file())
+    }
+
+    /// Ensures that if the default vault is hidden but no other vault is reachable,
+    /// it is automatically unhidden and re-added to the shelf.
+    pub fn ensure_safety_net(&mut self, default_vault: &Path) {
+        if default_vault.is_file() {
+            if self.hide_default && !self.has_other_reachable_vault(default_vault) {
+                // Safety net: no other vault is reachable on disk. Automatically
+                // unhide the default vault so the user is never left with an empty shelf.
+                self.hide_default = false;
+                self.selected = None;
+            }
+            if !self.hide_default && self.find_path(default_vault).is_none() {
+                let name = self.unique_name("Personal");
+                let entry = VaultEntry {
                     id: new_id(),
                     name,
                     path: default_vault.to_path_buf(),
                     color: VAULT_COLORS[0].to_string(),
-                },
-            );
+                };
+                let id = entry.id.clone();
+                self.vaults.insert(0, entry);
+                if self.selected.is_none() {
+                    self.selected = Some(id);
+                }
+            } else if self.hide_default {
+                self.vaults.retain(|v| !same_file(&v.path, default_vault));
+            }
         }
-        if reg.selected.as_ref().map_or(true, |s| reg.get(s).is_none()) {
-            reg.selected = reg.vaults.first().map(|v| v.id.clone());
+        if self.selected.as_deref().map_or(true, |s| self.get(s).is_none()) {
+            self.selected = self.vaults.first().map(|v| v.id.clone());
         }
-        reg
+    }
+
+    /// Explicitly unhides the default vault and restores it to the shelf.
+    pub fn unhide_default(&mut self, default_vault: &Path) {
+        self.hide_default = false;
+        self.ensure_safety_net(default_vault);
     }
 
     /// [`Registry::load`], then writes the result back if loading changed it
@@ -723,6 +759,115 @@ mod tests {
         assert_eq!(names, ["Personal", "A", "a 2"]);
         assert_eq!(reg.vaults[1].color, "crimson");
         assert_eq!(reg.selected.as_deref(), Some(reg.vaults[0].id.as_str()));
+    }
+
+    #[test]
+    fn default_vault_can_be_hidden_when_another_vault_is_reachable() {
+        let dir = tempfile::tempdir().unwrap();
+        let def = dir.path().join("vault.shush");
+        touch(&def);
+        let work = dir.path().join("work.shush");
+        touch(&work);
+
+        let mut reg = Registry::load(dir.path(), &def);
+        assert_eq!(reg.vaults.len(), 1);
+        let work_entry = reg.add(work.clone(), "Work", None).unwrap();
+        assert_eq!(reg.vaults.len(), 2);
+        assert!(reg.has_other_reachable_vault(&def));
+
+        // Default vault is hidden
+        let def_id = reg.find_path(&def).unwrap().id.clone();
+        reg.hide_default = true;
+        reg.remove(&def_id).unwrap();
+        reg.ensure_safety_net(&def);
+        assert!(reg.hide_default);
+        assert_eq!(reg.vaults.len(), 1);
+        assert_eq!(reg.vaults[0].id, work_entry.id);
+        assert_eq!(reg.selected.as_deref(), Some(work_entry.id.as_str()));
+        reg.save(dir.path()).unwrap();
+
+        // Reload: default vault stays hidden while work.shush is reachable
+        let reloaded = Registry::load(dir.path(), &def);
+        assert!(reloaded.hide_default);
+        assert_eq!(reloaded.vaults.len(), 1);
+        assert_eq!(reloaded.vaults[0].id, work_entry.id);
+        assert_eq!(reloaded.selected.as_deref(), Some(work_entry.id.as_str()));
+    }
+
+    #[test]
+    fn default_vault_automatically_unhidden_when_no_other_vault_reachable() {
+        let dir = tempfile::tempdir().unwrap();
+        let def = dir.path().join("vault.shush");
+        touch(&def);
+        let usb = dir.path().join("usb_vault.shush");
+        touch(&usb);
+
+        let mut reg = Registry::load(dir.path(), &def);
+        let _usb_id = reg.add(usb.clone(), "USB", None).unwrap().id;
+        let def_id = reg.find_path(&def).unwrap().id.clone();
+
+        // User hides the default vault while USB is reachable
+        reg.hide_default = true;
+        reg.remove(&def_id).unwrap();
+        reg.ensure_safety_net(&def);
+        assert!(reg.hide_default);
+        reg.save(dir.path()).unwrap();
+
+        // Now USB is removed/unplugged (file no longer reachable on disk)
+        std::fs::remove_file(&usb).unwrap();
+
+        // Reload triggers the safety net: default vault is automatically unhidden!
+        let reloaded = Registry::load(dir.path(), &def);
+        assert!(!reloaded.hide_default);
+        assert_eq!(reloaded.vaults.len(), 2); // USB entry (unreachable) + restored Personal entry
+        let personal = reloaded.find_path(&def).expect("default vault restored");
+        assert_eq!(personal.name, "Personal");
+        assert_eq!(reloaded.selected.as_deref(), Some(personal.id.as_str()));
+    }
+
+    #[test]
+    fn default_vault_has_no_other_reachable_vault_when_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let def = dir.path().join("vault.shush");
+        touch(&def);
+
+        let reg = Registry::load(dir.path(), &def);
+        assert_eq!(reg.vaults.len(), 1);
+        assert!(!reg.has_other_reachable_vault(&def));
+
+        // Missing or unplugged vaults do not count as reachable
+        let mut reg2 = reg.clone();
+        let missing = dir.path().join("missing.shush");
+        reg2.vaults.push(VaultEntry {
+            id: "m1".into(),
+            name: "Missing".into(),
+            path: missing,
+            color: "amber".into(),
+        });
+        assert!(!reg2.has_other_reachable_vault(&def));
+    }
+
+    #[test]
+    fn default_vault_unhidden_when_explicitly_readded() {
+        let dir = tempfile::tempdir().unwrap();
+        let def = dir.path().join("vault.shush");
+        touch(&def);
+        let work = dir.path().join("work.shush");
+        touch(&work);
+
+        let mut reg = Registry::load(dir.path(), &def);
+        reg.add(work.clone(), "Work", None).unwrap();
+        let def_id = reg.find_path(&def).unwrap().id.clone();
+        reg.hide_default = true;
+        reg.remove(&def_id).unwrap();
+        reg.save(dir.path()).unwrap();
+
+        // User adds default vault back via "Open a vault file"
+        let mut reloaded = Registry::load(dir.path(), &def);
+        assert!(reloaded.hide_default);
+        reloaded.unhide_default(&def);
+        assert!(!reloaded.hide_default);
+        assert!(reloaded.find_path(&def).is_some());
     }
 
     #[test]
