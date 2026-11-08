@@ -410,7 +410,10 @@ async fn add_existing_vault(
     blocking(move || {
         let p = PathBuf::from(&path);
         vault::read_header(&p)?;
-        let entry = edit_registry(&app, |reg, _| {
+        let entry = edit_registry(&app, |reg, def| {
+            if def.is_file() && vault::registry::same_file(&p, def) {
+                reg.hide_default = false;
+            }
             Ok(reg.add(p.clone(), &name, color.as_deref())?)
         })?;
         Ok(status_for(Some(&entry), &entry.path, false))
@@ -435,11 +438,15 @@ fn forget_vault(app: tauri::AppHandle, id: String) -> Result<(), CmdError> {
     require_locked(&app)?;
     edit_registry(&app, |reg, def| {
         let e = reg.get(&id).ok_or(RegistryError::UnknownVault)?;
-        // It would reappear on the next load anyway.
-        if def.is_file() && vault::registry::same_file(&e.path, def) {
-            return Err(RegistryError::DefaultPinned.into());
+        let is_default = def.is_file() && vault::registry::same_file(&e.path, def);
+        if is_default {
+            if !reg.has_other_reachable_vault(def) {
+                return Err(RegistryError::DefaultPinned.into());
+            }
+            reg.hide_default = true;
         }
         reg.remove(&id)?;
+        reg.ensure_safety_net(def);
         Ok(())
     })?;
     app.state::<std::sync::Mutex<DeleteThrottle>>()
@@ -534,8 +541,9 @@ async fn delete_vault(
                 format!("Windows could not move the vault to the Recycle Bin (error {code}). Is a file open elsewhere?"),
             ),
         })?;
-        edit_registry(&app, |reg, _| {
+        edit_registry(&app, |reg, def| {
             reg.remove(&id)?;
+            reg.ensure_safety_net(def);
             Ok(())
         })
     })
@@ -758,6 +766,9 @@ async fn create_vault(
                 reg.select(&id)?;
             } else {
                 let is_default = vault::registry::same_file(&path, def);
+                if is_default {
+                    reg.hide_default = false;
+                }
                 let name = if name.is_empty() {
                     reg.unique_name("Personal")
                 } else {
