@@ -1,213 +1,130 @@
-# shush Documentation
+# shush docs
 
-Welcome to the **shush** documentation. shush is an offline-first, zero-knowledge password manager and 2FA authenticator designed specifically for Windows, built with **Tauri v2**, **Rust**, and **Svelte 5**.
+| Document | Read it for |
+|---|---|
+| [This page](#using-shush) | Using shush, building it, testing it |
+| [`FORMAT.md`](FORMAT.md) | The `.shush` container byte by byte (normative) |
+| [`spec/security-model.md`](spec/security-model.md) | Authentication design, cipher suite choice, downgrade defense |
+| [`spec/master-specification.md`](spec/master-specification.md) | Full product specification (phases, UI, data model) |
+| [`spec/architecture-plan.md`](spec/architecture-plan.md) | Crate layout and IPC design |
+| [`ROADMAP.md`](ROADMAP.md) | Phase status, owner decisions, the 7b and 8 plans |
+| [`testing/README.md`](testing/README.md) | The CDP end-to-end harness and per-phase results |
 
-> [!IMPORTANT]
-> **The Zero-Knowledge Pledge**
-> - **Zero Network Footprint**: shush makes no network connections. The UI is strictly restricted to communicating with its local Rust core via Tauri IPC.
-> - **Ephemeral Secrets**: The master key is never stored on disk. It is derived in-memory on demand via Argon2id and securely wiped with `zeroize` upon vault lock.
-> - **Authenticated Container**: Every byte of the vault container—including the header—is authenticated. Any external tampering or bit flips are detected and refused.
+## Using shush
 
----
+### Create a vault
 
-## Table of Contents
+1. **Master password.** Normalized to Unicode NFC, so the same password typed on different keyboard
+   layouts derives the same key. Minimum 8 characters.
+2. **Keyfile (optional).** Generate a new 32-byte keyfile or pick any existing file. Its SHA-256
+   becomes Argon2id's secret input. Store it away from the vault (a USB drive); shush warns when they
+   share a folder. Without it the vault cannot be opened.
+3. **Cipher.** AES-256-GCM (default, AES-NI accelerated) or XChaCha20-Poly1305 (192-bit nonces,
+   constant-time in software), under *Advanced cryptography*.
 
-- [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Building from Source](#building-from-source)
-  - [Initial Vault Setup](#initial-vault-setup)
-- [Core Workflows](#core-workflows)
-  - [Global Quick Search](#global-quick-search)
-  - [2FA / TOTP Authenticator](#2fa--totp-authenticator)
-  - [Safe Clipboard & Auto-Type](#safe-clipboard--auto-type)
-  - [Encrypted Backups & Migration](#encrypted-backups--migration)
-- [Security Architecture](#security-architecture)
-  - [Key Derivation (KDF)](#key-derivation-kdf)
-  - [AEAD Envelopes](#aead-envelopes)
-  - [Integrity & Canary Verification](#integrity--canary-verification)
-  - [Win32 Hardening](#win32-hardening)
-- [Keyboard & Shortcut Reference](#keyboard--shortcut-reference)
-- [Codebase Architecture](#codebase-architecture)
-- [Specifications & Normative References](#specifications--normative-references)
+There is no recovery. Forgetting the password or losing the keyfile locks the vault for good.
 
----
+The vault lives at `%APPDATA%\com.shush.vault\vault.shush`. Attachments sit beside it in
+`vault.shush.d\`. The previous version is kept as `vault.shush.bak` on every save.
 
-## Getting Started
+### Import passwords
 
-### Prerequisites
+The first-run screen lists the browsers it finds (it checks that a profile folder exists; it never
+reads a browser's password store) with the steps to export a CSV. Supported formats: Chrome, Edge,
+Brave, Firefox, Bitwarden, 1Password, KeePass, KeePassXC.
 
-To build and run shush, ensure your system has:
-* **Operating System**: Windows 10 (version 1903+) or Windows 11.
-* **Rust**: Stable toolchain (1.80+) via [rustup](https://rustup.rs).
-* **Node.js**: v20 or v22 LTS with `npm` via [nodejs.org](https://nodejs.org).
-* **WebView2 Runtime**: Standard on Windows 11 and modern Windows 10 installations.
+Import shows a preview (new, identical, conflicting) before writing anything. A conflicting login
+keeps its current password; the imported one is archived in that login's history. Afterwards shush
+offers to overwrite and delete the plaintext CSV. That is best effort: SSDs, cloud sync and shadow
+copies can keep old copies.
 
-### Building from Source
+### Quick search
+
+`Ctrl+Alt+Space` opens Quick search over any app. It matches titles, usernames and hosts.
+
+| Key | Copies |
+|---|---|
+| `Enter` | password |
+| `Ctrl+Enter` | username |
+| `Alt+Enter` | current 2FA code |
+
+If the active window's title contains a saved host or title, that login is pre-selected and a
+banner says so. Titles never cause typing. If the vault is locked, `Enter` opens the main window.
+
+### 2FA codes
+
+Paste a Base32 secret or an `otpauth://totp/` link into a login. Codes are computed in Rust (RFC
+6238); the secret never reaches the UI. The ring counts down the seconds left in the period.
+
+### Clipboard
+
+Copies are marked to stay out of Win+V history and Cloud Clipboard. After 30 seconds shush clears
+the clipboard, but only if it still holds what shush put there (checked by clipboard sequence
+number). Locking clears it immediately.
+
+### Locking
+
+The vault locks and wipes its keys on `Ctrl+L`, Win+L, sign-out, RDP disconnect, sleep, display off
+and after 15 minutes idle. Closing the window hides it to the tray without locking.
+
+### Backups
+
+*Backup & import → Create encrypted backup* writes a `.shushbackup` file with the whole vault and its
+attachments, sealed either with the vault's own credentials or a separate password and keyfile.
+Importing decrypts and previews first, then either **merges** (adds new items, archives conflicting
+passwords) or does a **clean restore** (replaces the contents; the old vault is kept as `.bak`).
+
+## Security architecture
+
+```
+password ──NFC──┐
+                ├─► Argon2id v1.3 ─► master key ─► HKDF-SHA256 ─┬─► vault key ──────► vault.shush
+keyfile ─SHA-256┘   64 MiB · t=3 · p=4                          ├─► canary key ─────► 33-byte canary
+                    32-byte salt per vault                       └─► attachment key ─► vault.shush.d/*.blob
+```
+
+- **KDF bounds.** Argon2id parameters in a header are checked against fixed limits before any
+  hashing, so a crafted file cannot exhaust memory or stall the unlock.
+- **Authenticated header.** Every header byte is AEAD associated data. Changing the cipher id, KDF
+  parameters or salt makes the vault fail to open rather than downgrade.
+- **Canary.** A small sealed record that tells a wrong password apart from a modified file.
+- **Nonces.** 96-bit (AES-GCM) or 192-bit (XChaCha20) from the OS CSPRNG on every write.
+- **Padding.** PADMÉ, so file size reveals little about item count.
+- **Rust owns the secrets.** The UI gets list rows and redacted item views. Copying, TOTP and
+  password generation run in Rust. Editing an item never loads its current password into the UI.
+- **Memory.** Keys and decrypted data live in `zeroize` types and are wiped on lock. Known gaps
+  across the WebView2 and OS boundary are tracked in
+  [#6](https://github.com/kash-talel/shush/issues/6).
+
+## Building
+
+Windows 10/11, Rust 1.80+, Node.js 22, WebView2.
 
 ```powershell
-# 1. Clone the repository
-git clone https://github.com/kash-talel/shush.git
-cd shush
-
-# 2. Install frontend dependencies
 npm ci --prefix src
-
-# 3. Verify core crypto & unit tests
-cd src-tauri
-cargo test --lib
-cd ..
-
-# 4. Launch in development mode
-npx --prefix src tauri dev
-
-# 5. Build optimized standalone release executable
-npx --prefix src tauri build --no-bundle
+npx --prefix src tauri dev                    # debug app with hot reload
+npx --prefix src tauri build --no-bundle      # src-tauri\target\release\shush.exe
+npx --prefix src tauri build                  # NSIS + MSI installers
 ```
 
-The resulting standalone executable will be located at:
-`src-tauri\target\release\shush.exe`
+GNU toolchain: ship `WebView2Loader.dll` next to `shush.exe`.
 
-> [!TIP]
-> When compiling with the GNU toolchain (`x86_64-pc-windows-gnu`), ensure `WebView2Loader.dll` from the target directory is placed alongside `shush.exe`. MSVC builds link this library statically.
+## Checks
 
-### Initial Vault Setup
+All of these run in CI and must pass before a merge:
 
-Upon first launch, shush guides you through creating a vault:
-1. **Master Password**: Normalized via Unicode NFC.
-2. **Optional Keyfile**: Any local file (e.g., on a dedicated hardware USB token); its SHA-256 hash serves as an independent secret input to Argon2id.
-3. **Cipher Selection**: Choose between **AES-256-GCM** (hardware-accelerated via AES-NI) or **XChaCha20-Poly1305** (software-constant-time).
-4. **Browser Migration**: The first-run wizard detects installed browsers (Chrome, Edge, Brave, Firefox) and facilitates clean CSV migration.
-
----
-
-## Core Workflows
-
-### Global Quick Search
-
-Press **`Ctrl+Alt+Space`** from any application to summon the spotlight HUD:
-* **Fuzzy Search**: Instant lookup across titles, usernames, URLs, and tags.
-* **Window Context Detection**: Automatically detects the focused browser tab or app title to pre-select matching credentials.
-* **Direct Actions**:
-  * `Enter` $\rightarrow$ Copies password to clipboard.
-  * `Ctrl+Enter` $\rightarrow$ Copies username.
-  * `Alt+Enter` $\rightarrow$ Copies 6-digit TOTP token.
-  * `Esc` $\rightarrow$ Dismisses HUD back into the tray.
-
-### 2FA / TOTP Authenticator
-
-* Implements standard **RFC 6238** time-based one-time passwords.
-* Supports manual Base32 secret keys and `otpauth://totp/` URI formats.
-* Visual countdown ring with automatic drift synchronization.
-
-### Safe Clipboard & Auto-Type
-
-* **Clipboard Quarantine**: Secrets copied to the clipboard are tagged to exclude them from Windows Cloud Clipboard and the Win+V clipboard history buffer.
-* **Sequence-Aware Auto-Wipe**: shush records the Win32 `GetClipboardSequenceNumber()`. When the wipe countdown (default: 30 seconds) expires, it wipes the clipboard *only if* the clipboard content still belongs to shush.
-* **Screen Capture Protection**: Windows are rendered with `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` to prevent background spyware or screenshot utilities from recording unmasked secrets.
-
-### Encrypted Backups & Migration
-
-* **Encrypted Sidecars (`.shushbackup`)**: Atomic encrypted archives containing your vault database and sidecar attachment blobs.
-* **CSV Importer**: Clean imports with duplicate detection from Bitwarden, 1Password, KeePassXC, Chrome, Edge, and Firefox.
-
----
-
-## Security Architecture
-
-```
-                       [ Master Password (NFC) ]
-                                  │
-                                  ▼
-[ Keyfile (Optional) ] ──► SHA-256 Secret (K)
-                                  │
-                                  ▼
-                     [ Argon2id v1.3 (RFC 9106) ]
-                     (64 MiB, t=3, p=4, 32-byte Salt)
-                                  │
-                                  ▼
-                          [ Master Key (MK) ]
-                                  │
-                                  ▼
-                         [ HKDF-SHA256 ]
-                    ┌─────────────┼─────────────┐
-                    ▼             ▼             ▼
-               [ Vault Key ] [ Canary Key ] [ Attachment Key ]
-                    │             │             │
-                    ▼             ▼             ▼
-              vault.shush    Canary Check   *.blob (Sidecars)
+```powershell
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml --lib
+npm run --prefix src check
+npm run --prefix src build
 ```
 
-### Key Derivation (KDF)
-* **Algorithm**: Argon2id v1.3 (RFC 9106).
-* **Parameters**: 64 MiB memory cost, 3 iterations, 4 parallel lanes, 32-byte cryptographic salt.
-* **Hardening**: Header parameters are validated against strict safety bounds before execution to prevent resource exhaustion attacks.
+UI work is also verified against the running app over the Chrome DevTools Protocol, never with
+synthetic mouse or keyboard input. Point a debug build at a scratch vault with `SHUSH_VAULT_PATH`
+(compiled out of release builds). See [`testing/README.md`](testing/README.md).
 
-### AEAD Envelopes
-* **Ciphers**: AES-256-GCM or XChaCha20-Poly1305.
-* **Nonces**: 96-bit (AES-GCM) or 192-bit (XChaCha20) CSPRNG nonces generated per write transaction.
-* **Padding**: Payloads are padded according to the PADMÉ standard to prevent leaking secret counts via file length.
+## Reporting a vulnerability
 
-### Integrity & Canary Verification
-* Every single byte of the header is included in the AEAD additional authenticated data (AAD).
-* A 33-byte encrypted canary enables unambiguous distinction between an incorrect master password and file tampering.
-
-### Win32 Hardening
-* **Process Isolation**: Single-instance mutex prevents concurrent writers from corrupting database state.
-* **Auto-Lock Triggers**: Immediate lock on `Win+L`, user sign-out, RDP disconnect, workstation lock, display sleep, lid close, and user idle.
-
----
-
-## Keyboard & Shortcut Reference
-
-| Shortcut | Scope | Description |
-| :--- | :--- | :--- |
-| **`Ctrl+Alt+Space`** | Global (OS-wide) | Open Quick search spotlight overlay |
-| **`Ctrl+N`** | App Window | Create a new credential entry |
-| **`Ctrl+F`** | App Window | Focus vault search field |
-| **`Ctrl+L`** | App Window | Immediately lock vault and purge memory |
-| **`Enter`** | Quick Search | Copy password and dismiss |
-| **`Ctrl+Enter`** | Quick Search | Copy username |
-| **`Alt+Enter`** | Quick Search | Copy current 2FA / TOTP token |
-| **`Esc`** | Quick Search | Dismiss overlay to tray |
-
----
-
-## Codebase Architecture
-
-```
-shush/
-├── src-tauri/                 # Rust Core & Win32 Integration
-│   ├── src/
-│   │   ├── crypto/            # Argon2id KDF, AEAD ciphers, HKDF, CSPRNG
-│   │   ├── vault/             # Binary format, crash-safe fsync writer, items
-│   │   ├── os/                # Win32 clipboard, auto-lock, display affinity
-│   │   ├── totp/              # RFC 6238 TOTP engine
-│   │   ├── lib.rs             # Tauri IPC command definitions
-│   │   └── main.rs            # Application entrypoint & single instance
-│   └── Cargo.toml             # Rust dependencies
-├── src/                       # Frontend Presentation Layer
-│   ├── src/                   # Svelte 5 reactive components & state
-│   ├── vite.config.ts         # Vite bundler configuration
-│   └── package.json           # Frontend dependencies
-├── site/                      # Public documentation & landing portal
-└── docs/                      # Technical specifications & roadmap
-    ├── FORMAT.md              # Normative binary container specification
-    ├── ROADMAP.md             # Development milestone tracker
-    └── spec/                  # Formal security model & threat analysis
-```
-
----
-
-## Specifications & Normative References
-
-For deep technical specifications, refer to the companion documents:
-* **[FORMAT.md](FORMAT.md)**: Exact byte-level binary container specification.
-* **[spec/security-model.md](spec/security-model.md)**: Formal adversarial threat model and cryptographic proofs.
-* **[ROADMAP.md](ROADMAP.md)**: Architectural decisions and upcoming milestones.
-* **[testing/README.md](testing/README.md)**: End-to-end testing harness and verification suites.
-
----
-
-## Security Disclosure
-
-If you discover a potential vulnerability in shush, please refer to our [Security Policy](../SECURITY.md) to report it responsibly. All valid security issues are addressed with high priority.
+Privately, as described in [`SECURITY.md`](../SECURITY.md).
