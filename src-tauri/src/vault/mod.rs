@@ -329,11 +329,26 @@ pub fn padme(len: usize) -> usize {
 
 /// JSON → zstd → length-prefixed, PADMÉ-padded plaintext (shared by vault and backup).
 pub(crate) fn encode_json<T: serde::Serialize>(data: &T) -> Result<SecretBytes, VaultError> {
-    // Limitation (issue #6): serde_json grows its Vec while writing, which can
-    // leave unwiped fragments in freed memory.
-    let json = Zeroizing::new(
-        serde_json::to_vec(data).map_err(|_| VaultError::CorruptPayload("serialization failed"))?,
-    );
+    // serde_json would grow a Vec while writing, leaving unwiped fragments of
+    // the plaintext in freed memory (issue #6). Measure first, then write into
+    // a buffer allocated at its final size so it never reallocates.
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0 += buf.len();
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let ser_err = |_| VaultError::CorruptPayload("serialization failed");
+    let mut count = Count(0);
+    serde_json::to_writer(&mut count, data).map_err(ser_err)?;
+    let mut json = SecretBytes::new(Vec::with_capacity(count.0));
+    let cap = json.capacity();
+    serde_json::to_writer(&mut *json, data).map_err(ser_err)?;
+    debug_assert_eq!(json.capacity(), cap, "JSON buffer reallocated");
     let compressed = Zeroizing::new(
         zstd::bulk::compress(&json, ZSTD_LEVEL)
             .map_err(|_| VaultError::CorruptPayload("compression failed"))?,

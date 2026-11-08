@@ -3,6 +3,7 @@
 
 pub mod browsers;
 pub mod clipboard;
+pub mod memory;
 pub mod pipe;
 pub mod recycle;
 pub mod session;

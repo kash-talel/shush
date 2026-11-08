@@ -236,9 +236,15 @@ export interface VaultSettings {
 
 ## 6. Operating System Protections & Memory Hygiene
 
-1. **Deterministic Memory Zeroization**:
+1. **Memory Hygiene (best effort, Rust core only)**:
+   - The guarantee is *best-effort hygiene in the Rust core*, not zero-knowledge across the whole process tree (issue #6).
    - Master Password buffers, Keyfile hashes, composite secrets, and the decrypted JSON payload memory in Rust must implement `Zeroize` and `ZeroizeOnDrop`.
-   - Never convert raw master passwords to immutable GC strings; use pinned `zeroize::Zeroizing<Vec<u8>>`.
+   - Never convert raw master passwords to immutable GC strings; use `zeroize::Zeroizing<Vec<u8>>`. Allocate secret buffers at their final size so they never reallocate (the JSON payload is measured before it is serialized).
+   - The UI never receives the whole vault. It gets list rows and redacted item views; copying, TOTP and password generation are Rust-side actions, so stored passwords do not reach JS unless the user reveals one.
+   - The vault sub-keys (VEK, canary, attachment) live on their own page-aligned, `VirtualLock`ed page for as long as the vault is unlocked, so they are not written to the pagefile.
+   - At startup the process calls `WerSetFlags(WER_FAULT_REPORTING_FLAG_NOHEAP)` and `WerAddExcludedApplication` (per user), so crash reports carry no heap and are not uploaded.
+   - The vault locks on session lock and suspend (item 4), which wipes keys before hibernation.
+   - **Out of scope / residual risk**: the master password typed into the unlock field, and any password the user reveals or types into an edit form, are V8 strings in the WebView2 renderer process and cannot be wiped; Tauri IPC arguments are JSON-serialized on both sides; the decrypted payload (unbounded size) is not page-locked and can be paged out; `hiberfil.sys` captures locked pages if the machine hibernates without a suspend notification; WebView2 child processes are not covered by the WER settings; an administrator-configured `LocalDumps` policy still writes full dumps.
 2. **Screen Capture Protection**:
    - On Tauri window creation, apply Windows display affinity:
      ```rust
