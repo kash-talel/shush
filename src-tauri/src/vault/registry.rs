@@ -378,11 +378,86 @@ impl Registry {
     }
 }
 
+/// File name of the throttle state inside the app data directory.
+pub const THROTTLE_FILE: &str = "delete-throttle.json";
+
+/// Persisted failure record for one vault id.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ThrottleRecord {
+    /// Consecutive failed attempts.
+    pub failures: u32,
+    /// Monotonic deadline in milliseconds (system uptime).
+    #[serde(default)]
+    pub deadline_ticks: Option<u64>,
+    /// Wall-clock deadline in Unix epoch seconds.
+    #[serde(default)]
+    pub deadline_wall: Option<u64>,
+}
+
+/// Time snapshot for throttle calculations, pairing monotonic uptime with wall-clock time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThrottleTime {
+    /// Wall-clock time (seconds since Unix epoch).
+    pub wall_secs: u64,
+    /// Monotonic time (milliseconds since system boot).
+    pub monotonic_millis: u64,
+}
+
+impl ThrottleTime {
+    /// Snapshot of current wall-clock and monotonic system uptime.
+    pub fn now() -> Self {
+        let wall_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let monotonic_millis = crate::os::session::uptime_millis();
+        Self {
+            wall_secs,
+            monotonic_millis,
+        }
+    }
+
+    /// Helper for tests to create a fixed time snapshot from seconds.
+    pub fn from_secs(wall_secs: u64, monotonic_secs: u64) -> Self {
+        Self {
+            wall_secs,
+            monotonic_millis: monotonic_secs.saturating_mul(1000),
+        }
+    }
+
+    /// Helper for tests to create a fixed time snapshot with millisecond precision.
+    pub fn from_millis(wall_secs: u64, monotonic_millis: u64) -> Self {
+        Self {
+            wall_secs,
+            monotonic_millis,
+        }
+    }
+}
+
 /// Brute-force brake for vault deletion: after a few wrong passwords the
 /// next attempt must wait, doubling each time (on top of Argon2id's cost).
-#[derive(Debug, Default)]
+/// Persisted to disk so restarting the app does not clear or shorten the wait.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteThrottle {
-    failures: std::collections::HashMap<String, (u32, Option<std::time::Instant>)>,
+    /// Format version.
+    #[serde(default = "one")]
+    pub version: u32,
+    /// Failure records keyed by vault id.
+    #[serde(default)]
+    pub failures: std::collections::HashMap<String, ThrottleRecord>,
+    /// Directory where `delete-throttle.json` is persisted.
+    #[serde(skip)]
+    pub dir: Option<PathBuf>,
+}
+
+impl Default for DeleteThrottle {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            failures: std::collections::HashMap::new(),
+            dir: None,
+        }
+    }
 }
 
 /// Free attempts before the wait starts.
@@ -392,28 +467,104 @@ const BASE_WAIT_SECS: u64 = 30;
 const MAX_WAIT_SECS: u64 = 15 * 60;
 
 impl DeleteThrottle {
-    /// Seconds left before `id` may be tried again, if it is cooling down.
-    pub fn wait_secs(&self, id: &str, now: std::time::Instant) -> Option<u64> {
-        let (_, until) = self.failures.get(id)?;
-        let until = (*until)?;
-        (until > now).then(|| (until - now).as_secs().max(1))
+    /// Loads `dir/delete-throttle.json`. A missing or unreadable file starts empty.
+    pub fn load(dir: &Path) -> Self {
+        let file = dir.join(THROTTLE_FILE);
+        let mut throttle = match std::fs::read(&file) {
+            Ok(bytes) => serde_json::from_slice::<DeleteThrottle>(&bytes).unwrap_or_default(),
+            Err(_) => DeleteThrottle::default(),
+        };
+        throttle.version = 1;
+        throttle.dir = Some(dir.to_path_buf());
+        throttle
     }
 
-    /// Records a wrong password; returns the new wait, if any.
-    pub fn fail(&mut self, id: &str, now: std::time::Instant) -> Option<u64> {
-        let e = self.failures.entry(id.to_string()).or_insert((0, None));
-        e.0 += 1;
-        if e.0 < FREE_ATTEMPTS {
+    /// Writes the throttle state atomically (`.tmp` + rename).
+    pub fn save(&self) -> Result<(), std::io::Error> {
+        let Some(dir) = &self.dir else {
+            return Ok(());
+        };
+        std::fs::create_dir_all(dir)?;
+        let file = dir.join(THROTTLE_FILE);
+        let tmp = dir.join(format!("{THROTTLE_FILE}.tmp"));
+        let bytes = serde_json::to_vec_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        std::fs::write(&tmp, bytes)?;
+        std::fs::rename(&tmp, &file)
+    }
+
+    /// Sets the persistence directory if not already set.
+    pub fn set_dir_if_none(&mut self, dir: &Path) {
+        if self.dir.is_none() {
+            self.dir = Some(dir.to_path_buf());
+        }
+    }
+
+    /// Seconds left before `id` may be tried again, if it is cooling down.
+    pub fn wait_secs(&self, id: &str) -> Option<u64> {
+        self.wait_secs_at(id, ThrottleTime::now())
+    }
+
+    /// Seconds left before `id` may be tried again at the given time snapshot.
+    pub fn wait_secs_at(&self, id: &str, now: ThrottleTime) -> Option<u64> {
+        let record = self.failures.get(id)?;
+        let dt = record.deadline_ticks?;
+        let dw = record.deadline_wall?;
+
+        // If the stored monotonic deadline is impossibly far in the future compared to
+        // current monotonic uptime (> MAX_WAIT_SECS * 1000), the system must have rebooted
+        // since the failure occurred. In that case, fall back to wall-clock time.
+        if dt.saturating_sub(now.monotonic_millis) > MAX_WAIT_SECS * 1000 {
+            if now.wall_secs >= dw {
+                return None;
+            }
+            let rem = (dw - now.wall_secs).min(MAX_WAIT_SECS);
+            return Some(rem.max(1));
+        }
+
+        // Within the same boot session, the monotonic deadline is authoritative:
+        // moving the system clock backwards or forwards does not shorten the wait.
+        if now.monotonic_millis >= dt {
             return None;
         }
-        let secs = (BASE_WAIT_SECS << (e.0 - FREE_ATTEMPTS).min(10)).min(MAX_WAIT_SECS);
-        e.1 = Some(now + std::time::Duration::from_secs(secs));
+
+        let rem_ms = dt - now.monotonic_millis;
+        let rem_secs = (rem_ms + 999) / 1000;
+        Some(rem_secs.max(1))
+    }
+
+    /// Records a wrong password; returns the new wait in seconds, if any.
+    pub fn fail(&mut self, id: &str) -> Option<u64> {
+        self.fail_at(id, ThrottleTime::now())
+    }
+
+    /// Records a wrong password at the given time snapshot; returns the new wait in seconds, if any.
+    pub fn fail_at(&mut self, id: &str, now: ThrottleTime) -> Option<u64> {
+        let entry = self
+            .failures
+            .entry(id.to_string())
+            .or_insert_with(|| ThrottleRecord {
+                failures: 0,
+                deadline_ticks: None,
+                deadline_wall: None,
+            });
+        entry.failures += 1;
+        if entry.failures < FREE_ATTEMPTS {
+            let _ = self.save();
+            return None;
+        }
+        let secs = (BASE_WAIT_SECS << (entry.failures - FREE_ATTEMPTS).min(10)).min(MAX_WAIT_SECS);
+        entry.deadline_ticks = Some(now.monotonic_millis.saturating_add(secs.saturating_mul(1000)));
+        entry.deadline_wall = Some(now.wall_secs.saturating_add(secs));
+        let _ = self.save();
         Some(secs)
     }
 
     /// Clears the record after a correct password.
     pub fn succeed(&mut self, id: &str) {
-        self.failures.remove(id);
+        if self.failures.remove(id).is_some() {
+            let _ = self.save();
+        }
     }
 }
 
@@ -577,20 +728,107 @@ mod tests {
     #[test]
     fn throttle_waits_after_free_attempts_and_doubles() {
         let mut t = DeleteThrottle::default();
-        let now = std::time::Instant::now();
-        assert_eq!(t.fail("v", now), None);
-        assert_eq!(t.fail("v", now), None);
-        assert_eq!(t.fail("v", now), Some(30));
-        assert_eq!(t.wait_secs("v", now), Some(30));
-        assert_eq!(t.wait_secs("other", now), None);
-        let later = now + std::time::Duration::from_secs(31);
-        assert_eq!(t.wait_secs("v", later), None);
-        assert_eq!(t.fail("v", later), Some(60));
+        let now = ThrottleTime::from_secs(1_000_000, 100);
+        assert_eq!(t.fail_at("v", now), None);
+        assert_eq!(t.fail_at("v", now), None);
+        assert_eq!(t.fail_at("v", now), Some(30));
+        assert_eq!(t.wait_secs_at("v", now), Some(30));
+        assert_eq!(t.wait_secs_at("other", now), None);
+        let later = ThrottleTime::from_secs(1_000_031, 131);
+        assert_eq!(t.wait_secs_at("v", later), None);
+        assert_eq!(t.fail_at("v", later), Some(60));
         for _ in 0..20 {
-            t.fail("v", later);
+            t.fail_at("v", later);
         }
-        assert_eq!(t.wait_secs("v", later), Some(MAX_WAIT_SECS));
+        assert_eq!(t.wait_secs_at("v", later), Some(MAX_WAIT_SECS));
         t.succeed("v");
-        assert_eq!(t.wait_secs("v", later), None);
+        assert_eq!(t.wait_secs_at("v", later), None);
+    }
+
+    #[test]
+    fn throttle_persists_across_reload_and_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = DeleteThrottle::load(dir.path());
+        let t0 = ThrottleTime::from_secs(1_000_000, 100);
+        assert_eq!(t.fail_at("vault-1", t0), None);
+        assert_eq!(t.fail_at("vault-1", t0), None);
+        assert_eq!(t.fail_at("vault-1", t0), Some(30));
+        assert_eq!(t.wait_secs_at("vault-1", t0), Some(30));
+
+        // Simulate quitting the app and restarting 10 seconds later:
+        let t_restart = ThrottleTime::from_secs(1_000_010, 110);
+        let mut reloaded = DeleteThrottle::load(dir.path());
+        // Running wait is still active and has not been shortened or cleared!
+        assert_eq!(reloaded.wait_secs_at("vault-1", t_restart), Some(20));
+
+        // Wait expires at 30 seconds:
+        let t_expired = ThrottleTime::from_secs(1_000_031, 131);
+        assert_eq!(reloaded.wait_secs_at("vault-1", t_expired), None);
+
+        // Another failure after expiration must double (60s), NOT give 3 free attempts:
+        assert_eq!(reloaded.fail_at("vault-1", t_expired), Some(60));
+        assert_eq!(reloaded.wait_secs_at("vault-1", t_expired), Some(60));
+
+        // Reload again; still 60s wait:
+        let reloaded_2 = DeleteThrottle::load(dir.path());
+        assert_eq!(reloaded_2.wait_secs_at("vault-1", t_expired), Some(60));
+
+        // Correct password clears the throttle record:
+        let mut reloaded_3 = DeleteThrottle::load(dir.path());
+        reloaded_3.succeed("vault-1");
+        assert_eq!(reloaded_3.wait_secs_at("vault-1", t_expired), None);
+
+        // Reload after succeed: completely clean, free attempts reset:
+        let mut reloaded_4 = DeleteThrottle::load(dir.path());
+        assert_eq!(reloaded_4.fail_at("vault-1", t_expired), None);
+    }
+
+    #[test]
+    fn throttle_monotonic_deadline_immune_to_clock_manipulation() {
+        let mut t = DeleteThrottle::default();
+        let t0 = ThrottleTime::from_secs(1_000_000, 100);
+        t.fail_at("v", t0);
+        t.fail_at("v", t0);
+        t.fail_at("v", t0);
+        assert_eq!(t.wait_secs_at("v", t0), Some(30));
+
+        // Attacker moves the system clock BACKWARDS by 1 hour (3600 seconds):
+        let t_clock_back = ThrottleTime::from_secs(1_000_000 - 3600 + 10, 110);
+        // Monotonic deadline still reports exactly 20 seconds remaining (not shortened or inflated):
+        assert_eq!(t.wait_secs_at("v", t_clock_back), Some(20));
+
+        // Attacker moves the system clock FORWARDS by 1 hour:
+        let t_clock_forward = ThrottleTime::from_secs(1_000_000 + 3600, 110);
+        // Monotonic deadline STILL enforces 20 seconds remaining (cannot bypass wait):
+        assert_eq!(t.wait_secs_at("v", t_clock_forward), Some(20));
+
+        // Once 30 monotonic seconds actually pass:
+        let t_passed = ThrottleTime::from_secs(1_000_000 + 3600 + 21, 131);
+        assert_eq!(t.wait_secs_at("v", t_passed), None);
+    }
+
+    #[test]
+    fn throttle_handles_reboot_and_corrupt_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut t = DeleteThrottle::load(dir.path());
+        let t0 = ThrottleTime::from_secs(1_000_000, 100_000);
+        t.fail_at("v", t0);
+        t.fail_at("v", t0);
+        t.fail_at("v", t0);
+
+        // System reboot: monotonic uptime reset to near zero (e.g. 10_000 ms),
+        // but wall-clock elapsed 10 seconds:
+        let t_reboot_active = ThrottleTime::from_secs(1_000_010, 10_000);
+        let reloaded = DeleteThrottle::load(dir.path());
+        assert_eq!(reloaded.wait_secs_at("v", t_reboot_active), Some(20));
+
+        // Wall-clock expired after reboot:
+        let t_reboot_expired = ThrottleTime::from_secs(1_000_035, 10_000);
+        assert_eq!(reloaded.wait_secs_at("v", t_reboot_expired), None);
+
+        // Corrupt file handling:
+        std::fs::write(dir.path().join(THROTTLE_FILE), b"corrupt json {").unwrap();
+        let corrupt_loaded = DeleteThrottle::load(dir.path());
+        assert_eq!(corrupt_loaded.wait_secs_at("v", t_reboot_active), None);
     }
 }
