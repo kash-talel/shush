@@ -35,9 +35,13 @@ Labels: `bug`, `enhancement`, `severity:critical`, `severity:high`, `severity:me
 `spec-inconsistency`. Do not classify them in `.claude/issue-routing.json`; `/issue` does that.
 
 ## Step 3: Implement and verify
-1. Start from an up-to-date main: `git checkout main; git pull --autostash origin main`
-   (`--autostash` because `.claude/issue-routing.json` may hold uncommitted routing entries.)
-2. Branch: `git checkout -b fix/issue-<NUMBER>-<short-slug>`
+You run inside an isolated git worktree, not the owner's checkout. Stay in it: never
+`git checkout main` (it is checked out in the main worktree and the command fails), and never
+`cd` to or edit files in the main checkout.
+1. Link the shared build dirs (`src/node_modules`, `src-tauri/target`) into this worktree:
+   `powershell -NoProfile -File .claude/scripts/issue-worktree.ps1 -Link`
+2. Branch from a fresh main:
+   `git fetch origin main; git checkout -B fix/issue-<NUMBER>-<short-slug> origin/main`
 3. Implement the change.
 4. Verify. Both must pass with 0 errors; fix any failure before going on:
    ```powershell
@@ -54,15 +58,21 @@ Labels: `bug`, `enhancement`, `severity:critical`, `severity:high`, `severity:me
 3. ```powershell
    gh pr create --title "fix(#<NUMBER>): <concise summary>" --body "Closes #<NUMBER>`n`n### Summary`n<summary>`n`n### Verification`n- [x] cargo test passed`n- [x] npm run check passed"
    ```
-4. `gh pr merge --squash --delete-branch --admin`
-5. `git checkout main; git pull --autostash origin main`
-6. Make sure the issue is closed (`gh issue close <NUMBER>` if it did not auto-close).
+4. Merge, then delete the remote branch. Do not pass `--delete-branch`: inside a worktree gh
+   then tries to check out `main` and fails after the merge.
+   ```powershell
+   gh pr merge fix/issue-<NUMBER>-<short-slug> --squash --admin
+   git push origin --delete fix/issue-<NUMBER>-<short-slug>
+   ```
+5. Make sure the issue is closed (`gh issue close <NUMBER>` if it did not auto-close).
+   Do not switch branches or clean up the worktree; the dispatcher does that.
 
 ## Final report
 Your last message goes back to the dispatcher. Make it exactly this, with nothing after it:
 ```
 STATUS: DONE | BLOCKED | FAILED
 ISSUE: #<NUMBER> "<TITLE>"
+WORKTREE: <output of `git rev-parse --show-toplevel`>
 PR: <url or none>
 FILED: <comma-separated new issue numbers, or none>
 SUMMARY: <2-4 lines: what changed and how it was verified, or why it stopped>

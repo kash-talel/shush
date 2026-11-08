@@ -58,14 +58,15 @@ gh issue create --title "[<Category>] <Concise Title>" --body "<Detailed descrip
 ---
 
 ## Step 4: Implement & Verify
-1. Ensure your local `main` branch is clean:
+1. Branch from a fresh `origin/main` (works in a normal checkout and in an `/issue` worktree;
+   never `git checkout main`, which fails inside a worktree):
    ```powershell
-   git checkout main
-   git pull --autostash origin main
+   git fetch origin main
+   git checkout -B fix/issue-<NUMBER>-<short-slug> origin/main
    ```
-2. Create a dedicated feature branch:
+2. If `src\node_modules` or `src-tauri\target` is missing, link the shared build dirs:
    ```powershell
-   git checkout -b fix/issue-<NUMBER>-<short-slug>
+   powershell -NoProfile -File .claude/scripts/issue-worktree.ps1 -Link
    ```
 3. Implement the changes following the repo guidelines.
 4. Run verification tests:
@@ -96,15 +97,13 @@ gh issue create --title "[<Category>] <Concise Title>" --body "<Detailed descrip
    ```powershell
    gh pr create --title "fix(#<NUMBER>): <concise summary>" --body "Closes #<NUMBER>`n`n### Summary`n<Summary of changes>`n`n### Verification`n- [x] cargo test passed`n- [x] npm run check passed"
    ```
-4. Merge the Pull Request:
+4. Merge the Pull Request, then delete the remote branch (no `--delete-branch`: inside a
+   worktree gh tries to check out `main` afterwards and fails):
    ```powershell
-   gh pr merge --squash --delete-branch --admin
+   gh pr merge fix/issue-<NUMBER>-<short-slug> --squash --admin
+   git push origin --delete fix/issue-<NUMBER>-<short-slug>
    ```
-5. Return to main and pull:
-   ```powershell
-   git checkout main
-   git pull --autostash origin main
-   ```
+5. Do not switch branches afterwards. The `/issue` dispatcher removes the worktree and updates main.
 6. Ensure the issue is closed on GitHub (`gh issue close <NUMBER>` if not auto-closed).
 
 ---

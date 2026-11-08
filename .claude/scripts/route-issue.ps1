@@ -14,8 +14,15 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$routingPath = Join-Path $PSScriptRoot '..\issue-routing.json'
-$routingPath = [System.IO.Path]::GetFullPath($routingPath)
+# Always the MAIN checkout's file, even when run from an /issue worktree, so there is
+# one routing table (worktree copies are stale snapshots of origin/main).
+$gitCommon = (& git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir 2>$null)
+if ($LASTEXITCODE -eq 0 -and $gitCommon) {
+    $mainRoot = Split-Path ([System.IO.Path]::GetFullPath($gitCommon.Trim())) -Parent
+    $routingPath = Join-Path $mainRoot '.claude\issue-routing.json'
+} else {
+    $routingPath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\issue-routing.json'))
+}
 
 function Read-Routing {
     if (-not (Test-Path $routingPath)) {
