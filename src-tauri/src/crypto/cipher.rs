@@ -19,6 +19,11 @@ pub const MAX_NONCE_LEN: usize = 24;
 const INFO_VEK: &[u8] = b"shush/v1/vault-encryption-key";
 const INFO_CANARY: &[u8] = b"shush/v1/canary-verification-key";
 const INFO_ATTACHMENT: &[u8] = b"shush/v1/attachment-key";
+/// HKDF `info` for the per-save payload key (format v2, issue #2).
+const INFO_SAVE_KEY: &[u8] = b"shush/v2/payload-save-key";
+
+/// Length of the random per-save identifier (format v2, issue #2).
+pub const SAVE_ID_LEN: usize = 32;
 
 /// Known canary plaintext. 17 bytes, so the sealed canary is 33 bytes,
 /// matching the `CANARY_CIPHERTEXT` field in spec §4.
@@ -90,6 +95,16 @@ pub struct SealedBox {
     pub ciphertext: Vec<u8>,
 }
 
+/// Output of [`seal_payload`]: the fresh `SAVE_ID` the payload key was derived
+/// from, and the sealed payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SealedPayload {
+    /// Random per-save identifier; stored in the clear in the header.
+    pub save_id: [u8; SAVE_ID_LEN],
+    /// Payload sealed under `HKDF(VEK, salt = save_id)`.
+    pub sealed: SealedBox,
+}
+
 /// Sub-keys expanded from the master key with HKDF-SHA256.
 #[derive(Debug)]
 pub struct VaultKeys {
@@ -133,6 +148,22 @@ impl VaultKeys {
     /// Key that encrypts attachment sidecar blobs.
     pub fn attachment_key(&self) -> &SecretKey {
         &self.attachment
+    }
+
+    /// Per-save payload key (format v2, issue #2):
+    /// `HKDF-SHA256(salt = SAVE_ID, ikm = VEK, info = "shush/v2/payload-save-key")`.
+    ///
+    /// The VEK is static for the life of the vault, so every write would
+    /// otherwise use the same AEAD key. A fresh `SAVE_ID` per write gives every
+    /// payload its own key, so even a repeated nonce (RNG fault, VM snapshot
+    /// restore, a future bug) cannot become a two-time pad or leak the GHASH
+    /// key, and GCM's 2^32-messages-per-key bound applies per save, not per vault.
+    pub fn payload_save_key(&self, save_id: &[u8; SAVE_ID_LEN]) -> SecretKey {
+        let hk = Hkdf::<Sha256>::new(Some(save_id), self.vek.expose());
+        let mut key = SecretKey::zeroed();
+        hk.expand(INFO_SAVE_KEY, key.as_mut_bytes())
+            .expect("valid HKDF length");
+        key
     }
 }
 
@@ -257,26 +288,42 @@ pub fn verify_canary(
     Ok(())
 }
 
-/// Seals the (already compressed) vault payload under the vault encryption key.
+/// Seals the (already compressed) vault payload (format v2).
+///
+/// Draws a fresh random `SAVE_ID` **and** a fresh random nonce, and encrypts
+/// under [`VaultKeys::payload_save_key`]. Neither value can be supplied by
+/// the caller (issue #2).
 pub fn seal_payload(
     suite: CipherSuite,
     keys: &VaultKeys,
     aad: &[u8],
     plaintext: &[u8],
-) -> Result<SealedBox, CryptoError> {
-    seal(suite, keys.vault_encryption_key(), aad, plaintext)
+) -> Result<SealedPayload, CryptoError> {
+    let mut save_id = [0u8; SAVE_ID_LEN];
+    fill_random(&mut save_id)?;
+    let key = keys.payload_save_key(&save_id);
+    let sealed = seal(suite, &key, aad, plaintext)?;
+    Ok(SealedPayload { save_id, sealed })
 }
 
 /// Opens the vault payload. Call [`verify_canary`] first so the user can be told
 /// "wrong password" rather than "corrupt vault".
+///
+/// `save_id` is `Some` for format v2 (per-save key) and `None` for legacy
+/// format v1 files, whose payload is encrypted directly under the VEK. There
+/// is no way to *write* a v1 payload.
 pub fn open_payload(
     suite: CipherSuite,
     keys: &VaultKeys,
+    save_id: Option<&[u8; SAVE_ID_LEN]>,
     nonce: &[u8],
     aad: &[u8],
     ciphertext: &[u8],
 ) -> Result<SecretBytes, CryptoError> {
-    open(suite, keys.vault_encryption_key(), nonce, aad, ciphertext)
+    match save_id {
+        Some(id) => open(suite, &keys.payload_save_key(id), nonce, aad, ciphertext),
+        None => open(suite, keys.vault_encryption_key(), nonce, aad, ciphertext),
+    }
 }
 
 #[cfg(test)]
@@ -516,9 +563,85 @@ mod tests {
         let keys = VaultKeys::derive(&key(13));
         let c = seal_canary(CipherSuite::Aes256Gcm, &keys, b"").unwrap();
         assert_eq!(
-            open_payload(CipherSuite::Aes256Gcm, &keys, &c.nonce, b"", &c.ciphertext).unwrap_err(),
+            open_payload(
+                CipherSuite::Aes256Gcm,
+                &keys,
+                None,
+                &c.nonce,
+                b"",
+                &c.ciphertext
+            )
+            .unwrap_err(),
             CryptoError::AuthenticationFailed
         );
+        assert_eq!(
+            open_payload(
+                CipherSuite::Aes256Gcm,
+                &keys,
+                Some(&[0u8; SAVE_ID_LEN]),
+                &c.nonce,
+                b"",
+                &c.ciphertext
+            )
+            .unwrap_err(),
+            CryptoError::AuthenticationFailed
+        );
+    }
+
+    #[test]
+    fn every_payload_seal_uses_a_fresh_save_id_and_key() {
+        let keys = VaultKeys::derive(&key(14));
+        for suite in CipherSuite::ALL {
+            let mut ids = HashSet::new();
+            for _ in 0..100 {
+                let p = seal_payload(suite, &keys, b"aad", b"same plaintext").unwrap();
+                assert!(ids.insert(p.save_id), "SAVE_ID repeated");
+                assert_eq!(
+                    &*open_payload(
+                        suite,
+                        &keys,
+                        Some(&p.save_id),
+                        &p.sealed.nonce,
+                        b"aad",
+                        &p.sealed.ciphertext
+                    )
+                    .unwrap(),
+                    b"same plaintext"
+                );
+                // The static VEK alone (the v1 path) cannot open a v2 payload.
+                assert_eq!(
+                    open_payload(
+                        suite,
+                        &keys,
+                        None,
+                        &p.sealed.nonce,
+                        b"aad",
+                        &p.sealed.ciphertext
+                    )
+                    .unwrap_err(),
+                    CryptoError::AuthenticationFailed
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_nonce_under_different_save_ids_is_not_a_two_time_pad() {
+        // Simulates a broken RNG handing out the same nonce twice: with
+        // per-save keys the keystreams still differ, so XORing the two
+        // ciphertexts does not reveal the XOR of the plaintexts.
+        let keys = VaultKeys::derive(&key(15));
+        let pt = [0u8; 64];
+        for suite in CipherSuite::ALL {
+            let nonce = vec![0x33; suite.nonce_len()];
+            let k1 = keys.payload_save_key(&[1u8; SAVE_ID_LEN]);
+            let k2 = keys.payload_save_key(&[2u8; SAVE_ID_LEN]);
+            assert_ne!(k1.expose(), k2.expose());
+            assert_ne!(k1.expose(), keys.vault_encryption_key().expose());
+            let a = seal_with_nonce(suite, &k1, nonce.clone(), b"", &pt).unwrap();
+            let b = seal_with_nonce(suite, &k2, nonce, b"", &pt).unwrap();
+            assert_ne!(a.ciphertext[..64], b.ciphertext[..64]);
+        }
     }
 
     /// Known-answer vectors for the whole key schedule + AEAD, cross-checked
@@ -529,6 +652,11 @@ mod tests {
         let master = key(0x42);
         let keys = VaultKeys::derive(&master);
         assert_eq!(hex::encode(keys.vault_encryption_key().expose()), KAT_VEK);
+        let save_id: [u8; SAVE_ID_LEN] = core::array::from_fn(|i| i as u8);
+        assert_eq!(
+            hex::encode(keys.payload_save_key(&save_id).expose()),
+            KAT_SAVE_KEY
+        );
         assert_eq!(hex::encode(keys.canary_key().expose()), KAT_CANARY_KEY);
         assert_eq!(
             hex::encode(keys.attachment_key().expose()),
@@ -558,6 +686,9 @@ mod tests {
     const KAT_ATTACHMENT_KEY: &str =
         "6f15f26ac3f35a68aaa6dfeeb6cfb1cc86ea130eebdd320b4eed091152bd72bb";
     const KAT_VEK: &str = "9ebcb7380c3f97f55dda404254d62e33cdc04d87c37c30904a729d9bfdbf3d1c";
+    /// HKDF-SHA256(salt = 00 01 .. 1f, ikm = KAT_VEK, info = "shush/v2/payload-save-key"),
+    /// computed with Node.js `crypto.hkdfSync`.
+    const KAT_SAVE_KEY: &str = "12fb57eae425ad5db99d253f7fd472481b257fc35fbc74023d34e8308411eb9b";
     const KAT_CANARY_KEY: &str = "ccdbf1f1e85b9dff53b86e22278669061e18ecaf2a76063e7cfe9d4360b52c65";
     const KAT_AES_GCM: &str = "dc82094e5b7fbe54db65c5be6ed3d49a02b3a9b80b957b7118";
     const KAT_XCHACHA: &str = "f32984d857bb3368268222841a75a46a427e1bbedc172f8a26";

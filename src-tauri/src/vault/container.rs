@@ -5,7 +5,7 @@
 //! | Offset | Len | Field              |
 //! |-------:|----:|--------------------|
 //! | 0x00   |   5 | MAGIC `SHUSH` / `SHBKP` |
-//! | 0x05   |   2 | FORMAT_VERSION (1) |
+//! | 0x05   |   2 | FORMAT_VERSION (2; 1 is read-only) |
 //! | 0x07   |   1 | CIPHER_SUITE_ID    |
 //! | 0x08   |   1 | FLAGS (bit 0: keyfile) |
 //! | 0x09   |   4 | ARGON2_MEM_KIB     |
@@ -14,21 +14,27 @@
 //! | 0x15   |  32 | KDF_SALT           |
 //! | 0x35   |  24 | CANARY_NONCE (zero-padded) |
 //! | 0x4D   |  33 | CANARY_CIPHERTEXT  |
-//! | 0x6E   |  24 | PAYLOAD_NONCE (zero-padded) |
-//! | 0x86   |   4 | PAYLOAD_LENGTH     |
-//! | 0x8A   |   N | PAYLOAD_CIPHERTEXT |
+//! | 0x6E   |  32 | SAVE_ID (v2 only)  |
+//! | 0x8E   |  24 | PAYLOAD_NONCE (zero-padded) |
+//! | 0xA6   |   4 | PAYLOAD_LENGTH     |
+//! | 0xAA   |   N | PAYLOAD_CIPHERTEXT |
+//!
+//! Format v1 is identical without `SAVE_ID` (payload nonce at 0x6E, length at
+//! 0x86, ciphertext at 0x8A) and encrypts the payload directly under the VEK.
+//! v1 is still read; every write produces v2 (issue #2).
 //!
 //! Header authentication (issue #1): every header byte is bound into an AEAD
 //! tag. The canary's AAD is `[0x00, 0x35)`; the payload's AAD is
 //! `[0x00, 0x6E) || PAYLOAD_LENGTH`. Each nonce is authenticated by its own
-//! AEAD, and nonce padding must be zero, so no byte can change undetected.
+//! AEAD, `SAVE_ID` selects the payload key (so changing it fails the payload
+//! AEAD), and nonce padding must be zero, so no byte can change undetected.
 
 use std::fs::{self, File};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::crypto::cipher::{self, CANARY_CIPHERTEXT_LEN, MAX_NONCE_LEN, TAG_LEN};
+use crate::crypto::cipher::{self, CANARY_CIPHERTEXT_LEN, MAX_NONCE_LEN, SAVE_ID_LEN, TAG_LEN};
 use crate::crypto::{CipherSuite, KdfParams, SecretBytes, VaultKeys, SALT_LEN};
 
 use super::VaultError;
@@ -37,8 +43,10 @@ use super::VaultError;
 pub const MAGIC_VAULT: [u8; 5] = *b"SHUSH";
 /// Magic for `.shushbackup` files (spec §9.1).
 pub const MAGIC_BACKUP: [u8; 5] = *b"SHBKP";
-/// The only format version this build reads and writes.
-pub const FORMAT_VERSION: u16 = 1;
+/// The format version this build writes.
+pub const FORMAT_VERSION: u16 = 2;
+/// The legacy format version this build still reads (static payload key).
+pub const FORMAT_VERSION_V1: u16 = 1;
 /// FLAGS bit 0: a keyfile is part of the credentials.
 pub const FLAG_KEYFILE: u8 = 0x01;
 const KNOWN_FLAGS: u8 = FLAG_KEYFILE;
@@ -52,17 +60,58 @@ const OFF_PAR: usize = 0x11;
 const OFF_SALT: usize = 0x15;
 const OFF_CANARY_NONCE: usize = 0x35;
 const OFF_CANARY_CT: usize = 0x4D;
-const OFF_PAYLOAD_NONCE: usize = 0x6E;
-const OFF_PAYLOAD_LEN: usize = 0x86;
-/// Total header length; the payload ciphertext starts here.
-pub const HEADER_LEN: usize = 0x8A;
+/// End of the canary block; v1 and v2 share every byte before this.
+const OFF_CANARY_END: usize = 0x6E;
+const OFF_SAVE_ID: usize = 0x6E;
+const OFF_PAYLOAD_NONCE: usize = 0x8E;
+const OFF_PAYLOAD_LEN: usize = 0xA6;
+/// Total v2 header length; the payload ciphertext starts here. This is also
+/// the largest header of any readable version.
+pub const HEADER_LEN: usize = 0xAA;
+
+const V1_OFF_PAYLOAD_NONCE: usize = 0x6E;
+const V1_OFF_PAYLOAD_LEN: usize = 0x86;
+const V1_HEADER_LEN: usize = 0x8A;
 
 // The spec's offsets must agree with the field sizes.
 const _: () = assert!(OFF_SALT + SALT_LEN == OFF_CANARY_NONCE);
 const _: () = assert!(OFF_CANARY_NONCE + MAX_NONCE_LEN == OFF_CANARY_CT);
-const _: () = assert!(OFF_CANARY_CT + CANARY_CIPHERTEXT_LEN == OFF_PAYLOAD_NONCE);
+const _: () = assert!(OFF_CANARY_CT + CANARY_CIPHERTEXT_LEN == OFF_CANARY_END);
+const _: () = assert!(OFF_SAVE_ID + SAVE_ID_LEN == OFF_PAYLOAD_NONCE);
 const _: () = assert!(OFF_PAYLOAD_NONCE + MAX_NONCE_LEN == OFF_PAYLOAD_LEN);
 const _: () = assert!(OFF_PAYLOAD_LEN + 4 == HEADER_LEN);
+const _: () = assert!(V1_OFF_PAYLOAD_NONCE == OFF_CANARY_END);
+const _: () = assert!(V1_OFF_PAYLOAD_NONCE + MAX_NONCE_LEN == V1_OFF_PAYLOAD_LEN);
+const _: () = assert!(V1_OFF_PAYLOAD_LEN + 4 == V1_HEADER_LEN);
+
+/// Where the version-dependent payload fields live.
+#[derive(Debug, Clone, Copy)]
+struct Layout {
+    save_id: Option<usize>,
+    payload_nonce: usize,
+    payload_len: usize,
+    header_len: usize,
+}
+
+impl Layout {
+    const fn for_version(version: u16) -> Self {
+        if version == FORMAT_VERSION_V1 {
+            Self {
+                save_id: None,
+                payload_nonce: V1_OFF_PAYLOAD_NONCE,
+                payload_len: V1_OFF_PAYLOAD_LEN,
+                header_len: V1_HEADER_LEN,
+            }
+        } else {
+            Self {
+                save_id: Some(OFF_SAVE_ID),
+                payload_nonce: OFF_PAYLOAD_NONCE,
+                payload_len: OFF_PAYLOAD_LEN,
+                header_len: HEADER_LEN,
+            }
+        }
+    }
+}
 
 /// Largest payload ciphertext accepted (512 MiB). Bounds memory use when
 /// reading untrusted files (issue #5).
@@ -136,8 +185,8 @@ impl Header {
             m if m == MAGIC_BACKUP => FileKind::Backup,
             _ => return Err(VaultError::NotAVault),
         };
-        let version = u16::from_le_bytes([bytes[OFF_VERSION], bytes[OFF_VERSION + 1]]);
-        if version != FORMAT_VERSION {
+        let version = read_version(bytes);
+        if version != FORMAT_VERSION && version != FORMAT_VERSION_V1 {
             return Err(VaultError::UnsupportedVersion(version));
         }
         let suite = CipherSuite::from_id(bytes[OFF_CIPHER])?;
@@ -167,6 +216,11 @@ fn is_known_magic(m: &[u8]) -> bool {
     m == MAGIC_VAULT || m == MAGIC_BACKUP
 }
 
+/// Caller must have checked `b.len() >= OFF_CIPHER`.
+fn read_version(b: &[u8]) -> u16 {
+    u16::from_le_bytes([b[OFF_VERSION], b[OFF_VERSION + 1]])
+}
+
 fn read_u32(b: &[u8], off: usize) -> u32 {
     u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]])
 }
@@ -177,8 +231,9 @@ fn padded_nonce(nonce: &[u8]) -> [u8; MAX_NONCE_LEN] {
     out
 }
 
-/// Seals `plaintext` into a complete container file image under `keys`.
-/// A fresh canary nonce and payload nonce are drawn on every call (issue #2).
+/// Seals `plaintext` into a complete format-v2 container file image under
+/// `keys`. A fresh canary nonce, payload nonce and `SAVE_ID` (hence a fresh
+/// payload key) are drawn on every call (issue #2).
 pub fn seal(header: &Header, keys: &VaultKeys, plaintext: &[u8]) -> Result<Vec<u8>, VaultError> {
     let payload_len = plaintext
         .len()
@@ -194,15 +249,18 @@ pub fn seal(header: &Header, keys: &VaultKeys, plaintext: &[u8]) -> Result<Vec<u
     out.extend_from_slice(&padded_nonce(&canary.nonce));
     out.extend_from_slice(&canary.ciphertext);
 
-    let mut aad = Vec::with_capacity(OFF_PAYLOAD_NONCE + 4);
+    debug_assert_eq!(out.len(), OFF_CANARY_END);
+    let mut aad = Vec::with_capacity(OFF_CANARY_END + 4);
     aad.extend_from_slice(&out);
     aad.extend_from_slice(&payload_len.to_le_bytes());
     let payload = cipher::seal_payload(header.suite, keys, &aad, plaintext)?;
-    debug_assert_eq!(payload.ciphertext.len(), payload_len as usize);
+    debug_assert_eq!(payload.sealed.ciphertext.len(), payload_len as usize);
 
-    out.extend_from_slice(&padded_nonce(&payload.nonce));
+    out.extend_from_slice(&payload.save_id);
+    out.extend_from_slice(&padded_nonce(&payload.sealed.nonce));
     out.extend_from_slice(&payload_len.to_le_bytes());
-    out.extend_from_slice(&payload.ciphertext);
+    out.extend_from_slice(&payload.sealed.ciphertext);
+    debug_assert_eq!(out.len(), HEADER_LEN + payload_len as usize);
     Ok(out)
 }
 
@@ -211,6 +269,9 @@ pub fn seal(header: &Header, keys: &VaultKeys, plaintext: &[u8]) -> Result<Vec<u
 pub struct Sealed<'a> {
     /// Authenticated header fields.
     pub header: Header,
+    /// On-disk format version (1 = legacy static payload key, 2 = per-save key).
+    pub version: u16,
+    layout: Layout,
     bytes: &'a [u8],
 }
 
@@ -218,28 +279,35 @@ pub struct Sealed<'a> {
 /// before any cryptography runs.
 pub fn parse(bytes: &[u8]) -> Result<Sealed<'_>, VaultError> {
     let header = Header::parse(bytes)?;
-    if bytes.len() < HEADER_LEN {
+    let version = read_version(bytes);
+    let layout = Layout::for_version(version);
+    if bytes.len() < layout.header_len {
         return Err(VaultError::Truncated);
     }
     let nl = header.suite.nonce_len();
-    for off in [OFF_CANARY_NONCE, OFF_PAYLOAD_NONCE] {
+    for off in [OFF_CANARY_NONCE, layout.payload_nonce] {
         if bytes[off + nl..off + MAX_NONCE_LEN].iter().any(|&b| b != 0) {
             return Err(VaultError::Malformed("nonzero nonce padding"));
         }
     }
-    let payload_len = read_u32(bytes, OFF_PAYLOAD_LEN);
+    let payload_len = read_u32(bytes, layout.payload_len);
     if payload_len > MAX_PAYLOAD_LEN {
         return Err(VaultError::TooLarge);
     }
     if (payload_len as usize) < TAG_LEN {
         return Err(VaultError::Malformed("payload shorter than tag"));
     }
-    match (bytes.len() - HEADER_LEN).cmp(&(payload_len as usize)) {
+    match (bytes.len() - layout.header_len).cmp(&(payload_len as usize)) {
         std::cmp::Ordering::Less => return Err(VaultError::Truncated),
         std::cmp::Ordering::Greater => return Err(VaultError::Malformed("trailing bytes")),
         std::cmp::Ordering::Equal => {}
     }
-    Ok(Sealed { header, bytes })
+    Ok(Sealed {
+        header,
+        version,
+        layout,
+        bytes,
+    })
 }
 
 impl Sealed<'_> {
@@ -252,23 +320,30 @@ impl Sealed<'_> {
             keys,
             &self.bytes[OFF_CANARY_NONCE..OFF_CANARY_NONCE + nl],
             &self.bytes[..OFF_CANARY_NONCE],
-            &self.bytes[OFF_CANARY_CT..OFF_PAYLOAD_NONCE],
+            &self.bytes[OFF_CANARY_CT..OFF_CANARY_END],
         )?;
         Ok(())
     }
 
     /// Decrypts the payload. Call [`Self::verify_canary`] first.
     pub fn open_payload(&self, keys: &VaultKeys) -> Result<SecretBytes, VaultError> {
+        let l = self.layout;
         let nl = self.header.suite.nonce_len();
-        let mut aad = Vec::with_capacity(OFF_PAYLOAD_NONCE + 4);
-        aad.extend_from_slice(&self.bytes[..OFF_PAYLOAD_NONCE]);
-        aad.extend_from_slice(&self.bytes[OFF_PAYLOAD_LEN..HEADER_LEN]);
+        let mut aad = Vec::with_capacity(OFF_CANARY_END + 4);
+        aad.extend_from_slice(&self.bytes[..OFF_CANARY_END]);
+        aad.extend_from_slice(&self.bytes[l.payload_len..l.header_len]);
+        let save_id: Option<[u8; SAVE_ID_LEN]> = l.save_id.map(|off| {
+            let mut id = [0u8; SAVE_ID_LEN];
+            id.copy_from_slice(&self.bytes[off..off + SAVE_ID_LEN]);
+            id
+        });
         Ok(cipher::open_payload(
             self.header.suite,
             keys,
-            &self.bytes[OFF_PAYLOAD_NONCE..OFF_PAYLOAD_NONCE + nl],
+            save_id.as_ref(),
+            &self.bytes[l.payload_nonce..l.payload_nonce + nl],
             &aad,
-            &self.bytes[HEADER_LEN..],
+            &self.bytes[l.header_len..],
         )?)
     }
 }
@@ -382,7 +457,7 @@ mod tests {
         let k = keys(1);
         let file = seal(&header(CipherSuite::Aes256Gcm), &k, b"hello").unwrap();
         assert_eq!(&file[..5], b"SHUSH");
-        assert_eq!(&file[5..7], &[1, 0]);
+        assert_eq!(&file[5..7], &[2, 0]);
         assert_eq!(file[7], 0x01);
         assert_eq!(file[8], FLAG_KEYFILE);
         assert_eq!(read_u32(&file, 0x09), 65536);
@@ -394,8 +469,94 @@ mod tests {
             &[0u8; 12],
             "AES nonce zero-padded to 24"
         );
-        assert_eq!(read_u32(&file, 0x86) as usize, 5 + TAG_LEN);
-        assert_eq!(file.len(), HEADER_LEN + 5 + TAG_LEN);
+        assert_ne!(&file[0x6E..0x8E], &[0u8; 32], "SAVE_ID is random");
+        assert_eq!(
+            &file[0x8E + 12..0xA6],
+            &[0u8; 12],
+            "AES payload nonce zero-padded to 24"
+        );
+        assert_eq!(read_u32(&file, 0xA6) as usize, 5 + TAG_LEN);
+        assert_eq!(file.len(), 0xAA + 5 + TAG_LEN);
+        assert_eq!(parse(&file).unwrap().version, FORMAT_VERSION);
+    }
+
+    /// Builds a legacy format-v1 image the way the v1 writer did: payload
+    /// sealed directly under the static VEK, no `SAVE_ID`.
+    fn seal_v1(header: &Header, keys: &VaultKeys, plaintext: &[u8]) -> Vec<u8> {
+        let payload_len = (plaintext.len() + TAG_LEN) as u32;
+        let mut fixed = header.fixed_bytes();
+        fixed[OFF_VERSION..OFF_CIPHER].copy_from_slice(&FORMAT_VERSION_V1.to_le_bytes());
+        let canary = cipher::seal_canary(header.suite, keys, &fixed).unwrap();
+        let mut out = fixed.to_vec();
+        out.extend_from_slice(&padded_nonce(&canary.nonce));
+        out.extend_from_slice(&canary.ciphertext);
+        let mut aad = out.clone();
+        aad.extend_from_slice(&payload_len.to_le_bytes());
+        let p = cipher::seal(header.suite, keys.vault_encryption_key(), &aad, plaintext).unwrap();
+        out.extend_from_slice(&padded_nonce(&p.nonce));
+        out.extend_from_slice(&payload_len.to_le_bytes());
+        out.extend_from_slice(&p.ciphertext);
+        out
+    }
+
+    #[test]
+    fn legacy_v1_files_still_open() {
+        let k = keys(10);
+        for suite in CipherSuite::ALL {
+            let h = header(suite);
+            let file = seal_v1(&h, &k, b"legacy payload");
+            assert_eq!(file.len(), V1_HEADER_LEN + 14 + TAG_LEN);
+            let sealed = parse(&file).unwrap();
+            assert_eq!(sealed.version, FORMAT_VERSION_V1);
+            assert_eq!(sealed.header, h);
+            sealed.verify_canary(&k).unwrap();
+            assert_eq!(&*sealed.open_payload(&k).unwrap(), b"legacy payload");
+
+            // Every byte of a v1 file is still authenticated.
+            for i in 0..file.len() {
+                let mut t = file.clone();
+                t[i] ^= 0x01;
+                let opened = parse(&t)
+                    .and_then(|s| s.verify_canary(&k).map(|()| s))
+                    .and_then(|s| s.open_payload(&k));
+                assert!(opened.is_err(), "{suite:?}: v1 byte 0x{i:02x} undetected");
+            }
+
+            // Re-sealing (any save) upgrades to v2.
+            let upgraded = seal(&sealed.header, &k, b"legacy payload").unwrap();
+            let s2 = parse(&upgraded).unwrap();
+            assert_eq!(s2.version, FORMAT_VERSION);
+            s2.verify_canary(&k).unwrap();
+            assert_eq!(&*s2.open_payload(&k).unwrap(), b"legacy payload");
+        }
+    }
+
+    #[test]
+    fn version_relabel_between_v1_and_v2_is_detected() {
+        // The version is in the canary AAD, so relabelling fails the canary.
+        let k = keys(11);
+        let h = header(CipherSuite::Aes256Gcm);
+        let mut v2_as_v1 = seal(&h, &k, b"x").unwrap();
+        v2_as_v1[OFF_VERSION] = 1;
+        let mut v1_as_v2 = seal_v1(&h, &k, b"x");
+        v1_as_v2[OFF_VERSION] = 2;
+        for t in [v2_as_v1, v1_as_v2] {
+            let r = parse(&t).and_then(|s| s.verify_canary(&k));
+            assert!(r.is_err());
+        }
+    }
+
+    #[test]
+    fn every_save_uses_a_fresh_save_id() {
+        let k = keys(12);
+        let h = header(CipherSuite::Aes256Gcm);
+        let a = seal(&h, &k, b"same").unwrap();
+        let b = seal(&h, &k, b"same").unwrap();
+        assert_ne!(
+            a[OFF_SAVE_ID..OFF_PAYLOAD_NONCE],
+            b[OFF_SAVE_ID..OFF_PAYLOAD_NONCE]
+        );
+        assert_ne!(a[HEADER_LEN..], b[HEADER_LEN..]);
     }
 
     #[test]
@@ -486,9 +647,14 @@ mod tests {
             VaultError::Malformed("trailing bytes")
         );
 
-        let mut v2 = file.clone();
-        v2[OFF_VERSION] = 2;
-        assert_eq!(parse(&v2).unwrap_err(), VaultError::UnsupportedVersion(2));
+        for bad in [0u8, 3, 0xFF] {
+            let mut v = file.clone();
+            v[OFF_VERSION] = bad;
+            assert_eq!(
+                parse(&v).unwrap_err(),
+                VaultError::UnsupportedVersion(u16::from(bad))
+            );
+        }
 
         let mut bad_suite = file.clone();
         bad_suite[OFF_CIPHER] = 0x7F;
