@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "node scripts/no-raw-html.mjs && svelte-check --tsconfig ./tsconfig.json",
+    "check": "node scripts/no-raw-html.mjs && node --experimental-strip-types scripts/test-pairing.mjs && svelte-check --tsconfig ./tsconfig.json",
     "tauri": "tauri"
   },
   "devDependencies": {
