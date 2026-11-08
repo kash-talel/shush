@@ -27,6 +27,10 @@ export interface AppInfo {
 }
 
 export interface VaultStatus {
+  /** Registry id; null on first run before any vault exists. */
+  id: string | null;
+  name: string | null;
+  color: VaultColor;
   path: string;
   exists: boolean;
   unlocked: boolean;
@@ -73,10 +77,56 @@ export function toCmdError(e: unknown): CmdError {
 export const appInfo = () => invoke<AppInfo>("app_info");
 export const vaultStatus = () => invoke<VaultStatus>("vault_status");
 export const inspectKeyfile = (path: string) => invoke<KeyfileInfo>("inspect_keyfile", { path });
-export const createVault = (password: string, keyfile: KeyfileChoice, cipherId: number) =>
-  invoke<VaultSummary>("create_vault", { password, keyfile, cipherId });
-export const unlock = (password: string, keyfilePath: string | null) =>
-  invoke<VaultSummary>("unlock", { password, keyfilePath });
+export const createVault = (
+  password: string,
+  keyfile: KeyfileChoice,
+  cipherId: number,
+  target: NewVaultTarget | null = null,
+) => invoke<VaultSummary>("create_vault", { password, keyfile, cipherId, target });
+export const unlock = (password: string, keyfilePath: string | null, vaultId: string | null) =>
+  invoke<VaultSummary>("unlock", { password, keyfilePath, vaultId });
+
+// ---- Vault list (switch / add / delete) -------------------------------------
+
+export type VaultColor = "crimson" | "amber" | "teal" | "cobalt" | "violet" | "chrome";
+
+/** One vault on the unlock screen's shelf. No secrets. */
+export interface VaultCard {
+  id: string;
+  name: string;
+  path: string;
+  color: VaultColor;
+  is_default: boolean;
+  selected: boolean;
+  exists: boolean;
+  keyfile_required: boolean | null;
+  error: CmdError | null;
+}
+
+export interface VaultList {
+  vaults: VaultCard[];
+  colors: VaultColor[];
+  max_name_chars: number;
+}
+
+/** Where and under which name to create an additional vault. */
+export interface NewVaultTarget {
+  path: string;
+  name: string;
+  color: VaultColor | null;
+}
+
+export const listVaults = () => invoke<VaultList>("list_vaults");
+export const selectVault = (id: string) => invoke<VaultStatus>("select_vault", { id });
+/** Returns the final path (".shush" added when missing). */
+export const checkNewVault = (path: string, name: string) => invoke<string>("check_new_vault", { path, name });
+export const addExistingVault = (path: string, name: string, color: VaultColor | null) =>
+  invoke<VaultStatus>("add_existing_vault", { path, name, color });
+export const updateVault = (id: string, name: string, color: VaultColor) =>
+  invoke<void>("update_vault", { id, name, color });
+export const forgetVault = (id: string) => invoke<void>("forget_vault", { id });
+export const deleteVault = (id: string, password: string, keyfilePath: string | null, confirmName: string) =>
+  invoke<void>("delete_vault", { id, password, keyfilePath, confirmName });
 export const lock = () => invoke<void>("lock");
 export const showSpotlight = () => invoke<void>("show_spotlight");
 

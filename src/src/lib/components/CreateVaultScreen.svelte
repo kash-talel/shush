@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { save } from "@tauri-apps/plugin-dialog";
-  import { ChevronRight, FileKey2, KeyRound, LoaderCircle, TriangleAlert } from "@lucide/svelte";
+  import { ArrowLeft, ChevronRight, FileKey2, KeyRound, LoaderCircle, TriangleAlert } from "@lucide/svelte";
   import Spindle from "./Spindle.svelte";
   import PasswordField from "./PasswordField.svelte";
   import KeyfileAttach from "./KeyfileAttach.svelte";
@@ -14,6 +14,7 @@
     type CmdError,
     type KeyfileChoice,
     type KeyfileInfo,
+    type NewVaultTarget,
     type VaultStatus,
     type VaultSummary,
   } from "../tauri-bridge";
@@ -21,8 +22,18 @@
   let {
     vault,
     info,
+    target = null,
     oncreated,
-  }: { vault: VaultStatus; info: AppInfo | null; oncreated: (s: VaultSummary) => void } = $props();
+    oncancel,
+  }: {
+    vault: VaultStatus;
+    info: AppInfo | null;
+    /** An additional vault at a chosen location; null on first run. */
+    target?: NewVaultTarget | null;
+    oncreated: (s: VaultSummary) => void;
+    /** Back to the vault shelf (only offered for an additional vault). */
+    oncancel?: () => void;
+  } = $props();
 
   type Mode = KeyfileChoice["mode"];
 
@@ -93,7 +104,7 @@
     error = null;
     let summary: VaultSummary | null = null;
     try {
-      summary = await createVault(password, keyfileChoice(), cipherId);
+      summary = await createVault(password, keyfileChoice(), cipherId, target);
     } catch (e) {
       error = toCmdError(e);
     } finally {
@@ -119,13 +130,22 @@
 
 <section class="flex flex-1 justify-center overflow-y-auto px-6 py-6">
   <div class="my-auto w-full max-w-[440px]">
+    {#if oncancel}
+      <button type="button" onclick={oncancel} disabled={busy} class="mb-3 inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-200">
+        <ArrowLeft class="size-3.5" aria-hidden="true" /> Back to vaults
+      </button>
+    {/if}
     <header class="mb-5 flex items-center gap-4">
       <div class="shrink-0 [@media(max-height:620px)]:hidden">
-        <Spindle spin={busy ? "fast" : "idle"} size={76} />
+        <Spindle spin={busy ? "fast" : "idle"} size={76} color={target?.color ?? vault.color} />
       </div>
       <div class="min-w-0 flex-1">
-        <h1 class="font-display text-[26px] leading-tight font-bold tracking-[-0.01em] text-zinc-50">New vault</h1>
-        <p class="mt-0.5 text-xs text-zinc-400">No vault found here yet. Set a master password to create one.</p>
+        <h1 class="font-display text-[26px] leading-tight font-bold tracking-[-0.01em] text-zinc-50">
+          {target ? `New vault: ${target.name}` : "New vault"}
+        </h1>
+        <p class="mt-0.5 text-xs text-zinc-400">
+          {target ? "Set its master password. Each vault has its own." : "No vault found here yet. Set a master password to create one."}
+        </p>
         <p class="mt-1.5 flex max-w-full font-mono text-[10.5px] text-zinc-500" title={vault.path}>
           <span class="truncate">{vault.path.slice(0, cut + 1)}</span>
           <span class="shrink-0 text-uv">{vault.path.slice(cut + 1)}</span>

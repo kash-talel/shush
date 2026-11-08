@@ -4,6 +4,7 @@
   import Spindle from "./Spindle.svelte";
   import PasswordField from "./PasswordField.svelte";
   import KeyfileAttach from "./KeyfileAttach.svelte";
+  import VaultShelf from "./VaultShelf.svelte";
   import {
     describeAutoLock,
     formatKdf,
@@ -12,6 +13,7 @@
     type AutoLockReason,
     type CmdError,
     type KeyfileInfo,
+    type NewVaultTarget,
     type VaultStatus,
     type VaultSummary,
   } from "../tauri-bridge";
@@ -20,7 +22,17 @@
     vault,
     autoLockReason = null,
     onunlocked,
-  }: { vault: VaultStatus; autoLockReason?: AutoLockReason | null; onunlocked: (s: VaultSummary) => void } = $props();
+    onswitch,
+    onnew,
+  }: {
+    vault: VaultStatus;
+    autoLockReason?: AutoLockReason | null;
+    onunlocked: (s: VaultSummary) => void;
+    /** Another vault was picked (or the list changed) on the shelf. */
+    onswitch: (s: VaultStatus) => void;
+    /** "New vault" on the shelf: set its password next. */
+    onnew: (t: NewVaultTarget) => void;
+  } = $props();
 
   let password = $state("");
   let keyfile = $state<{ path: string; info: KeyfileInfo } | null>(null);
@@ -61,7 +73,7 @@
     error = null;
     let summary: VaultSummary | null = null;
     try {
-      summary = await unlock(password, keyfile?.path ?? null);
+      summary = await unlock(password, keyfile?.path ?? null, vault.id);
     } catch (e) {
       error = toCmdError(e);
     } finally {
@@ -95,8 +107,9 @@
         open={unsealed}
         {spin}
         {shudder}
+        color={vault.color}
         size="clamp(128px, 29vh, 212px)"
-        label={unsealed ? "Vault case (open)" : "Unseal the vault"}
+        label={unsealed ? "Vault case (open)" : `Unseal the vault${vault.name ? ` ${vault.name}` : ""}`}
         expanded={unsealed}
         controls="unlock-form"
         onclick={unsealed ? () => passwordInput?.focus() : unseal}
@@ -105,9 +118,15 @@
     </div>
 
     <!-- Sealed: only the case and the prompt. -->
-    <div class={["unfold w-full", !unsealed && "open"]} aria-hidden={unsealed}>
-      <div class="flex flex-col items-center gap-3 pt-7">
+    <div class={["unfold w-full", !unsealed && "open"]} aria-hidden={unsealed} inert={unsealed}>
+      <div class="flex flex-col items-center gap-3 pt-7 [@media(max-height:640px)]:pt-4">
+        {#if vault.name}
+          <p class="font-display text-[17px] leading-none font-bold text-zinc-100">{vault.name}</p>
+        {/if}
         <p class="font-mono text-[11px] tracking-[0.08em] text-zinc-400">[ CLICK DISC TO UNSEAL VAULT ]</p>
+        <div class="mt-3 w-full [@media(max-height:640px)]:mt-1">
+          <VaultShelf current={vault} {onswitch} {onnew} />
+        </div>
       </div>
     </div>
 
@@ -129,7 +148,7 @@
     <div id="unlock-form" class={["unfold w-full", unsealed && "open"]} inert={!unsealed}>
       <div>
         <header class="mt-6 mb-5 flex flex-col items-center gap-2 text-center [@media(max-height:640px)]:mt-3 [@media(max-height:640px)]:mb-3">
-          <h1 class="font-display text-[26px] leading-none font-bold tracking-[-0.01em] text-zinc-50">Unlock vault</h1>
+          <h1 class="font-display text-[26px] leading-none font-bold tracking-[-0.01em] text-zinc-50">{vault.name ? `Unlock ${vault.name}` : "Unlock vault"}</h1>
           <!-- Middle-truncate: the directory may shrink, the file name never does. -->
           <p class="flex max-w-full font-mono text-[10.5px] text-zinc-500" title={vault.path}>
             <span class="truncate">{vault.path.slice(0, cut + 1)}</span>

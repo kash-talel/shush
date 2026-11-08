@@ -13,6 +13,7 @@
     AUTO_LOCK_EVENT,
     type AppInfo,
     type AutoLockReason,
+    type NewVaultTarget,
     type VaultStatus,
     type VaultSummary,
   } from "./lib/tauri-bridge";
@@ -25,6 +26,22 @@
   let autoLockReason = $state<AutoLockReason | null>(null);
   // First run: show the import step once, right after the vault is created.
   let onboarding = $state(false);
+  // "New vault" from the shelf: the create screen for a chosen location.
+  let newTarget = $state<NewVaultTarget | null>(null);
+  const targetStatus = $derived<VaultStatus | null>(
+    newTarget && {
+      id: null,
+      name: newTarget.name,
+      color: newTarget.color ?? "crimson",
+      path: newTarget.path,
+      exists: false,
+      unlocked: false,
+      keyfile_required: null,
+      cipher: null,
+      kdf: null,
+      error: null,
+    },
+  );
 
   async function refresh() {
     status = await vaultStatus();
@@ -71,7 +88,20 @@
     <OnboardingScreen ondone={() => (onboarding = false)} />
   {:else if summary}
     <Dashboard hotkey={info?.spotlight_hotkey ?? null} onlock={doLock} oncopied={(secs) => (clipboardUntil = Date.now() + secs * 1000)} />
-  {:else if status && !status.exists}
+  {:else if newTarget && targetStatus}
+    <CreateVaultScreen
+      vault={targetStatus}
+      {info}
+      target={newTarget}
+      oncancel={() => (newTarget = null)}
+      oncreated={(s) => {
+        newTarget = null;
+        summary = s;
+        onboarding = true;
+      }}
+    />
+  {:else if status && !status.exists && status.id === null}
+    <!-- First run: no vault anywhere yet. -->
     <CreateVaultScreen
       vault={status}
       {info}
@@ -81,14 +111,22 @@
       }}
     />
   {:else if status}
-    <UnlockScreen
-      vault={status}
-      {autoLockReason}
-      onunlocked={(s) => {
-        summary = s;
-        autoLockReason = null;
-      }}
-    />
+    <!-- Re-mount per vault: a switched-to vault starts sealed with a clean form. -->
+    {#key status.id}
+      <UnlockScreen
+        vault={status}
+        {autoLockReason}
+        onunlocked={(s) => {
+          summary = s;
+          autoLockReason = null;
+        }}
+        onswitch={(s) => {
+          status = s;
+          autoLockReason = null;
+        }}
+        onnew={(t) => (newTarget = t)}
+      />
+    {/key}
   {:else}
     <div class="flex-1"></div>
   {/if}
