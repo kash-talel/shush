@@ -8,6 +8,7 @@
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 
+use super::lock::VaultLock;
 use super::OpenVault;
 
 /// An unlocked vault and where it lives on disk.
@@ -16,6 +17,8 @@ pub struct Unlocked {
     pub path: PathBuf,
     /// Decrypted vault (wiped on drop).
     pub vault: OpenVault,
+    /// Exclusive cross-process lock on the file, released on lock (issue #9).
+    pub lock: VaultLock,
 }
 
 #[derive(Default)]
@@ -110,8 +113,10 @@ mod tests {
             },
             ..CreateOptions::default()
         };
+        let path = std::env::temp_dir().join("shush-state-test.shush");
         Unlocked {
-            path: PathBuf::from("v.shush"),
+            lock: VaultLock::acquire(&path).unwrap(),
+            path,
             vault: OpenVault::create(b"pw", None, opts).unwrap(),
         }
     }
@@ -123,7 +128,7 @@ mod tests {
         let t = s.begin_unlock();
         s.finish_unlock(t, unlocked()).unwrap();
         assert!(s.is_unlocked());
-        assert_eq!(s.with(|u| u.path.clone()), Some(PathBuf::from("v.shush")));
+        assert!(s.with(|u| u.path.ends_with("shush-state-test.shush")).unwrap());
         s.lock();
         assert!(!s.is_unlocked());
         assert!(s.with(|_| ()).is_none());

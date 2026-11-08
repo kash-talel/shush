@@ -102,6 +102,21 @@ total     = max(4096, PADMÉ(4 + compressed_len))
 
 At every point either the old or the new vault is intact on disk.
 
+## Concurrent writers (issue #9)
+
+- **One process per vault.** While a vault is unlocked, shush holds `vault.shush.lock`
+  open with no sharing and `FILE_FLAG_DELETE_ON_CLOSE`. Another process that tries to
+  open the vault is refused (`VAULT_IN_USE`). The OS releases the lock if shush crashes,
+  so it cannot go stale. A second app launch is also redirected to the running instance
+  (single-instance plugin).
+- **Optimistic check before every save.** The open vault remembers a fingerprint of the
+  file it loaded or last wrote: SHA-256 of the file's first `0xAA` bytes, which contain
+  the nonces and `SAVE_ID` drawn fresh on every save. Between steps 2 and 3 above, the
+  fingerprint of the file currently on disk must match. If it doesn't (a sync client or
+  other program replaced or removed the file), the save is refused
+  (`VAULT_CHANGED_ON_DISK`), nothing on disk changes, and the edit is rolled back in
+  memory. No header field was added: the random per-save header already identifies a save.
+
 ## Attachments (sidecar blobs, issue #5)
 
 Each attachment is stored as `vault.shush.d/<attachment-uuid>.blob` beside the vault:
@@ -124,5 +139,4 @@ Each attachment is stored as `vault.shush.d/<attachment-uuid>.blob` beside the v
 
 ## Not yet covered
 
-- Cross-process locking / generation counter (issue #9).
 - Decoy / duress slots (issue #8).
