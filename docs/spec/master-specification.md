@@ -484,13 +484,11 @@ flowchart TD
     - `[Split into Separate Accounts]` (e.g., adds `(Work)` tag)
     - `[Dismiss / Verified OK]`
 
-#### 3. In-Browser "Smart Fallback" Handshake
-- If the promoted primary password fails on the target website (e.g., the user changed it in one browser but the active password was stale), the companion browser extension detects the HTTP 401 or failed login form.
-- The extension displays a 1-click fallback prompt:
-  ```
-  [SHUSH // LOGIN FAILED. TRY ARCHIVED PASSWORD FROM FIREFOX?] ── [TRY & PROMOTE]
-  ```
-- Clicking **"Try & Promote"** instantly tests the conflicting archived password. If the website accepts it, `shush` automatically promotes that password to Active Primary status in real time.
+#### 3. ~~In-Browser "Smart Fallback" Handshake~~ (removed, issue #16)
+- **Dropped (owner decision 3).** Automatically offering an archived password after a failed login lets a
+  phishing page that always fails harvest the account's whole password history, and old passwords are often
+  reused elsewhere. Archived passwords are never sent to the browser. The user resolves conflicts in the
+  shush app with the diff modal above (`[Swap Active & Archived]`), then fills the new active password.
 
 ### 9.3 Third-Party Migration (CSV Importer)
 - Supports importing unencrypted CSV exports from **Bitwarden**, **1Password**, **KeePass**, and **Chrome/Firefox**.
@@ -518,16 +516,29 @@ When `shush` is launched for the first time after vault creation, the onboarding
 
 ### 10.2 Companion WebExtension & Native Messaging Host
 For automatic password detection when browsing online:
-1. **The Native Messaging Protocol**:
-   - `shush.exe` implements the standard Chromium/Firefox **Native Messaging Host** protocol (`tauri-plugin-native-messaging`).
-   - Communication runs through standard `stdin` / `stdout` using 32-bit length-prefixed JSON packets between the browser extension and `shush.exe`.
+1. **The Native Messaging Protocol** (revised, issue #16; full plan in `docs/ROADMAP.md`, Phase 7b):
+   - Browsers start the native host as a **new process per connection**, so the host is a separate thin relay,
+     `shush-host.exe` (no vault code, no UI). It is never `shush.exe`: the running app is the only process that
+     opens or writes the vault (issue #9).
+   - Browser ↔ host: standard `stdin` / `stdout` with 32-bit little-endian length-prefixed JSON (64 KiB request cap).
+   - Host ↔ shush: the named pipe `\\.\pipe\shush-<user SID>`, created by shush with
+     `FILE_FLAG_FIRST_PIPE_INSTANCE`, `PIPE_REJECT_REMOTE_CLIENTS` and a DACL that grants only the current user.
+     If the name already exists, shush treats it as squatting and serves nothing. Each side checks the other
+     side's executable (`GetNamedPipeServerProcessId` / `GetNamedPipeClientProcessId`) is the shush binary from
+     the same install folder.
+   - **Pairing:** *Settings → Pair browser* shows an 8-character code (2 minutes, 3 attempts, one use). The extension
+     proves it with `HMAC(code, ext_nonce ‖ host_nonce)`. Every later request carries
+     `HMAC-SHA256(pair_key, counter ‖ body)` with a strictly increasing counter. Unpaired callers get `hello` only.
+   - **Origin binding in Rust:** credentials match a tab only on an exact origin (scheme + host + port after IDNA,
+     default-port and trailing-dot normalization). `fill` re-checks the origin and returns only the current
+     password, never an archived one. `save` is queued for approval in shush; nothing is written without it.
 2. **In-Browser Auto-Save on Registration / Password Change**:
    - When a user submits a registration form (`<form>`) or changes a password on any website, the companion extension intercepts the event.
    - Displays a sleek tactical notification banner:
      ```
      [SHUSH // DETECTED NEW CREDENTIAL FOR github.com] ── [SAVE TO VAULT] [NEVER]
      ```
-   - Clicking "Save" securely pipes the credential over Native Messaging into the running `shush` background engine, which encrypts and saves it to `vault.shush` instantaneously.
+   - Clicking "Save" sends the credential over the paired channel to the running `shush`, which **queues it for approval**. It is encrypted and saved to `vault.shush` only after the user approves it in the app.
 3. **In-Browser Inline Auto-Fill & Password Generator**:
    - Displays an unobtrusive tactical icon inside username and password fields.
    - Clicking the icon presents a dropdown of matching credentials or generates a fresh high-entropy password with one click.

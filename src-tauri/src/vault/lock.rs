@@ -107,7 +107,10 @@ mod tests {
         assert!(lock_file.exists(), "still held by the second reference");
         drop(b);
         #[cfg(windows)]
-        assert!(!lock_file.exists(), "deleted when the last reference closes");
+        assert!(
+            !lock_file.exists(),
+            "deleted when the last reference closes"
+        );
         // And it can be taken again.
         VaultLock::acquire(&vault).unwrap();
     }
