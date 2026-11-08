@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
-  import { LoaderCircle, TriangleAlert } from "@lucide/svelte";
+  import { ArrowLeft, LoaderCircle, TriangleAlert } from "@lucide/svelte";
   import Spindle from "./Spindle.svelte";
   import PasswordField from "./PasswordField.svelte";
   import KeyfileAttach from "./KeyfileAttach.svelte";
@@ -93,9 +93,31 @@
     passwordInput?.select();
   }
 
+  async function reseal() {
+    if (busy) return;
+    unsealed = false;
+    shudder = false;
+    password = "";
+    keyfile = null;
+    if (error?.code !== "VAULT_UNREADABLE") {
+      error = null;
+    }
+    await tick();
+    caseButton?.focus({ preventScroll: true });
+  }
+
+  function onkeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && unsealed && !busy) {
+      e.preventDefault();
+      void reseal();
+    }
+  }
+
   // Enter or Space on the focused case unseals it, so the keyboard path is one key.
   onMount(() => caseButton?.focus());
 </script>
+
+<svelte:window {onkeydown} />
 
 <section class="flex flex-1 items-center justify-center overflow-y-auto px-6 py-8 [@media(max-height:640px)]:py-4">
   <div class="flex w-full max-w-[380px] flex-col items-center">
@@ -200,6 +222,16 @@
             {:else}
               UNLOCK VAULT <span class="kbd border-white/25! bg-black/20! text-white/80!">Enter</span>
             {/if}
+          </button>
+
+          <button
+            type="button"
+            onclick={reseal}
+            disabled={busy}
+            class="key-steel h-9 font-mono text-xs tracking-[0.06em]"
+            aria-label="Choose another vault"
+          >
+            <ArrowLeft class="size-3.5" aria-hidden="true" /> CHOOSE ANOTHER VAULT <span class="kbd">Esc</span>
           </button>
         </form>
 

@@ -34,6 +34,25 @@ check "form revealed" "!$form.inert && getComputedStyle($form).opacity === '1'"
 check "password input focused" "document.activeElement?.id === 'master-password'"
 $D shot $OUT/03-unsealed.png >/dev/null
 
+echo "--- reseal via button"
+check "back button visible and enabled" "!!document.querySelector('button[aria-label=\"Choose another vault\"]:not(:disabled)')"
+$D click "button[aria-label=\"Choose another vault\"]" >/dev/null; sleep 1
+check "resealed via button: lid closed" "$lid === 'none' || $lid === 'matrix(1, 0, 0, 1, 0, 0)'"
+check "resealed via button: disc still, form inert" "$rate === 0 && $form.inert"
+check "disc button focused after reseal" "document.activeElement?.id === 'unseal'"
+
+echo "--- unseal and reseal via Esc"
+$D click "#unseal" >/dev/null; sleep 1.4
+$D fill "#master-password" "some-typed-password" >/dev/null
+$D eval "window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))" >/dev/null; sleep 1
+check "resealed via Esc: lid closed" "$lid === 'none' || $lid === 'matrix(1, 0, 0, 1, 0, 0)'"
+check "resealed via Esc: disc still, form inert" "$rate === 0 && $form.inert"
+check "password was cleared on reseal" "document.querySelector('#master-password').value === ''"
+check "disc button focused after Esc reseal" "document.activeElement?.id === 'unseal'"
+
+# Re-open for the remainder of the test
+$D click "#unseal" >/dev/null; sleep 1.4
+
 echo "--- wrong password"
 $D fill "#master-password" "wrong-password" >/dev/null
 # Record every frame in the page: CDP round trips are too slow to sample a spike.
@@ -50,6 +69,10 @@ check "disc wound down to idle (rate $IDLE)" "Math.abs($rate - $IDLE) < 0.02"
 check "error badge shown" "document.querySelector('#unlock-feedback').textContent.includes('WRONG_CREDENTIALS')"
 check "shudder cleared" "!document.querySelector('#unseal').classList.contains('shudder')"
 $D shot $OUT/06-error.png >/dev/null
+
+$D click "button[aria-label=\"Choose another vault\"]" >/dev/null; sleep 1
+check "resealed after error: error cleared" "!document.querySelector('#unlock-feedback').textContent.includes('WRONG_CREDENTIALS')"
+$D click "#unseal" >/dev/null; sleep 1.4
 
 echo "--- unlock, then lock re-seals"
 $D fill "#master-password" "Onboarding-Test-2026" >/dev/null
