@@ -24,14 +24,23 @@
     type ItemKind,
     type ItemSummary,
     type SecretField,
+    type VaultSummary,
   } from "../tauri-bridge";
 
   // Main vault dashboard (spec §7.2.2): sidebar · list · detail/editor.
   let {
+    summary = null,
     onlock,
     oncopied,
     hotkey = null,
-  }: { onlock: () => void; oncopied: (seconds: number) => void; hotkey?: string | null } = $props();
+  }: {
+    summary?: VaultSummary | null;
+    onlock: () => void;
+    oncopied: (seconds: number) => void;
+    hotkey?: string | null;
+  } = $props();
+
+  const readOnly = $derived(summary?.read_only ?? false);
 
   type Filter = "all" | "favorites" | ItemKind;
   type Mode = { kind: "view" } | { kind: "create"; itemKind: ItemKind } | { kind: "edit" } | { kind: "backup" };
@@ -141,7 +150,7 @@
       e.preventDefault();
       searchInput?.focus();
       searchInput?.select();
-    } else if (k === "n" && mode.kind === "view") {
+    } else if (k === "n" && mode.kind === "view" && !readOnly) {
       e.preventDefault();
       mode = { kind: "create", itemKind: "login" };
     }
@@ -165,6 +174,11 @@
     <p class="flex items-center gap-2 px-2 pt-1.5 pb-3">
       <span class="font-display text-[19px] leading-none font-extrabold tracking-[-0.02em] text-zinc-50">shush</span>
       <span class="led text-ruby" aria-hidden="true"></span>
+      {#if readOnly}
+        <span class="ml-auto rounded border border-caution/40 bg-caution/10 px-1.5 py-0.5 font-mono text-[9.5px] font-bold uppercase tracking-wider text-caution" role="status">
+          read-only
+        </span>
+      {/if}
     </p>
     {#each filters as f (f.id)}
       {@const on = filter === f.id && folderFilter === null}
@@ -203,7 +217,12 @@
       <button
         type="button"
         onclick={() => (mode = { kind: "create", itemKind: "login" })}
-        class="flex h-8 items-center gap-2 rounded-[3px] px-2 text-[13px] text-ruby hover:bg-crimson/10"
+        disabled={readOnly}
+        title={readOnly ? "Vault is read-only" : undefined}
+        class={[
+          "flex h-8 items-center gap-2 rounded-[3px] px-2 text-[13px]",
+          readOnly ? "cursor-not-allowed text-zinc-500 opacity-50" : "text-ruby hover:bg-crimson/10",
+        ]}
       >
         <Plus class="size-4" aria-hidden="true" /> New login
         <kbd class="kbd ml-auto max-[1000px]:hidden">Ctrl N</kbd>
@@ -211,7 +230,12 @@
       <button
         type="button"
         onclick={() => (mode = { kind: "create", itemKind: "secure_note" })}
-        class="flex h-8 items-center gap-2 rounded-[3px] px-2 text-[13px] text-zinc-300 hover:bg-raised"
+        disabled={readOnly}
+        title={readOnly ? "Vault is read-only" : undefined}
+        class={[
+          "flex h-8 items-center gap-2 rounded-[3px] px-2 text-[13px]",
+          readOnly ? "cursor-not-allowed text-zinc-500 opacity-50" : "text-zinc-300 hover:bg-raised",
+        ]}
       >
         <Plus class="size-4" aria-hidden="true" /> New secure note
       </button>
@@ -252,13 +276,19 @@
 
   <!-- Detail / editor -->
   <div class="flex min-h-0 min-w-0 flex-1 flex-col">
+    {#if readOnly}
+      <div class="flex items-center gap-2 border-b border-caution/30 bg-caution/10 px-4 py-1.5 text-xs text-caution" role="status">
+        <LockKeyhole class="size-3.5 shrink-0" aria-hidden="true" />
+        <span>Vault is opened in read-only mode (media or file is write-protected). Changes cannot be saved.</span>
+      </div>
+    {/if}
     {#if error}
       <p class="hazard border-b border-danger/40 bg-danger/10 px-4 py-2 text-xs text-danger" role="alert">
         <span class="font-mono">[{error.code}]</span> {error.message}
       </p>
     {/if}
     {#if mode.kind === "backup"}
-      <BackupPanel onimported={refresh} />
+      <BackupPanel {readOnly} onimported={refresh} />
     {:else if mode.kind === "create"}
       <ItemEditor kind={mode.itemKind} {folders} defaultFolderId={folderFilter} onsave={save} oncancel={() => (mode = { kind: "view" })} />
     {:else if mode.kind === "edit" && detail}
@@ -266,6 +296,7 @@
     {:else if detail}
       <ItemDetailView
         item={detail}
+        {readOnly}
         folderName={folderName(detail.folder_id)}
         onupdated={(d) => (detail = d)}
         oncopy={copy}
@@ -278,7 +309,13 @@
         {#if items.length === 0}
           <h2 class="font-display text-[22px] font-bold text-zinc-100">Empty vault</h2>
           <p class="max-w-64 text-xs leading-5 text-zinc-500">Add your first login, or bring passwords over from Backup &amp; import.</p>
-          <button type="button" onclick={() => (mode = { kind: "create", itemKind: "login" })} class="key mt-1 h-9 px-4 text-[11px]">
+          <button
+            type="button"
+            onclick={() => (mode = { kind: "create", itemKind: "login" })}
+            disabled={readOnly}
+            title={readOnly ? "Vault is read-only" : undefined}
+            class={["key mt-1 h-9 px-4 text-[11px]", readOnly && "cursor-not-allowed opacity-50"]}
+          >
             NEW LOGIN <span class="kbd border-white/25! bg-black/20! text-white/80!">Ctrl N</span>
           </button>
         {:else}

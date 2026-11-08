@@ -36,6 +36,7 @@
       path: newTarget.path,
       exists: false,
       unlocked: false,
+      read_only: false,
       keyfile_required: null,
       cipher: null,
       kdf: null,
@@ -89,7 +90,7 @@
   {#if summary && onboarding}
     <OnboardingScreen ondone={() => (onboarding = false)} />
   {:else if summary}
-    <Dashboard hotkey={info?.spotlight_hotkey ?? null} onlock={doLock} oncopied={(secs) => (clipboardUntil = Date.now() + secs * 1000)} />
+    <Dashboard {summary} hotkey={info?.spotlight_hotkey ?? null} onlock={doLock} oncopied={(secs) => (clipboardUntil = Date.now() + secs * 1000)} />
   {:else if newTarget && targetStatus}
     <CreateVaultScreen
       vault={targetStatus}
@@ -135,6 +136,7 @@
   <StatusBar
     {info}
     locked={summary === null}
+    readOnly={summary?.read_only ?? status?.read_only ?? false}
     cipher={summary?.cipher ?? status?.cipher ?? null}
     kdf={summary?.kdf ?? status?.kdf ?? null}
     {clipboardUntil}
