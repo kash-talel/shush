@@ -220,6 +220,22 @@ mod imp {
     }
 }
 
+/// Milliseconds elapsed since system boot, monotonic and wrapped in 64-bit.
+pub fn uptime_millis() -> u64 {
+    #[cfg(windows)]
+    {
+        // SAFETY: GetTickCount64 has no preconditions and cannot fail.
+        unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() }
+    }
+    #[cfg(not(windows))]
+    {
+        use std::sync::OnceLock;
+        static START: OnceLock<std::time::Instant> = OnceLock::new();
+        let start = START.get_or_init(std::time::Instant::now);
+        std::time::Instant::now().duration_since(*start).as_millis() as u64
+    }
+}
+
 /// Starts watching for session / power events. `on_event` runs on the watcher
 /// thread and must be quick (it should just lock the vault).
 pub fn watch_session(on_event: impl Fn(LockReason) + Send + Sync + 'static) {

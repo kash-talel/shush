@@ -441,7 +441,12 @@ fn forget_vault(app: tauri::AppHandle, id: String) -> Result<(), CmdError> {
         }
         reg.remove(&id)?;
         Ok(())
-    })
+    })?;
+    app.state::<std::sync::Mutex<DeleteThrottle>>()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .succeed(&id);
+    Ok(())
 }
 
 /// Deletes a vault: its file, backup generation, temp file and attachments
@@ -475,13 +480,14 @@ async fn delete_vault(
             "Type the vault's name exactly as shown to confirm.",
         ));
     }
+    let (dir, _) = vault_home(&app)?;
     let throttle = app.state::<std::sync::Mutex<DeleteThrottle>>();
-    let now = std::time::Instant::now();
-    if let Some(s) = throttle
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .wait_secs(&id, now)
-    {
+    let wait = {
+        let mut t = throttle.lock().unwrap_or_else(|e| e.into_inner());
+        t.set_dir_if_none(&dir);
+        t.wait_secs(&id)
+    };
+    if let Some(s) = wait {
         return Err(wait_error(s));
     }
 
@@ -500,7 +506,7 @@ async fn delete_vault(
                 let wait = throttle
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .fail(&id, std::time::Instant::now());
+                    .fail(&id);
                 return Err(match wait {
                     Some(s) => CmdError::new(
                         "WRONG_CREDENTIALS",
@@ -1550,6 +1556,11 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             os::memory::harden_process();
             create_windows(app)?;
             setup_tray(app)?;
+            if let Ok((dir, _)) = vault_home(app.handle()) {
+                *app.state::<std::sync::Mutex<DeleteThrottle>>()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = DeleteThrottle::load(&dir);
+            }
             // Another application may own the combination; Spotlight then stays
             // reachable from the tray and app_info reports it (issue #14).
             let ok = app.global_shortcut().register(SPOTLIGHT_HOTKEY).is_ok();
