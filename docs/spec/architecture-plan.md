@@ -29,8 +29,8 @@ flowchart TD
     Plaintext["Vault Plaintext (JSON / SQLite)"] <--> Encrypt <--> Ciphertext["Encrypted Vault (.shush file)"]
 
     subgraph Fast Unlock Session
-        MK -.->|"User toggles Windows Hello"| TPMWrap["Wrap Session Key via Windows CNG + TPM 2.0"]
-        TPMWrap --> TPMEnclave["TPM 2.0 Hardware Enclave"]
+        VEK -.->|"User toggles Windows Hello"| TPMWrap["Wrap sub-keys under a per-session KEK\n(HKDF of a Hello signature, memory only)"]
+        TPMWrap --> TPMEnclave["Hello key (TPM-backed KeyCredential)"]
         TPMEnclave -->|"Biometric / PIN Verification"| FastDecrypt["Quick-Unlock Active Session"]
     end
 ```
@@ -42,7 +42,7 @@ flowchart TD
 | **Key Derivation Function (KDF)** | **Argon2id** (RFC 9106) | Highly resistant to GPU/FPGA/ASIC brute-force attacks by being memory-hard. Standard config: `t=3` (iterations), `m=65536` (64 MB), `p=4` (threads). |
 | **Symmetric Cipher** | **AES-256-GCM** or **XChaCha20-Poly1305** | Authenticated Encryption with Associated Data (AEAD). Provides both confidentiality and tamper detection (integrity/authenticity). |
 | **Key Expansion** | **HKDF-SHA256** | Derives sub-keys (encryption key, authentication canary key) safely without reusing the raw master key. |
-| **Local Fast-Unlock** | **Windows DPAPI** + **Windows Hello** | Stores a session key wrapped in Windows CNG/DPAPI, unlockable via PIN/Fingerprint without re-entering the Master Password. |
+| **Local Fast-Unlock** | **Windows Hello** (`KeyCredentialManager`) | Wraps the vault sub-keys in memory under a key derived from a Hello signature; never DPAPI, never on disk, at most 8 h. See [`windows-hello.md`](windows-hello.md). |
 
 ---
 
@@ -190,7 +190,7 @@ To make `shush` feel effortless and enjoyable for daily use:
    - Optional breach check via the **HaveIBeenPwned API** using **$k$-Anonymity** (only the first 5 characters of the SHA-1 hash of the password are transmitted, preserving complete privacy).
 5. **Windows Hello Integration**:
    - First unlock requires the full Master Password.
-   - Subsequent unlocks while the app is active in the background can be authorized in milliseconds using a fingerprint or PIN.
+   - Subsequent unlocks while the app is active in the background can be authorized in milliseconds using a fingerprint or PIN, for at most 8 hours after the password unlock. Lock still wipes the keys; see [`windows-hello.md`](windows-hello.md).
 
 ---
 
@@ -219,6 +219,6 @@ To make `shush` feel effortless and enjoyable for daily use:
 
 ### Phase 4: Advanced Features & Hardening
 - [ ] TOTP Authenticator (RFC 6238) calculation and visual timers.
-- [ ] Windows Hello (WebAuthn / CNG DPAPI) quick-unlock session storage.
+- [ ] Windows Hello quick unlock per [`windows-hello.md`](windows-hello.md) (`KeyCredentialManager`, memory-only session).
 - [ ] Export (Encrypted `.shush` backup, Plaintext CSV with warning modal) and Import (Bitwarden / 1Password / Chrome CSV).
 - [ ] Memory dump protection (`SetWindowDisplayAffinity`, `VirtualLock`).

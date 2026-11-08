@@ -77,8 +77,8 @@ flowchart TD
     PayloadDec --> PlaintextDB["In-Memory Vault (Zeroized on lock)"]
 
     subgraph Hardware Biometric Session (Optional)
-        MasterKey -.->|"Windows Hello Enabled"| CNG["Windows CNG TPM 2.0 Wrap\n(NCRYPT_USER_PROTECTION_STRONG)"]
-        CNG --> FastUnlock["Fingerprint / PIN unlocks Session Key"]
+        VEK -.->|"Windows Hello Enabled"| Wrap["Sub-keys wrapped under a per-session KEK\nderived from a Hello signature (memory only, max 8 h)"]
+        Wrap --> FastUnlock["Fingerprint / PIN re-derives the KEK"]
     end
 ```
 
@@ -226,7 +226,8 @@ export interface VaultSettings {
   clipboard_clear_seconds: number; // default: 30
   auto_lock_idle_minutes: number;   // default: 15
   auto_lock_on_sleep: boolean;      // default: true
-  enable_windows_hello: boolean;    // default: false
+  enable_windows_hello: boolean;    // default: false; design: docs/spec/windows-hello.md
+  hello_session_max_hours: number;  // default: 8, range 1–8 (cap, never extended by Hello unlocks)
   air_gapped_mode: boolean;         // default: false (disables all outbound telemetry/APIs)
   duress_pin_enabled: boolean;      // default: false (plausible deniability decoy)
 }
@@ -305,7 +306,7 @@ The visual identity of `shush` merges the clandestine authority of a terminal/ha
    - Monospace prompt: `// SHUSH_VAULT_AUTHENTICATION`
    - Master Password input with focus outline glow.
    - If Keyfile is enabled: Drag-and-drop zone with badge `[KEYFILE ATTACHED: vault.key]`.
-   - Subtle biometric button: `[PRESS (F) OR CLICK FOR WINDOWS HELLO]`.
+   - Subtle biometric button: `[PRESS (F) OR CLICK FOR WINDOWS HELLO]`, shown only while a Hello session is armed (see `windows-hello.md`).
 2. **Main Vault Dashboard**:
    - **Left Sidebar**: All Items, Favorites, Logins, Secure Notes, Folders/Tags list, Lock Vault button `[CTRL+L]`, Settings gear.
    - **Middle Pane**: Search bar with terminal-style prompt indicator (`> search vault...`) + item list with domain badges.
@@ -375,7 +376,7 @@ shush/
 │   │   │   ├── clipboard.rs        # Win32 sequence-aware clipboard auto-wiper
 │   │   │   ├── autotype.rs         # SendInput keystroke synthesizer with micro-delays
 │   │   │   ├── win_context.rs      # GetForegroundWindow title detection
-│   │   │   ├── win_hello.rs        # Windows Hello CNG TPM session wrapper
+│   │   │   ├── win_hello.rs        # Windows Hello KeyCredentialManager session (windows-hello.md)
 │   │   │   ├── screen_protect.rs   # WDA_EXCLUDEFROMCAPTURE window hook
 │   │   │   └── native_messaging.rs # Chrome/Firefox stdin/stdout protocol bridge
 │   │   └── totp/

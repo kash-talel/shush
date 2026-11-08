@@ -7,6 +7,7 @@
 | [`spec/security-model.md`](spec/security-model.md) | Authentication design, cipher suite choice, downgrade defense |
 | [`spec/master-specification.md`](spec/master-specification.md) | Full product specification (phases, UI, data model) |
 | [`spec/architecture-plan.md`](spec/architecture-plan.md) | Crate layout and IPC design |
+| [`spec/windows-hello.md`](spec/windows-hello.md) | Windows Hello quick unlock design (ADR, not yet built) |
 | [`ROADMAP.md`](ROADMAP.md) | Phase status, owner decisions, the 7b and 8 plans |
 | [`testing/README.md`](testing/README.md) | The CDP end-to-end harness and per-phase results |
 

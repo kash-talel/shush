@@ -58,9 +58,9 @@ flowchart TD
     end
 
     subgraph Warm Session (Daytime Convenience)
-        MasterKey -.->|"If Windows Hello Enabled"| WrapKey["Wrap Session Key in Windows CNG"]
-        WrapKey --> TPM["TPM 2.0 Hardware Key\n(NCRYPT_USER_PROTECTION_STRONG)"]
-        TPM -->|"Physical Fingerprint / PIN"| UnwrapKey["Unwrap Session Key"]
+        MasterKey -.->|"If Windows Hello Enabled"| WrapKey["Wrap sub-keys under a per-session KEK\n(in memory only)"]
+        WrapKey --> TPM["Hello key (KeyCredentialManager,\nTPM-backed when present)"]
+        TPM -->|"Fingerprint / PIN signs the session challenge"| UnwrapKey["Re-derive KEK, unwrap sub-keys"]
         UnwrapKey --> DecryptVault
     end
 ```
@@ -80,12 +80,13 @@ flowchart TD
    - Even if an attacker installs a software keylogger and captures the master password, they **cannot** decrypt the vault without the physical USB keyfile.
 
 ### 3.2 Windows Hello Session Lifecycle
-1. **Cold Unlock**: Vault requires both **Master Password** and **Keyfile**.
-2. **Session Persistence**: While `shush` stays running in the system tray, the user can unlock with **Windows Hello (Fingerprint or PIN)**.
-3. **Session Eviction**:
-   - When the user explicitly clicks "Lock Vault", memory is zeroed.
-   - When the app is closed, system restarted, or user logs out of Windows, the session is invalidated.
-   - Next cold start requires the Master Password and Keyfile again.
+
+Normative design: [`windows-hello.md`](windows-hello.md). In short:
+
+1. **Cold Unlock**: Vault requires the **Master Password** (and **Keyfile**, if set). Only a password unlock arms a Hello session, with one Hello prompt.
+2. **Session**: the vault sub-keys are wrapped under a key derived from a Hello signature over a random in-memory challenge. Ciphertext and challenge live in process memory only; nothing goes to disk, DPAPI or the registry.
+3. **Lock = wipe**: every lock wipes the plaintext keys and data. Hello re-derives the wrap key from a new user gesture; a dump of a locked shush holds no usable key.
+4. **Eviction**: 8 hours after the password unlock (Hello unlocks do not extend it), app exit, sign-out, restart, suspend, "Lock & forget", vault switch, password/keyfile change, a changed vault header, or 3 failed Hello prompts. The next unlock then needs the Master Password and Keyfile again.
 
 ---
 
@@ -128,5 +129,5 @@ Titles, usernames, URLs and notes come from untrusted sources (CSV, backups, bro
 ## 5. Summary Recommendation for "shush"
 
 1. **Default Mode**: Master Password (Argon2id) for vault creation and disaster recovery.
-2. **Seamless Experience**: Windows Hello (Fingerprint/PIN via TPM 2.0 CNG) for instant day-to-day unlocks while the app is running in the background.
+2. **Seamless Experience**: Windows Hello (Fingerprint/PIN, TPM-backed `KeyCredentialManager` key) for instant unlocks while the app is running, for at most 8 hours after a password unlock.
 3. **Strict Policy**: Never rely on Windows login password alone; an independent cryptographic key is essential to protect user data from local processes and ensure vault portability.
