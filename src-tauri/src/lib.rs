@@ -896,6 +896,33 @@ pub fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
+/// True for URLs that serve shush's own bundled frontend (issue #20). Release
+/// builds load from Tauri's custom protocol (`http://tauri.localhost` on
+/// Windows, `tauri://localhost` elsewhere); debug builds also allow the Vite
+/// dev server from `tauri.conf.json` (`devUrl`).
+fn is_app_url(url: &tauri::Url) -> bool {
+    match (url.scheme(), url.host_str()) {
+        ("tauri", Some("localhost")) => true,
+        ("http" | "https", Some("tauri.localhost")) => url.port().is_none(),
+        ("http", Some("localhost")) if cfg!(debug_assertions) => url.port() == Some(1420),
+        _ => false,
+    }
+}
+
+/// Builds the windows declared in `tauri.conf.json` (they have `create: false`)
+/// with navigation locked to the app and every popup refused: injected script
+/// can neither leave the bundle nor open a page that phishes from inside a
+/// trusted shush window (issue #20).
+fn create_windows(app: &tauri::App) -> tauri::Result<()> {
+    for cfg in &app.config().app.windows {
+        tauri::WebviewWindowBuilder::from_config(app.handle(), cfg)?
+            .on_navigation(is_app_url)
+            .on_new_window(|_url, _features| tauri::webview::NewWindowResponse::Deny)
+            .build()?;
+    }
+    Ok(())
+}
+
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -1448,6 +1475,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
                 .build(),
         )
         .setup(|app| {
+            create_windows(app)?;
             setup_tray(app)?;
             // Another application may own the combination; Spotlight then stays
             // reachable from the tray and app_info reports it (issue #14).
@@ -1694,5 +1722,90 @@ mod tests {
                 .code,
             "VAULT_TAMPERED"
         );
+    }
+
+    #[test]
+    fn navigation_is_limited_to_the_bundled_frontend() {
+        let ok = |u: &str| is_app_url(&u.parse().unwrap());
+        assert!(ok("http://tauri.localhost/"));
+        assert!(ok("http://tauri.localhost/index.html#x"));
+        assert!(ok("https://tauri.localhost/"));
+        assert!(ok("tauri://localhost/"));
+        assert!(!ok("http://tauri.localhost:8080/"));
+        assert!(!ok("https://evil.example/"));
+        assert!(!ok("http://tauri.localhost.evil.example/"));
+        assert!(!ok("file:///C:/Windows/win.ini"));
+        assert!(!ok("javascript:alert(1)"));
+        assert!(!ok("data:text/html,<script>1</script>"));
+        assert!(!ok("http://localhost:1421/"));
+        assert_eq!(ok("http://localhost:1420/"), cfg!(debug_assertions));
+    }
+
+    /// Issue #20: every handler command must be declared in build.rs (or the
+    /// ACL denies it everywhere), the main window must be granted each one,
+    /// and the Spotlight window must stay on a short allowlist with nothing
+    /// that returns secrets, exports, imports or manages vaults.
+    #[test]
+    fn command_permissions_match_handler_and_scope_spotlight() {
+        fn quoted(block: &str) -> Vec<String> {
+            block
+                .split('"')
+                .skip(1)
+                .step_by(2)
+                .map(str::to_owned)
+                .collect()
+        }
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let start = lib.find("generate_handler![").unwrap() + "generate_handler![".len();
+        let end = start + lib[start..].find(']').unwrap();
+        let mut handler: Vec<String> = lib[start..end]
+            .split(',')
+            .map(|c| c.trim().to_owned())
+            .filter(|c| !c.is_empty())
+            .collect();
+        handler.sort();
+
+        let build = std::fs::read_to_string(root.join("build.rs")).unwrap();
+        let start = build.find("COMMANDS: &[&str] = &[").unwrap();
+        let end = start + build[start..].find("];").unwrap();
+        let mut declared = quoted(&build[start..end]);
+        declared.sort();
+        assert_eq!(handler, declared, "build.rs COMMANDS out of sync with generate_handler!");
+
+        let caps = |name: &str| -> Vec<String> {
+            let text = std::fs::read_to_string(root.join("capabilities").join(name)).unwrap();
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            v["permissions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p.as_str().unwrap().to_owned())
+                .collect()
+        };
+        let main = caps("main.json");
+        for cmd in &handler {
+            let perm = format!("allow-{}", cmd.replace('_', "-"));
+            assert!(main.contains(&perm), "main window lacks {perm}");
+        }
+
+        let mut spotlight = caps("spotlight.json");
+        spotlight.sort();
+        assert_eq!(
+            spotlight,
+            [
+                "allow-copy-field",
+                "allow-hide-spotlight",
+                "allow-list-items",
+                "allow-open-main-window",
+                "allow-vault-status",
+                "core:event:default",
+            ]
+        );
+        let files: Vec<_> = std::fs::read_dir(root.join("capabilities"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(files.len(), 2, "unexpected capability file: {files:?}");
     }
 }

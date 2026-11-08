@@ -113,6 +113,18 @@ The chosen `cipher_suite_id` (e.g., `0x01` or `0x02`) is placed in the binary he
 
 ---
 
+## 4.3 Frontend / IPC Hardening (issue #20)
+
+Titles, usernames, URLs and notes come from untrusted sources (CSV, backups, browser auto-save, sync). Script injected into a WebView can call every Tauri command that window is granted, so the frontend is treated as untrusted code:
+
+- **CSP** (`tauri.conf.json`): `script-src 'self'`, no `unsafe-eval`, no remote origins, `connect-src` limited to IPC, `object-src`/`base-uri`/`form-action` `'none'`. `freezePrototype` is on.
+- **No raw HTML**: `npm run check` runs `src/scripts/no-raw-html.mjs`, which fails on `{@html}`, `innerHTML`/`outerHTML` assignment, `insertAdjacentHTML`, `document.write`, `eval`/`new Function` and `window.open`. Notes render as plain escaped text; a future Markdown renderer must disable raw HTML or sanitize its output (DOMPurify).
+- **Per-window command ACL**: every app command is declared in `src-tauri/build.rs`, so Tauri denies any command a window's capability does not list. `capabilities/main.json` grants the full UI. `capabilities/spotlight.json` grants only `vault_status`, `list_items`, `copy_field`, `hide_spotlight`, `open_main_window` and events: the Quick search window cannot reveal secrets, read item details or TOTP seeds, export, import, open file dialogs, unlock, or manage vaults or windows. A unit test keeps the handler, `build.rs` and the capabilities in sync.
+- **Navigation and popups**: windows are built in Rust with an `on_navigation` guard that only allows the bundled frontend (`tauri.localhost` / `tauri://localhost`, plus the Vite dev server in debug builds) and an `on_new_window` handler that refuses every popup.
+- **Secrets to JS**: copying goes through the Rust clipboard (`copy_field`) and never returns the value. `reveal_password`, `generate_password` and the item editor still return plaintext to the main window by design (show/edit); they are not available to Spotlight.
+
+---
+
 ## 5. Summary Recommendation for "shush"
 
 1. **Default Mode**: Master Password (Argon2id) for vault creation and disaster recovery.
