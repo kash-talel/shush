@@ -21,6 +21,7 @@
     "allow-inspect-keyfile",
     "allow-create-vault",
     "allow-unlock",
+    "allow-reload-vault",
     "allow-lock",
     "allow-list-items",
     "allow-get-item",

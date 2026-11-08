@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { Check, Folder, FolderPlus, Pencil, Trash2, X } from "@lucide/svelte";
-  import { createFolder, deleteFolder, renameFolder, toCmdError, type CmdError, type FolderInfo } from "../tauri-bridge";
+  import { createFolder, deleteFolder, reloadVault, renameFolder, toCmdError, type CmdError, type FolderInfo } from "../tauri-bridge";
 
   // Sidebar folder section: filter, create inline, rename, two-step delete.
   let {
@@ -151,5 +151,26 @@
       <p class="px-2 py-1 text-[11px] text-zinc-600">No folders yet.</p>
     {/if}
   </div>
-  {#if error}<p class="px-2 pt-1 text-[11px] text-danger" role="alert">{error.message}</p>{/if}
+  {#if error}
+    <div class="flex items-center justify-between px-2 pt-1 text-[11px] text-danger" role="alert">
+      <span>{error.message}</span>
+      {#if error.code === "VAULT_CHANGED_ON_DISK"}
+        <button
+          type="button"
+          onclick={async () => {
+            try {
+              await reloadVault();
+              error = null;
+              onchanged();
+            } catch (e) {
+              error = toCmdError(e);
+            }
+          }}
+          class="ml-1 underline hover:text-danger/80"
+        >
+          Reload
+        </button>
+      {/if}
+    </div>
+  {/if}
 </div>

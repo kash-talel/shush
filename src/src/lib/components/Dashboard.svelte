@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { DatabaseBackup, KeyRound, Layers, LockKeyhole, NotebookText, Plus, Search, Star } from "@lucide/svelte";
+  import { DatabaseBackup, KeyRound, Layers, LockKeyhole, NotebookText, Plus, Search, Star, TriangleAlert } from "@lucide/svelte";
   import ItemList from "./ItemList.svelte";
   import ItemDetailView from "./ItemDetail.svelte";
   import ItemEditor from "./ItemEditor.svelte";
@@ -13,6 +13,7 @@
     getItem,
     listFolders,
     listItems,
+    reloadVault,
     setFavorite,
     showSpotlight,
     toCmdError,
@@ -91,6 +92,16 @@
       const id = detail.id;
       const d = await run(() => getItem(id));
       if (d) detail = d;
+    }
+  }
+
+  async function reloadAndRefresh() {
+    try {
+      await reloadVault();
+      error = null;
+      await refresh();
+    } catch (e) {
+      error = toCmdError(e);
     }
   }
 
@@ -283,16 +294,28 @@
       </div>
     {/if}
     {#if error}
-      <p class="hazard border-b border-danger/40 bg-danger/10 px-4 py-2 text-xs text-danger" role="alert">
-        <span class="font-mono">[{error.code}]</span> {error.message}
-      </p>
+      <div class="hazard flex items-center justify-between border-b border-danger/40 bg-danger/10 px-4 py-2 text-xs text-danger" role="alert">
+        <span class="flex items-center gap-1.5">
+          <TriangleAlert class="size-3.5 shrink-0" aria-hidden="true" />
+          <span><span class="font-mono">[{error.code}]</span> {error.message}</span>
+        </span>
+        {#if error.code === "VAULT_CHANGED_ON_DISK"}
+          <button
+            type="button"
+            onclick={reloadAndRefresh}
+            class="key-steel h-6 shrink-0 px-2 text-[11px]"
+          >
+            Reload Vault
+          </button>
+        {/if}
+      </div>
     {/if}
     {#if mode.kind === "backup"}
       <BackupPanel {readOnly} onimported={refresh} />
     {:else if mode.kind === "create"}
-      <ItemEditor kind={mode.itemKind} {folders} defaultFolderId={folderFilter} onsave={save} oncancel={() => (mode = { kind: "view" })} />
+      <ItemEditor kind={mode.itemKind} {folders} defaultFolderId={folderFilter} onsave={save} oncancel={() => (mode = { kind: "view" })} onrefresh={refresh} />
     {:else if mode.kind === "edit" && detail}
-      <ItemEditor kind={detail.kind} existing={detail} {folders} onsave={save} oncancel={() => (mode = { kind: "view" })} />
+      <ItemEditor kind={detail.kind} existing={detail} {folders} onsave={save} oncancel={() => (mode = { kind: "view" })} onrefresh={refresh} />
     {:else if detail}
       <ItemDetailView
         item={detail}

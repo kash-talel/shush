@@ -17,6 +17,7 @@ const COMMANDS: &[&str] = &[
     "inspect_keyfile",
     "create_vault",
     "unlock",
+    "reload_vault",
     "lock",
     "list_items",
     "get_item",

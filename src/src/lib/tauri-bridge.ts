@@ -89,6 +89,9 @@ export const createVault = (
 ) => invoke<VaultSummary>("create_vault", { password, keyfile, cipherId, target });
 export const unlock = (password: string, keyfilePath: string | null, vaultId: string | null) =>
   invoke<VaultSummary>("unlock", { password, keyfilePath, vaultId });
+/** Reloads the active vault from disk without locking (issue #49). */
+export const reloadVault = (password?: string, keyfilePath?: string) =>
+  invoke<VaultSummary>("reload_vault", { password: password ?? null, keyfilePath: keyfilePath ?? null });
 
 // ---- Vault list (switch / add / delete) -------------------------------------
 
