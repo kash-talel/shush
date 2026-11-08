@@ -33,7 +33,22 @@ holds every secret, and a Svelte 5 window shows only what you ask to see.
 > Alpha. The vault format is stable and tested, but there is no signed release yet and the browser
 > extension is not built. Keep an encrypted backup.
 
-## Quickstart
+## Install
+
+Download `shush_x64-setup.exe` from the [latest release](https://github.com/kash-talel/shush/releases/latest)
+and run it. It installs for your user only (no admin), offers a desktop shortcut, and can start
+shush when it finishes. The installer is not code-signed yet: if SmartScreen warns, choose
+**More info → Run anyway** after checking the file against `SHA256SUMS.txt` in the release
+(`Get-FileHash .\shush_x64-setup.exe`). The `.msi` is for managed deployment.
+
+Your vault lives in `%APPDATA%\com.shush.vault` and survives uninstalling. The uninstaller's
+*Delete the application data* box erases it only after a second confirmation.
+
+To cut a release, bump the version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and
+`src/package.json`, then push a `vX.Y.Z` tag; `.github/workflows/release.yml` builds, checksums
+and publishes the installers.
+
+## Build from source
 
 Windows 10/11, [Rust stable](https://rustup.rs) (1.80+), [Node.js 22](https://nodejs.org), WebView2
 (preinstalled on Windows 11).

@@ -187,11 +187,20 @@
 
     .press { margin: 80px 0 0; display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
     .press h2 { font: 800 clamp(36px, 5vw, 64px)/0.95 var(--grot); font-stretch: 75%; letter-spacing: -0.035em; margin: 0; flex: 1 1 320px; }
-    .cmd { flex: 1 1 420px; padding: 20px 22px; font: 400 13px/1.9 var(--mono); }
-    .cmd code { display: block; white-space: pre; overflow-x: auto; }
+    .get { flex: 1 1 420px; min-width: 0; display: grid; gap: 16px; }
+    .get-row { display: flex; flex-wrap: wrap; gap: 12px; }
+    .note { margin: 0; font: 400 13px/1.6 var(--mono); color: var(--dim); max-width: 60ch; }
+    .note b { color: var(--ink); font-weight: 600; }
+    .cmd { padding: 16px 22px; font: 400 13px/1.9 var(--mono); }
+    .cmd summary { cursor: pointer; color: var(--ink); }
+    .cmd summary:focus-visible { outline: 2px solid var(--uv); outline-offset: 4px; border-radius: 4px; }
+    .cmd code { display: block; margin-top: 10px; white-space: pre; overflow-x: auto; }
     .cmd .c { color: var(--dim); }
     .btn { display: inline-flex; align-items: center; height: 48px; padding: 0 22px; border-radius: 99px; text-decoration: none; font: 600 15px var(--grot);
       color: #fff; background: var(--crimson); box-shadow: 0 0 0 1px rgb(255 255 255 / 0.15) inset, 0 12px 30px -10px rgb(225 29 72 / 0.8); }
+    .btn:focus-visible { outline: 2px solid var(--uv); outline-offset: 3px; }
+    .btn.ghost { background: transparent; color: var(--ink); box-shadow: 0 0 0 1px var(--seam) inset; }
+    .btn.ghost:hover { box-shadow: 0 0 0 1px rgb(255 255 255 / 0.3) inset; }
 
     footer { margin: 96px 0 0; padding: 28px 0 44px; border-top: 1px solid var(--seam); display: flex; flex-wrap: wrap; gap: 22px; font: 400 13px var(--mono); color: var(--dim); }
     footer a { text-decoration: none; } footer a:hover { color: var(--ink); }
@@ -271,16 +280,24 @@
 
     <section class="press" aria-labelledby="press-h">
       <h2 id="press-h">Press your own copy.</h2>
-      <div class="acrylic cmd">
-        <code><span class="c"># Windows 10/11 · Rust stable · Node 22</span>
+      <div class="get">
+        <div class="get-row">
+          <a class="btn" href="https://github.com/kash-talel/shush/releases/latest/download/shush_x64-setup.exe">Download for Windows (.exe)</a>
+          <a class="btn ghost" href="https://github.com/kash-talel/shush/releases/latest">All releases &amp; checksums</a>
+        </div>
+        <p class="note">Windows 10/11, 64-bit. Installs for your user only, no admin needed. The installer is not code-signed yet, so SmartScreen may warn: choose <b>More info → Run anyway</b>, and compare the file against <code>SHA256SUMS.txt</code> first.</p>
+        <details class="acrylic cmd">
+          <summary>Build from source</summary>
+          <code><span class="c"># Windows 10/11 · Rust stable · Node 22</span>
 git clone https://github.com/kash-talel/shush
 cd shush; npm ci --prefix src
 npx --prefix src tauri dev</code>
+        </details>
       </div>
-      <a class="btn" href="https://github.com/kash-talel/shush">Source on GitHub</a>
     </section>
 
     <footer>
+      <a href="https://github.com/kash-talel/shush">Source on GitHub</a>
       <a href="https://github.com/kash-talel/shush/blob/main/docs/spec/security-model.md">Security model</a>
       <a href="https://github.com/kash-talel/shush/blob/main/docs/FORMAT.md">File format</a>
       <a href="https://github.com/kash-talel/shush/blob/main/docs/ROADMAP.md">Roadmap</a>
