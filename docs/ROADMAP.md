@@ -34,6 +34,7 @@ verified with a 17-view CDP screenshot audit and the 5b and 7a scripts; see `tes
 4. **Attachments (#5):** separately AEAD-sealed sidecar files beside the vault.
 5. **LAN sync (#18):** on-demand, time-boxed pairing with a PAKE one-time code; no always-on mDNS.
 6. **Duress vault (#8):** undetectable: fixed-size padded slots, constant-work unlock.
+7. **Recovery Kit (#27):** in-window render and direct print (`window.print()`), never write intermediate PDF/HTML to disk by default (avoids unallocated cluster / shadow copy / cloud sync residue); handwritten master password field is an explicit opt-in with a single-point-of-compromise warning (safe-deposit box use case); never include key material.
 
 ## Order of remaining work
 

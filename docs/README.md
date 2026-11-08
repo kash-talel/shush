@@ -80,6 +80,11 @@ attachments, sealed either with the vault's own credentials or a separate passwo
 Importing decrypts and previews first, then either **merges** (adds new items, archives conflicting
 passwords) or does a **clean restore** (replaces the contents; the old vault is kept as `.bak`).
 
+*Backup & restore → Emergency recovery kit* prints a 1-page offline recovery sheet directly from
+memory (`window.print()`) with vault identifiers, KDF parameters and disaster instructions, with
+zero temporary files written to disk. The handwriting box for the master password is an explicit
+opt-in with a single-point-of-compromise warning (for safe-deposit box storage).
+
 ## Security architecture
 
 ```
