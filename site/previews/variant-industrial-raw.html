@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>shush · preview A · industrial raw</title>
+  <meta name="description" content="Offline password manager and 2FA authenticator for Windows. One encrypted file, no account, no cloud.">
+  <link rel="icon" type="image/png" href="../favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wdth,wght@75..112.5,300..800&family=Syne:wght@600..800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared/case.css">
+  <style>
+    :root {
+      --obsidian: #060609; --steel: #0e0e14; --plate: #15151d; --seam: #24242e; --edge: #3a3a48;
+      --crimson: #e11d48; --ruby: #f43f5e; --uv: #c084fc; --hazard: #ff6a3d; --ink: #f4f4f5; --dim: #8a8a96;
+      --mono: "Martian Mono", Consolas, monospace; --display: "Syne", "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { color-scheme: dark; }
+    body {
+      margin: 0; background: var(--obsidian); color: var(--ink);
+      font: 400 15px/1.6 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+      /* engineering-drawing grid */
+      background-image:
+        linear-gradient(rgb(255 255 255 / 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgb(255 255 255 / 0.025) 1px, transparent 1px);
+      background-size: 48px 48px;
+    }
+    a { color: inherit; }
+    .mono { font-family: var(--mono); font-stretch: 87.5%; }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+    ::selection { background: rgb(225 29 72 / 0.5); }
+    :focus-visible { outline: 2px solid var(--ruby); outline-offset: 2px; }
+
+    /* ---------- header ---------- */
+    .top { display: flex; align-items: center; gap: 24px; height: 64px; border-bottom: 1px solid var(--seam); }
+    .mark { font: 800 22px/1 var(--display); letter-spacing: -0.02em; text-decoration: none; display: flex; align-items: center; gap: 8px; }
+    .led { width: 7px; height: 7px; border-radius: 50%; background: var(--ruby); box-shadow: 0 0 8px var(--ruby); }
+    .top nav { display: flex; gap: 20px; margin-left: auto; font: 500 12px var(--mono); font-stretch: 87.5%; }
+    .top nav a { text-decoration: none; color: var(--dim); }
+    .top nav a:hover { color: var(--ink); }
+
+    /* ---------- hero ---------- */
+    .hero { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 48px; align-items: center; padding: 72px 0 56px; }
+    .hero h1 { font: 800 clamp(48px, 7.4vw, 92px)/0.92 var(--display); letter-spacing: -0.035em; margin: 0 0 24px; }
+    .hero p { max-width: 46ch; color: #c4c4cc; font-size: 17px; margin: 0 0 32px; }
+    .ctas { display: flex; gap: 12px; flex-wrap: wrap; }
+    .key {
+      display: inline-flex; align-items: center; gap: 10px; height: 48px; padding: 0 22px; border-radius: 4px; border: 0; cursor: pointer;
+      font: 600 13px var(--mono); font-stretch: 87.5%; letter-spacing: 0.06em; color: #fff; text-decoration: none;
+      background: linear-gradient(180deg, #f0284f, var(--crimson) 55%, #c8133c);
+      box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.28), 0 3px 0 #7f0d27, 0 10px 24px -8px rgb(225 29 72 / 0.6);
+      transition: transform 60ms, box-shadow 60ms;
+    }
+    .key:active { transform: translateY(3px); box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.2), 0 0 0 #7f0d27; }
+    .key.steel { background: linear-gradient(180deg, #1a1a23, #111117); color: #e4e4e7; border: 1px solid var(--seam); box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 3px 0 #030305; }
+    .key:disabled { opacity: 0.5; cursor: wait; }
+    .case-col { display: grid; justify-items: center; gap: 18px; }
+    .case-col .jc { --case-size: min(340px, 72vw); }
+    .hero .readout { margin: 0; font: 500 11px var(--mono); font-stretch: 80%; color: var(--dim); letter-spacing: 0.04em; }
+    .hero .readout b { color: var(--ruby); font-weight: 600; }
+
+    /* ---------- spec plate ---------- */
+    .plate {
+      position: relative; border: 1px solid var(--seam); background: var(--steel); border-radius: 2px;
+      background-image: repeating-linear-gradient(180deg, rgb(255 255 255 / 0.014) 0 1px, transparent 1px 3px);
+    }
+    /* rivets */
+    .plate::before, .plate::after {
+      content: ""; position: absolute; top: 10px; width: 6px; height: 6px; border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #5a5a68, #1a1a22); box-shadow: 0 1px 0 rgb(255 255 255 / 0.05);
+    }
+    .plate::before { left: 10px; } .plate::after { right: 10px; }
+    .specs { display: grid; grid-template-columns: repeat(4, 1fr); }
+    .specs div { padding: 26px 22px 22px; border-right: 1px solid var(--seam); }
+    .specs div:last-child { border-right: 0; }
+    .specs dt { font: 500 10.5px var(--mono); font-stretch: 87.5%; color: var(--dim); margin-bottom: 8px; }
+    .specs dd { margin: 0; font: 600 15px/1.35 var(--mono); font-stretch: 87.5%; }
+    .specs dd small { display: block; color: var(--dim); font-weight: 400; font-size: 11px; margin-top: 4px; }
+
+    section { padding: 88px 0 0; }
+    h2 { font: 800 clamp(30px, 4vw, 46px)/1 var(--display); letter-spacing: -0.03em; margin: 0 0 12px; }
+    .lede { color: #b4b4bc; max-width: 62ch; margin: 0 0 32px; }
+
+    /* ---------- bench ---------- */
+    .bench { display: grid; grid-template-columns: 0.9fr 1.1fr; }
+    .bench > div { padding: 28px; }
+    .bench > div + div { border-left: 1px solid var(--seam); }
+    label.f { display: block; font: 500 11px var(--mono); font-stretch: 87.5%; color: var(--dim); margin: 0 0 6px; }
+    .well {
+      width: 100%; height: 46px; padding: 0 14px; margin-bottom: 18px; border-radius: 3px; border: 1px solid var(--seam);
+      background: #08080c; box-shadow: inset 0 1px 3px rgb(0 0 0 / 0.7); color: var(--ink); font: 400 13px var(--mono); font-stretch: 87.5%;
+      caret-color: var(--ruby); outline: none;
+    }
+    .well:focus { border-color: rgb(244 63 94 / 0.6); box-shadow: inset 0 1px 3px rgb(0 0 0 / 0.7), 0 0 0 3px rgb(225 29 72 / 0.15); }
+    .bench-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .out { font: 400 12px/1.7 var(--mono); font-stretch: 80%; display: grid; gap: 14px; }
+    .out dt { color: var(--dim); font-size: 10.5px; }
+    .out dd { margin: 0; word-break: break-all; color: #d4d4d8; }
+    .out .flip { background: var(--hazard); color: #000; }
+    .verdict { padding: 12px 14px; border-radius: 3px; font: 600 12px var(--mono); font-stretch: 87.5%; border: 1px solid var(--seam); color: var(--dim); }
+    .verdict.ok { border-color: rgb(192 132 252 / 0.5); color: var(--uv); background: rgb(192 132 252 / 0.06); }
+    .verdict.bad {
+      border-color: rgb(255 106 61 / 0.6); color: var(--hazard);
+      background: repeating-linear-gradient(-45deg, rgb(255 106 61 / 0.14) 0 8px, transparent 8px 16px);
+    }
+    .meter { height: 6px; display: grid; grid-template-columns: repeat(24, 1fr); gap: 3px; margin: 4px 0 18px; }
+    .meter span { background: var(--seam); border-radius: 1px; transition: background 0.1s; }
+    .meter span.on { background: var(--ruby); box-shadow: 0 0 6px rgb(244 63 94 / 0.6); }
+    .fine { font-size: 12.5px; color: var(--dim); margin: 16px 0 0; }
+
+    /* ---------- hardening table ---------- */
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 14px 22px; border-bottom: 1px solid var(--seam); vertical-align: top; }
+    th { font: 500 10.5px var(--mono); font-stretch: 87.5%; color: var(--dim); }
+    td:first-child { font: 600 13px var(--mono); font-stretch: 87.5%; color: var(--ruby); white-space: nowrap; width: 30%; }
+    tr:last-child td { border-bottom: 0; }
+
+    /* ---------- install ---------- */
+    .term { padding: 26px 26px 22px; font: 400 13px/1.9 var(--mono); font-stretch: 87.5%; overflow-x: auto; }
+    .term .c { color: #52525b; } .term .p { color: var(--ruby); user-select: none; }
+    .term-head { display: flex; justify-content: space-between; padding: 12px 22px 0 40px; font: 500 11px var(--mono); color: var(--dim); }
+    .copy { background: none; border: 1px solid var(--seam); color: var(--dim); font: inherit; padding: 3px 10px; border-radius: 2px; cursor: pointer; }
+    .copy:hover { color: var(--ink); border-color: var(--edge); }
+
+    footer { margin-top: 96px; border-top: 1px solid var(--seam); padding: 28px 0 40px; display: flex; gap: 24px; flex-wrap: wrap; font: 500 12px var(--mono); font-stretch: 87.5%; color: var(--dim); }
+    footer a { text-decoration: none; } footer a:hover { color: var(--ink); }
+    footer span { margin-left: auto; }
+
+    @media (max-width: 860px) {
+      .hero, .bench { grid-template-columns: 1fr; }
+      .case-col { order: -1; }
+      .bench > div + div { border-left: 0; border-top: 1px solid var(--seam); }
+      .specs { grid-template-columns: 1fr 1fr; }
+      .specs div:nth-child(2) { border-right: 0; }
+      .specs div:nth-child(-n+2) { border-bottom: 1px solid var(--seam); }
+      .top nav a.opt { display: none; }
+      td:first-child { white-space: normal; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <a class="mark" href="#">shush <span class="led" aria-hidden="true"></span></a>
+      <nav aria-label="Site">
+        <a class="opt" href="#bench">Bench</a>
+        <a class="opt" href="#hardening">Hardening</a>
+        <a href="#install">Install</a>
+        <a href="https://github.com/kash-talel/shush">GitHub</a>
+      </nav>
+    </header>
+
+    <div class="hero">
+      <div>
+        <h1>Sealed on your&nbsp;disk.</h1>
+        <p>shush is an offline password manager and 2FA authenticator for Windows. Your vault is one encrypted file. No account, no cloud, no telemetry.</p>
+        <div class="ctas">
+          <a class="key" href="#install">Build it</a>
+          <a class="key steel" href="#bench">Try the crypto</a>
+        </div>
+      </div>
+      <div class="case-col">
+        <button class="jc" aria-pressed="true" aria-label="Open or close the jewel case">
+          <span class="jc-box"><span class="jc-tray"></span><img class="jc-disc" src="../cd-512.png" alt=""><span class="jc-lid"></span></span>
+        </button>
+        <p class="readout" id="case-readout" aria-live="polite">case <b>open</b> · disc 3.3 rpm · click to close</p>
+      </div>
+    </div>
+
+    <dl class="plate specs" aria-label="Specifications">
+      <div><dt>key derivation</dt><dd>Argon2id v1.3<small>64 MiB · 3 passes · 4 lanes</small></dd></div>
+      <div><dt>cipher</dt><dd>AES-256-GCM<small>or XChaCha20-Poly1305</small></dd></div>
+      <div><dt>key schedule</dt><dd>HKDF-SHA256<small>vault · canary · attachments</small></dd></div>
+      <div><dt>network</dt><dd>none<small>no sync server, no telemetry</small></dd></div>
+    </dl>
+
+    <section id="bench" aria-labelledby="bench-h">
+      <h2 id="bench-h">The bench</h2>
+      <p class="lede">The same construction shush uses to seal your vault, running in this tab: Argon2id stretches a password into a key, AES-256-GCM seals the text, and the tag catches any change to a single bit. Nothing you type leaves the page.</p>
+      <div class="plate bench">
+        <div>
+          <label class="f" for="pw">master password</label>
+          <input class="well" id="pw" value="correct horse battery staple" spellcheck="false" autocomplete="off">
+          <label class="f" for="msg">secret</label>
+          <input class="well" id="msg" value="github: octocat / gh-recovery-4f2a" spellcheck="false" autocomplete="off">
+          <div class="meter" id="meter" aria-hidden="true"></div>
+          <div class="bench-actions">
+            <button class="key" id="seal">Derive &amp; seal</button>
+            <button class="key steel" id="flip" disabled>Flip one bit</button>
+            <button class="key steel" id="open" disabled>Open</button>
+          </div>
+          <p class="fine">Argon2id via hash-wasm, AES-GCM via WebCrypto. In the app this runs in Rust, and the key is zeroized when the vault locks.</p>
+        </div>
+        <div>
+          <dl class="out" id="out">
+            <div><dt>argon2id</dt><dd id="o-kdf">m=65536 KiB, t=3, p=4: press Derive &amp; seal</dd></div>
+            <div><dt>salt (16 B)</dt><dd id="o-salt">–</dd></div>
+            <div><dt>key (32 B)</dt><dd id="o-key">–</dd></div>
+            <div><dt>nonce (12 B)</dt><dd id="o-nonce">–</dd></div>
+            <div><dt>ciphertext + tag</dt><dd id="o-ct">–</dd></div>
+          </dl>
+          <p class="verdict" id="verdict" role="status" style="margin-top:18px">waiting for a key</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="hardening" aria-labelledby="hard-h">
+      <h2 id="hard-h">Hardened on Windows</h2>
+      <p class="lede">What shush does when the machine around it changes state.</p>
+      <div class="plate">
+        <table>
+          <thead><tr><th scope="col">event</th><th scope="col">shush</th></tr></thead>
+          <tbody>
+            <tr><td>Win+L, sign-out</td><td>Locks the vault and wipes the derived keys from memory.</td></tr>
+            <tr><td>sleep, display off</td><td>Locks before the machine suspends or the screen goes dark.</td></tr>
+            <tr><td>idle timeout</td><td>Locks after a period without input.</td></tr>
+            <tr><td>screen capture</td><td>The window is excluded from screenshots and recordings.</td></tr>
+            <tr><td>copy a password</td><td>Kept out of clipboard history and cloud clipboard, then cleared.</td></tr>
+            <tr><td>second launch</td><td>Focuses the running instance; one process owns the vault file.</td></tr>
+            <tr><td>Ctrl+Alt+Space</td><td>Quick search from any app. A window title can pre-select a login but never triggers typing.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="install" aria-labelledby="inst-h">
+      <h2 id="inst-h">Build it</h2>
+      <p class="lede">Alpha, Windows 10/11. Needs Rust (stable), Node 22 and the WebView2 runtime.</p>
+      <div class="plate">
+        <div class="term-head"><span>powershell</span><button class="copy" id="copy">copy</button></div>
+        <pre class="term" id="cmds"><span class="p">&gt; </span>git clone https://github.com/kash-talel/shush; cd shush
+<span class="p">&gt; </span>npm ci --prefix src
+<span class="p">&gt; </span>cargo test --manifest-path src-tauri/Cargo.toml --lib   <span class="c"># 118 tests</span>
+<span class="p">&gt; </span>npx --prefix src tauri dev</pre>
+      </div>
+    </section>
+
+    <footer>
+      <a href="https://github.com/kash-talel/shush/blob/main/docs/spec/security-model.md">Security model</a>
+      <a href="https://github.com/kash-talel/shush/blob/main/docs/FORMAT.md">File format</a>
+      <a href="https://github.com/kash-talel/shush/blob/main/docs/ROADMAP.md">Roadmap</a>
+      <span>MIT · 2026 Mahdi Ghozzi</span>
+    </footer>
+  </div>
+
+  <script src="shared/case.js"></script>
+  <script src="shared/switcher.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hash-wasm@4.12.0/dist/argon2.umd.min.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const hex = (b) => [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+    const readout = $("case-readout");
+    document.addEventListener("jewelcase", (e) => {
+      readout.innerHTML = e.detail.open ? "case <b>open</b> · disc 3.3 rpm · click to close" : "case <b>closed</b> · click to open";
+    });
+
+    // segmented meter
+    const meter = $("meter");
+    meter.innerHTML = "<span></span>".repeat(24);
+    const cells = [...meter.children];
+    let sweep = 0;
+    function runMeter(on) {
+      clearInterval(sweep);
+      cells.forEach((c) => c.classList.remove("on"));
+      if (!on) return;
+      let i = 0;
+      sweep = setInterval(() => { cells[i % 24].classList.toggle("on", Math.floor(i / 24) % 2 === 0); i++; }, 28);
+    }
+
+    let sealed = null; // { key, nonce, ct, plain }
+    $("seal").addEventListener("click", async () => {
+      const btn = $("seal");
+      btn.disabled = true; $("flip").disabled = $("open").disabled = true;
+      $("verdict").className = "verdict"; $("verdict").textContent = "deriving key: 64 MiB of memory-hard work…";
+      shushCase.spin(28); runMeter(true);
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const t0 = performance.now();
+      try {
+        const keyBytes = await hashwasm.argon2id({
+          password: $("pw").value, salt, parallelism: 4, iterations: 3, memorySize: 65536, hashLength: 32, outputType: "binary",
+        });
+        const ms = Math.round(performance.now() - t0);
+        const key = await crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["encrypt", "decrypt"]);
+        const nonce = crypto.getRandomValues(new Uint8Array(12));
+        const plain = $("msg").value;
+        const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, new TextEncoder().encode(plain)));
+        sealed = { key, nonce, ct, plain };
+        flipped = -1;
+        $("o-kdf").textContent = `m=65536 KiB, t=3, p=4: ${ms} ms in this tab`;
+        $("o-salt").textContent = hex(salt);
+        $("o-key").textContent = hex(keyBytes);
+        $("o-nonce").textContent = hex(nonce);
+        renderCt();
+        $("verdict").className = "verdict ok"; $("verdict").textContent = "sealed: the last 16 bytes are the authentication tag";
+        $("flip").disabled = $("open").disabled = false;
+      } catch (err) {
+        $("verdict").className = "verdict bad"; $("verdict").textContent = "could not run: " + err.message;
+      } finally {
+        btn.disabled = false; shushCase.spin(1); runMeter(false);
+      }
+    });
+
+    let flipped = -1;
+    function renderCt() {
+      const h = hex(sealed.ct);
+      if (flipped < 0) { $("o-ct").textContent = h; return; }
+      const at = Math.floor(flipped / 8) * 2;
+      $("o-ct").innerHTML = h.slice(0, at) + `<mark class="flip">${h.slice(at, at + 2)}</mark>` + h.slice(at + 2);
+    }
+    $("flip").addEventListener("click", () => {
+      flipped = Math.floor(Math.random() * sealed.ct.length * 8);
+      sealed.ct[flipped >> 3] ^= 1 << (flipped & 7);
+      renderCt();
+      $("verdict").className = "verdict"; $("verdict").textContent = `bit ${flipped} flipped. Press Open.`;
+    });
+    $("open").addEventListener("click", async () => {
+      try {
+        const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: sealed.nonce }, sealed.key, sealed.ct);
+        $("verdict").className = "verdict ok"; $("verdict").textContent = "opened: " + new TextDecoder().decode(pt);
+      } catch {
+        $("verdict").className = "verdict bad"; $("verdict").textContent = "refused: tag mismatch, the ciphertext was changed. shush reports this as a tampered vault.";
+      }
+    });
+
+    $("copy").addEventListener("click", async () => {
+      const text = [...$("cmds").childNodes].map((n) => (n.classList?.contains("p") ? "" : n.textContent)).join("").replace(/ +# .*$/gm, "");
+      await navigator.clipboard.writeText(text.trim());
+      $("copy").textContent = "copied";
+      setTimeout(() => ($("copy").textContent = "copy"), 1600);
+    });
+  </script>
+</body>
+</html>
