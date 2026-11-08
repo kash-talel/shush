@@ -108,6 +108,11 @@
     .cd-spin.paused {
       animation-play-state: paused;
     }
+    /* Lift the disc off the tray (and the lid over the disc) so 3D hit-testing never picks the
+       coplanar tray: the disc is its own click target (play/pause) inside the case's target. */
+    .case-disc[role="button"] { cursor: pointer; translate: 0 0 1px; }
+    .case-lid { translate: 0 0 2px; }
+    .case-disc[aria-pressed="true"] { filter: drop-shadow(0 4px 18px rgba(0, 0, 0, 0.8)) drop-shadow(0 0 22px rgb(244 63 94 / 0.45)); }
     .case-lid {
       position: absolute;
       inset: 0;
@@ -213,22 +218,22 @@
     <div class="cover">
       <div class="case-stage">
         <div class="case-aura" aria-hidden="true"></div>
-        <div class="case-wrapper perspective-1000" onclick="toggleCase()" id="case-wrapper" title="Click to open / close case">
+        <div class="case-wrapper perspective-1000" onclick="toggleCase()" id="case-wrapper" title="Click the disc to play · click the case to open / close">
           <div class="case-container" id="jewel-case-box">
             <div class="case-tray"></div>
-            <img src="cd-512.png" alt="shush spinning cd" id="hero-cd" class="case-disc cd-spin">
+            <img src="cd-512.png" alt="Play track 00, Skeleton Key" id="hero-cd" class="case-disc cd-spin paused" role="button" tabindex="0" aria-pressed="false">
             <div class="case-lid" id="case-lid"></div>
           </div>
         </div>
         <div class="case-status" onclick="toggleCase()">
           <span class="dot"></span>
-          <span id="case-status">[ JEWEL CASE: OPEN · DISK: SPINNING · CLICK TO TOGGLE ]</span>
+          <span id="case-status" aria-live="polite">[ JEWEL CASE: OPEN · CLICK THE DISC TO PLAY ]</span>
         </div>
       </div>
       <div>
         <h1>shush<span>offline</span></h1>
         <p>A password manager and 2FA authenticator for Windows that keeps everything in one encrypted file on your own disk.</p>
-        <p class="hint">turn the sound on for the full pressing</p>
+        <p class="hint">click the disc to play track 00 · sound on for the tactile clicks</p>
       </div>
     </div>
 
@@ -329,23 +334,153 @@ npx --prefix src tauri dev</code>
       o.connect(f).connect(g).connect(ctx.destination); o.start(t); o.stop(t + 1.05);
     }
 
-    // Jewel case toggle: verbatim from the previous landing page, plus the optional sound.
-    let isCaseOpen = true;
-    function toggleCase() {
-      const box = document.getElementById('jewel-case-box');
-      const status = document.getElementById('case-status');
-      if (box) {
-        box.classList.toggle('closed');
-        isCaseOpen = !box.classList.contains('closed');
-        if (status) {
-          status.textContent = isCaseOpen
-            ? '[ JEWEL CASE: OPEN · DISK: SPINNING · CLICK TO TOGGLE ]'
-            : '[ JEWEL CASE: CLOSED · CLICK TO OPEN ]';
+    // ---- track 00 "Skeleton Key": an original slowed, reverbed, muffled loop composed in code.
+    // Nothing is fetched and no third-party player is embedded, so the page stays offline-clean.
+    // It only starts from a click on the disc, which satisfies browser autoplay rules.
+    // Optional: point TRACK_SRC at an audio file inside site/ that you have the rights to publish.
+    const TRACK_SRC = null;
+    const BPM = 68, STEP = 60 / BPM / 4, LOOP = 64;           // 16th notes, 4-bar loop
+    const hz = (m) => 440 * 2 ** ((m - 69) / 12);
+    const CHORDS = [[57, 60, 64, 67], [53, 57, 60, 64], [50, 53, 57, 60], [52, 55, 59, 62]]; // Am7 Fmaj7 Dm7 Em7
+    const ROOTS = [33, 29, 26, 28];
+    const SUB = [[0, 6], [7, 3], [10, 6]];                    // [step, length in steps] per bar
+    const BELL = [[0, 3], [3, 2], [6, 1], [9, 2], [12, 0]];   // [step, chord tone], played an octave up
+    let song = null, audioEl = null, noise = null, impulse = null;
+
+    function startTrack() {
+      if (TRACK_SRC) {
+        audioEl ||= Object.assign(new Audio(TRACK_SRC), { loop: true });
+        audioEl.play().catch(() => { playing = false; render(); });
+        return;
+      }
+      ctx ||= new AudioContext();
+      ctx.resume();
+      if (!noise) {
+        noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+        const d = noise.getChannelData(0);
+        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+        const len = ctx.sampleRate * 3.5;                      // synthetic hall: decaying stereo noise
+        impulse = ctx.createBuffer(2, len, ctx.sampleRate);
+        for (let c = 0; c < 2; c++) {
+          const ch = impulse.getChannelData(c);
+          for (let i = 0; i < len; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / len) ** 2.6;
         }
       }
+      const out = ctx.createGain(), muffle = ctx.createBiquadFilter(), verb = ctx.createConvolver(), wet = ctx.createGain(), send = ctx.createGain();
+      muffle.type = "lowpass"; muffle.frequency.value = 950; muffle.Q.value = 0.4;
+      verb.buffer = impulse; wet.gain.value = 0.7;
+      send.connect(verb).connect(wet).connect(muffle);
+      muffle.connect(out).connect(ctx.destination);
+      const t0 = ctx.currentTime;
+      out.gain.setValueAtTime(0.0001, t0); out.gain.exponentialRampToValueAtTime(0.85, t0 + 1.4);
+      song = { out, dry: muffle, send, step: 0, next: t0 + 0.08 };
+      song.timer = setInterval(schedule, 60);
+      schedule();
+    }
+
+    function stopTrack() {
+      if (audioEl) { audioEl.pause(); return; }
+      if (!song) return;
+      const s = song; song = null;
+      clearInterval(s.timer);
+      s.out.gain.cancelScheduledValues(ctx.currentTime);
+      s.out.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.18);
+      setTimeout(() => s.out.disconnect(), 1500);
+    }
+
+    function schedule() {
+      // Background tabs throttle timers to ~1 Hz, so look further ahead there to avoid gaps.
+      const horizon = ctx.currentTime + (document.hidden ? 1.6 : 0.3);
+      while (song && song.next < horizon) {
+        playStep(song.step, song.next);
+        song.next += STEP;
+        song.step = (song.step + 1) % LOOP;
+      }
+    }
+
+    function playStep(step, t) {
+      const bar = step >> 4, s = step & 15, chord = CHORDS[bar];
+      if (s === 0) chord.forEach((m) => pad(t, m, STEP * 16));
+      for (const [at, len] of SUB) if (s === at) sub(t, ROOTS[bar], STEP * len);
+      for (const [at, tone] of BELL) if (s === at && !(bar === 3 && at === 12)) bell(t, chord[tone] + 12);
+      if (s % 2 === 0 || (bar === 3 && s > 12)) hat(t, s % 4 === 0 ? 0.16 : 0.08);
+      if (s === 8) clap(t);
+      if (Math.random() < 0.18) tick(t + Math.random() * STEP);
+    }
+
+    function env(t, peak, attack, release) {
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(peak, t + attack);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + attack + release);
+      return g;
+    }
+    function pad(t, m, dur) {
+      const f = ctx.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 650;
+      const g = env(t, 0.035, 1.1, dur);
+      f.connect(g); g.connect(song.dry); g.connect(song.send);
+      for (const cents of [-8, 8]) {
+        const o = ctx.createOscillator(); o.type = "sawtooth"; o.frequency.value = hz(m); o.detune.value = cents;
+        o.connect(f); o.start(t); o.stop(t + dur + 1.2);
+      }
+    }
+    function sub(t, m, dur) {
+      const o = ctx.createOscillator(), g = env(t, 0.55, 0.008, dur + 0.25);
+      o.frequency.setValueAtTime(hz(m + 12), t); o.frequency.exponentialRampToValueAtTime(hz(m), t + 0.06);
+      o.connect(g).connect(song.dry); o.start(t); o.stop(t + dur + 0.3);
+    }
+    function bell(t, m) {
+      const g = env(t, 0.07, 0.01, 1.6);
+      g.connect(song.dry); g.connect(song.send);
+      [[1, 1], [2.01, 0.25]].forEach(([mul, lvl]) => {
+        const o = ctx.createOscillator(), l = ctx.createGain(); o.type = "sine"; o.frequency.value = hz(m) * mul; l.gain.value = lvl;
+        o.connect(l).connect(g); o.start(t); o.stop(t + 1.7);
+      });
+    }
+    function burst(t, type, freq, peak, release, toVerb) {
+      const n = ctx.createBufferSource(); n.buffer = noise;
+      const f = ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq;
+      const g = env(t, peak, 0.002, release);
+      n.connect(f).connect(g).connect(song.dry); if (toVerb) g.connect(song.send);
+      n.start(t, Math.random() * 0.5, release + 0.05);
+    }
+    const hat = (t, v) => burst(t, "highpass", 6500, v, 0.05, false);
+    const clap = (t) => [0, 0.012, 0.026].forEach((d, i) => burst(t + d, "bandpass", 1300, i === 2 ? 0.35 : 0.2, i === 2 ? 0.22 : 0.02, true));
+    const tick = (t) => burst(t, "bandpass", 3000, 0.03, 0.006, false); // vinyl crackle
+
+    // ---- jewel case + disc state: open/closed is the case, playing is the disc ----
+    const box = document.getElementById("jewel-case-box");
+    const disc = document.getElementById("hero-cd");
+    const caseStatus = document.getElementById("case-status");
+    let isCaseOpen = true, playing = false;
+    function render() {
+      disc.classList.toggle("paused", !playing);           // the disc only spins while it plays
+      disc.setAttribute("aria-pressed", String(playing));
+      disc.alt = playing ? "Pause track 00, Skeleton Key" : "Play track 00, Skeleton Key";
+      caseStatus.textContent = !isCaseOpen ? "[ JEWEL CASE: CLOSED · CLICK TO OPEN ]"
+        : playing ? "[ NOW PLAYING: 00 · SKELETON KEY · CLICK THE DISC TO PAUSE ]"
+        : "[ JEWEL CASE: OPEN · CLICK THE DISC TO PLAY ]";
+    }
+    function toggleCase() {
+      box.classList.toggle("closed");
+      isCaseOpen = !box.classList.contains("closed");
+      if (!isCaseOpen && playing) { playing = false; stopTrack(); }
+      render();
       click(0.9, isCaseOpen ? 1800 : 1200);
       whir(isCaseOpen);
     }
+    function toggleDisc(e) {
+      e.stopPropagation();                                 // the disc is inside the case's click target
+      if (!isCaseOpen) return toggleCase();
+      playing = !playing;
+      playing ? startTrack() : stopTrack();
+      render();
+      click(0.6, playing ? 2600 : 1500);
+    }
+    disc.addEventListener("click", toggleDisc);
+    disc.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleDisc(e); }
+    });
     list.addEventListener("click", (e) => {
       const tr = e.target.closest(".track");
       if (!tr) return;
