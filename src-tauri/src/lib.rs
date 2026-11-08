@@ -107,6 +107,18 @@ impl From<VaultError> for CmdError {
                 "VAULT_CHANGED_ON_DISK",
                 "The vault file was changed by another program since you unlocked it.                  Your change was not saved. Lock and unlock the vault to load the current version.",
             ),
+            V::DuressWithAttachments => Self::new(
+                "DURESS_WITH_ATTACHMENTS",
+                "Remove every attachment before setting a duress password: attachment files                  beside the vault would give the decoy away.",
+            ),
+            V::AttachmentsDisabled => Self::new(
+                "ATTACHMENTS_DISABLED",
+                "Attachments are turned off while a duress password is set.",
+            ),
+            V::DuressSameAsMaster => Self::new(
+                "DURESS_SAME_AS_MASTER",
+                "The duress password must be different from the master password.",
+            ),
             V::NotAVault
             | V::WrongKind(_)
             | V::UnsupportedVersion(_)
@@ -801,7 +813,12 @@ async fn unlock(
         // Taken before reading the file, so the snapshot we load cannot be
         // replaced by another process while we hold it (issue #9).
         let lock = vault::lock::VaultLock::acquire(&path)?;
-        let vault = unlock_blocking(&path, password.as_bytes(), keyfile_path.as_deref())?;
+        let mut vault = unlock_blocking(&path, password.as_bytes(), keyfile_path.as_deref())?;
+        // Re-seal a v3 vault so `.bak` and the file differ only in the slot
+        // opened last (issue #8). Best effort: read-only media still unlock.
+        if vault.is_current_format() {
+            let _ = vault.refresh(&path);
+        }
         // Remove attachment blobs left behind by an interrupted add/delete.
         vault::attachments::gc_orphans(&path, vault.data());
         let s = summary(&path, &vault);
@@ -811,6 +828,60 @@ async fn unlock(
                 CmdError::new("LOCKED_DURING_UNLOCK", "Vault was locked while opening.")
             })?;
         Ok(s)
+    })
+    .await
+}
+
+/// Whether the unlocked vault has a duress password (issue #8).
+#[tauri::command]
+fn duress_status(app: tauri::AppHandle) -> Result<bool, CmdError> {
+    app.state::<VaultState>()
+        .with(|u| u.vault.duress_enabled())
+        .ok_or_else(locked)
+}
+
+/// Seals an empty decoy vault into the other slot under `password` (and the
+/// vault's keyfile, if it has one), replacing any previous decoy.
+#[tauri::command]
+async fn set_duress_password(
+    app: tauri::AppHandle,
+    password: String,
+    keyfile_path: Option<String>,
+) -> Result<(), CmdError> {
+    let password = Zeroizing::new(password);
+    blocking(move || {
+        let normalized =
+            crypto::kdf::normalize_password(password.as_bytes()).map_err(VaultError::from)?;
+        if normalized.chars().count() < MIN_PASSWORD_CHARS {
+            return Err(CmdError::new(
+                "WEAK_PASSWORD",
+                format!("Use a duress password of at least {MIN_PASSWORD_CHARS} characters."),
+            ));
+        }
+        let digest = keyfile_path
+            .map(|p| crypto::keyfile::digest_file(Path::new(&p)).map_err(keyfile_error))
+            .transpose()?;
+        app.state::<VaultState>()
+            .with_mut(|u| {
+                let path = u.path.clone();
+                Ok(u.vault
+                    .set_duress(&path, password.as_bytes(), digest.as_ref())?)
+            })
+            .unwrap_or_else(|| Err(locked()))
+    })
+    .await
+}
+
+/// Destroys the decoy vault (its slot becomes random bytes again).
+#[tauri::command]
+async fn clear_duress_password(app: tauri::AppHandle) -> Result<(), CmdError> {
+    blocking(move || {
+        app.state::<VaultState>()
+            .with_mut(|u| {
+                let path = u.path.clone();
+                Ok(u.vault.clear_duress(&path)?)
+            })
+            .unwrap_or_else(|| Err(locked()))
     })
     .await
 }
@@ -1552,7 +1623,10 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             open_main_window,
             add_attachment,
             save_attachment,
-            delete_attachment
+            delete_attachment,
+            duress_status,
+            set_duress_password,
+            clear_duress_password
         ])
 }
 
@@ -1716,7 +1790,13 @@ mod tests {
         )
         .unwrap();
         let mut bytes = std::fs::read(&vault_file).unwrap();
-        *bytes.last_mut().unwrap() ^= 1;
+        // A payload byte in both slots (the end of a slot is random fill).
+        let fixed = vault::container::FIXED_LEN;
+        let slot_len = (bytes.len() - fixed) / vault::slots::SLOT_COUNT;
+        let in_payload = CipherSuite::Aes256Gcm.nonce_len() + vault::slots::SLOT_HEADER_CT_LEN + 10;
+        for i in 0..vault::slots::SLOT_COUNT {
+            bytes[fixed + i * slot_len + in_payload] ^= 1;
+        }
         std::fs::write(&vault_file, &bytes).unwrap();
         assert_eq!(
             unlock_blocking(&vault_file, b"long enough", None)

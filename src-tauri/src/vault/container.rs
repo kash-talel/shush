@@ -1,4 +1,8 @@
-//! `vault.shush` binary container (spec §4) and crash-safe disk writer.
+//! Single-payload binary container (spec §4) and crash-safe disk writer.
+//!
+//! Since format v3 (issue #8) vaults are written as two fixed-size slots, see
+//! [`super::slots`]. This module still writes `.shushbackup` files (format v2)
+//! and reads legacy v1 / v2 vaults.
 //!
 //! Layout (all integers little-endian):
 //!
@@ -43,8 +47,10 @@ use super::VaultError;
 pub const MAGIC_VAULT: [u8; 5] = *b"SHUSH";
 /// Magic for `.shushbackup` files (spec §9.1).
 pub const MAGIC_BACKUP: [u8; 5] = *b"SHBKP";
-/// The format version this build writes.
-pub const FORMAT_VERSION: u16 = 2;
+/// The vault format version this build writes (two slots, [`super::slots`]).
+pub const FORMAT_VERSION: u16 = 3;
+/// The single-payload format version this module writes (backups) and reads.
+pub const FORMAT_VERSION_V2: u16 = 2;
 /// The legacy format version this build still reads (static payload key).
 pub const FORMAT_VERSION_V1: u16 = 1;
 /// FLAGS bit 0: a keyfile is part of the credentials.
@@ -59,6 +65,8 @@ const OFF_ITER: usize = 0x0D;
 const OFF_PAR: usize = 0x11;
 const OFF_SALT: usize = 0x15;
 const OFF_CANARY_NONCE: usize = 0x35;
+/// Length of the fixed header fields shared by every version (MAGIC..KDF_SALT).
+pub const FIXED_LEN: usize = OFF_CANARY_NONCE;
 const OFF_CANARY_CT: usize = 0x4D;
 /// End of the canary block; v1 and v2 share every byte before this.
 const OFF_CANARY_END: usize = 0x6E;
@@ -151,11 +159,12 @@ pub struct Header {
 }
 
 impl Header {
-    /// Serializes the fixed fields `[0x00, 0x35)`; this is also the canary's AAD.
-    fn fixed_bytes(&self) -> [u8; OFF_CANARY_NONCE] {
+    /// Serializes the fixed fields `[0x00, 0x35)` for format `version`; this
+    /// is also the canary's AAD.
+    pub(crate) fn fixed_bytes(&self, version: u16) -> [u8; OFF_CANARY_NONCE] {
         let mut b = [0u8; OFF_CANARY_NONCE];
         b[..OFF_VERSION].copy_from_slice(&self.kind.magic());
-        b[OFF_VERSION..OFF_CIPHER].copy_from_slice(&FORMAT_VERSION.to_le_bytes());
+        b[OFF_VERSION..OFF_CIPHER].copy_from_slice(&version.to_le_bytes());
         b[OFF_CIPHER] = self.suite.id();
         b[OFF_FLAGS] = if self.keyfile_required {
             FLAG_KEYFILE
@@ -186,7 +195,7 @@ impl Header {
             _ => return Err(VaultError::NotAVault),
         };
         let version = read_version(bytes);
-        if version != FORMAT_VERSION && version != FORMAT_VERSION_V1 {
+        if !(FORMAT_VERSION_V1..=FORMAT_VERSION).contains(&version) {
             return Err(VaultError::UnsupportedVersion(version));
         }
         let suite = CipherSuite::from_id(bytes[OFF_CIPHER])?;
@@ -217,7 +226,7 @@ fn is_known_magic(m: &[u8]) -> bool {
 }
 
 /// Caller must have checked `b.len() >= OFF_CIPHER`.
-fn read_version(b: &[u8]) -> u16 {
+pub(crate) fn read_version(b: &[u8]) -> u16 {
     u16::from_le_bytes([b[OFF_VERSION], b[OFF_VERSION + 1]])
 }
 
@@ -231,7 +240,7 @@ fn padded_nonce(nonce: &[u8]) -> [u8; MAX_NONCE_LEN] {
     out
 }
 
-/// Seals `plaintext` into a complete format-v2 container file image under
+/// Seals `plaintext` into a complete single-payload (format v2) file image under
 /// `keys`. A fresh canary nonce, payload nonce and `SAVE_ID` (hence a fresh
 /// payload key) are drawn on every call (issue #2).
 pub fn seal(header: &Header, keys: &VaultKeys, plaintext: &[u8]) -> Result<Vec<u8>, VaultError> {
@@ -241,7 +250,7 @@ pub fn seal(header: &Header, keys: &VaultKeys, plaintext: &[u8]) -> Result<Vec<u
         .filter(|&n| n <= MAX_PAYLOAD_LEN as usize)
         .ok_or(VaultError::TooLarge)? as u32;
 
-    let fixed = header.fixed_bytes();
+    let fixed = header.fixed_bytes(FORMAT_VERSION_V2);
     let canary = cipher::seal_canary(header.suite, keys, &fixed)?;
 
     let mut out = Vec::with_capacity(HEADER_LEN + payload_len as usize);
@@ -275,11 +284,15 @@ pub struct Sealed<'a> {
     bytes: &'a [u8],
 }
 
-/// Parses a complete container file image, validating every structural rule
-/// before any cryptography runs.
+/// Parses a complete single-payload (v1 / v2) file image, validating every
+/// structural rule before any cryptography runs. Format v3 vaults are parsed
+/// by [`super::slots::parse`].
 pub fn parse(bytes: &[u8]) -> Result<Sealed<'_>, VaultError> {
     let header = Header::parse(bytes)?;
     let version = read_version(bytes);
+    if version > FORMAT_VERSION_V2 {
+        return Err(VaultError::UnsupportedVersion(version));
+    }
     let layout = Layout::for_version(version);
     if bytes.len() < layout.header_len {
         return Err(VaultError::Truncated);
@@ -477,15 +490,14 @@ mod tests {
         );
         assert_eq!(read_u32(&file, 0xA6) as usize, 5 + TAG_LEN);
         assert_eq!(file.len(), 0xAA + 5 + TAG_LEN);
-        assert_eq!(parse(&file).unwrap().version, FORMAT_VERSION);
+        assert_eq!(parse(&file).unwrap().version, FORMAT_VERSION_V2);
     }
 
     /// Builds a legacy format-v1 image the way the v1 writer did: payload
     /// sealed directly under the static VEK, no `SAVE_ID`.
     fn seal_v1(header: &Header, keys: &VaultKeys, plaintext: &[u8]) -> Vec<u8> {
         let payload_len = (plaintext.len() + TAG_LEN) as u32;
-        let mut fixed = header.fixed_bytes();
-        fixed[OFF_VERSION..OFF_CIPHER].copy_from_slice(&FORMAT_VERSION_V1.to_le_bytes());
+        let fixed = header.fixed_bytes(FORMAT_VERSION_V1);
         let canary = cipher::seal_canary(header.suite, keys, &fixed).unwrap();
         let mut out = fixed.to_vec();
         out.extend_from_slice(&padded_nonce(&canary.nonce));
@@ -525,7 +537,7 @@ mod tests {
             // Re-sealing (any save) upgrades to v2.
             let upgraded = seal(&sealed.header, &k, b"legacy payload").unwrap();
             let s2 = parse(&upgraded).unwrap();
-            assert_eq!(s2.version, FORMAT_VERSION);
+            assert_eq!(s2.version, FORMAT_VERSION_V2);
             s2.verify_canary(&k).unwrap();
             assert_eq!(&*s2.open_payload(&k).unwrap(), b"legacy payload");
         }

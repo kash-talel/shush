@@ -136,11 +136,13 @@ pub fn open_bytes(
     password: &[u8],
     keyfile: Option<&KeyfileDigest>,
 ) -> Result<Manifest, VaultError> {
+    // Kind first: a (v3, two-slot) vault must say "wrong kind", not "version".
+    let kind = Header::parse(bytes)?.kind;
+    if kind != FileKind::Backup {
+        return Err(VaultError::WrongKind(kind));
+    }
     let sealed = container::parse(bytes)?;
     let header = &sealed.header;
-    if header.kind != FileKind::Backup {
-        return Err(VaultError::WrongKind(header.kind));
-    }
     match (header.keyfile_required, keyfile.is_some()) {
         (true, false) => return Err(VaultError::KeyfileRequired),
         (false, true) => return Err(VaultError::KeyfileNotExpected),

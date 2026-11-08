@@ -4,6 +4,7 @@
   import PasswordField from "./PasswordField.svelte";
   import KeyfileAttach from "./KeyfileAttach.svelte";
   import CsvImport from "./CsvImport.svelte";
+  import DuressCard from "./DuressCard.svelte";
   import {
     applyImport,
     exportBackup,
@@ -282,5 +283,6 @@
       {#if !importPath}{@render errorLine(importError)}{/if}
     </div>
     <CsvImport {onimported} />
+    <DuressCard />
   </div>
 </section>

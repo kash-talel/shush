@@ -47,6 +47,9 @@
     "allow-open-main-window",
     "allow-add-attachment",
     "allow-save-attachment",
-    "allow-delete-attachment"
+    "allow-delete-attachment",
+    "allow-duress-status",
+    "allow-set-duress-password",
+    "allow-clear-duress-password"
   ]
 }
