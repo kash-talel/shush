@@ -1,0 +1,8 @@
+# Exploit-mitigation flags for MSVC builds (CI and releases), #74:
+# - control-flow-guard: /guard:cf, indirect calls are checked against valid targets.
+#   (std itself is prebuilt without CFG; first-party and dependency code is covered.)
+# - /CETCOMPAT: lets Windows enforce hardware shadow stacks (return-address protection).
+# The local GNU toolchain is unaffected. .github/scripts/check-pe-hardening.ps1 verifies
+# the flags on every release build.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "control-flow-guard", "-C", "link-arg=/CETCOMPAT"]

@@ -44,6 +44,11 @@ shush when it finishes. The installer is not code-signed yet: if SmartScreen war
 Your vault lives in `%APPDATA%\com.shush.vault` and survives uninstalling. The uninstaller's
 *Delete the application data* box erases it only after a second confirmation.
 
+Already running a `shush.exe` you built or copied by hand? Quit it, run the installer, then delete
+the old copy and any shortcut to it. The installed app reads the same vault, so nothing moves.
+The `.exe` installs per user in `%LOCALAPPDATA%\shush`. The `.msi` installs per machine in
+Program Files and asks for admin. Use one or the other, not both.
+
 To cut a release, bump the version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and
 `src/package.json`, then push a `vX.Y.Z` tag; `.github/workflows/release.yml` builds, checksums
 and publishes the installers.

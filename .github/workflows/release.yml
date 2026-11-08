@@ -99,6 +99,25 @@ jobs:
 
             The `.msi` is for managed / Group Policy deployment; most people want the `.exe`.
 
+      # Refuse to ship a binary without ASLR/DEP/CFG/CET and the hardened manifest (#74).
+      - name: Hardening check (PE flags + manifest)
+        shell: pwsh
+        run: ./.github/scripts/check-pe-hardening.ps1 src-tauri/target/release/shush.exe
+
+      # CFG/CET can turn latent bugs into crashes at startup; make sure the exe we are about
+      # to publish actually launches and stays up, and log the mitigations Windows applied.
+      - name: Smoke · app starts and stays up
+        shell: pwsh
+        run: |
+          $p = Start-Process src-tauri/target/release/shush.exe -PassThru
+          Start-Sleep -Seconds 20
+          if ($p.HasExited) { Write-Error "shush.exe exited during startup (code $($p.ExitCode))"; exit 1 }
+          "shush.exe still running after 20 s (pid $($p.Id))"
+          try { Get-ProcessMitigation -Id $p.Id | Select-Object -ExpandProperty CFG | Format-List | Out-String } catch { "Get-ProcessMitigation unavailable: $_" }
+          try { Get-ProcessMitigation -Id $p.Id | Select-Object -ExpandProperty UserShadowStack | Format-List | Out-String } catch {}
+          Stop-Process -Id $p.Id -Force
+          Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
       - name: Checksums and stable download name
         id: assets
         shell: pwsh
