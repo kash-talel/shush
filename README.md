@@ -19,19 +19,19 @@ One encrypted file on your disk. No account, no cloud, no telemetry.
 
 <br>
 
-<a href="https://kash-talel.github.io/shush/"><img src="https://img.shields.io/badge/Website-06b6d4?style=for-the-badge&logo=googlechrome&logoColor=ffffff" alt="Website" height="36"></a>&nbsp;
-<a href="https://github.com/kash-talel/shush/releases"><img src="https://img.shields.io/badge/Releases-18181b?style=for-the-badge&logo=github&logoColor=06b6d4" alt="Releases" height="36"></a>&nbsp;
-<a href="https://github.com/kash-talel/shush/blob/main/docs/README.md"><img src="https://img.shields.io/badge/Docs-18181b?style=for-the-badge&logo=gitbook&logoColor=06b6d4" alt="Docs" height="36"></a>
+<a href="https://kash-talel.github.io/shush/"><img src="https://img.shields.io/badge/Website-e11d48?style=for-the-badge&logo=googlechrome&logoColor=ffffff" alt="Website" height="36"></a>&nbsp;
+<a href="https://github.com/kash-talel/shush/releases"><img src="https://img.shields.io/badge/Releases-18181b?style=for-the-badge&logo=github&logoColor=f43f5e" alt="Releases" height="36"></a>&nbsp;
+<a href="https://github.com/kash-talel/shush/blob/main/docs/README.md"><img src="https://img.shields.io/badge/Docs-18181b?style=for-the-badge&logo=gitbook&logoColor=f43f5e" alt="Docs" height="36"></a>
 
 <br>
 
 [![CI](https://github.com/kash-talel/shush/actions/workflows/ci.yml/badge.svg)](https://github.com/kash-talel/shush/actions/workflows/ci.yml)
-![status](https://img.shields.io/badge/status-alpha-06b6d4)
+![status](https://img.shields.io/badge/status-alpha-f43f5e)
 ![platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6)
-![stack](https://img.shields.io/badge/stack-Tauri%20v2%20%7C%20Rust%20%7C%20Svelte%205-a855f7)
-![crypto](https://img.shields.io/badge/crypto-Argon2id%20%C2%B7%20AES--256--GCM%20%C2%B7%20XChaCha20--Poly1305-06b6d4)
-![tests](https://img.shields.io/badge/tests-118%20passing-06b6d4)
-[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+![stack](https://img.shields.io/badge/stack-Tauri%20v2%20%7C%20Rust%20%7C%20Svelte%205-c084fc)
+![crypto](https://img.shields.io/badge/crypto-Argon2id%20%C2%B7%20AES--256--GCM%20%C2%B7%20XChaCha20--Poly1305-e11d48)
+![tests](https://img.shields.io/badge/tests-118%20passing-f43f5e)
+[![license](https://img.shields.io/badge/license-MIT-c084fc)](LICENSE)
 
 [Docs](docs/README.md) •
 [Quick start](#quick-start) •
