@@ -44,6 +44,38 @@ set for. Neither changes anything for a normal install.
 - **Lock the workstation or sleep the PC.** Instead they post the same `WM_WTSSESSION_CHANGE`
   message Windows sends to shush's hidden event window.
 
+## Installer
+
+`installer/installer-e2e.ps1` installs, reinstalls and uninstalls the NSIS installer and checks the
+results on disk and in the registry (62 checks). The run covers:
+
+- License page, per-user folder, finish-page options, shortcuts, Apps & features entry.
+- Uninstalling while the app runs.
+- Reinstalling over an existing install.
+- The vault-deletion warning (#71), answered No and Yes.
+- Silent `/S` install and uninstall.
+- Removal of the WER exclusion (#60).
+
+It never runs the real installer. Build a **QA-renamed** copy first, so every folder and registry
+key differs from a real install (`%LOCALAPPDATA%\shush-qa`, `%APPDATA%\com.shush.qa`):
+
+```powershell
+npx --prefix src tauri build --bundles nsis --config '{"productName":"shush-qa","identifier":"com.shush.qa","mainBinaryName":"shush-qa"}'
+powershell -File docs/testing/installer/installer-e2e.ps1 `
+  -Installer src-tauri/target/release/bundle/nsis/shush-qa_<version>_x64-setup.exe -Out $env:TEMP\shush-installer-e2e
+```
+
+It drives NSIS with plain Win32 calls: `EnumWindows` (only titles containing `shush-qa`),
+`WM_GETTEXT`, and `WM_COMMAND`/`BN_CLICKED` posted to the dialog. It does not use UI Automation:
+NSIS controls show up there as plain panes, `BM_CLICK` fails when the dialog isn't the active
+window, and a long-lived UIA client stopped seeing new top-level windows. Screenshots are
+`PrintWindow` captures of the installer dialogs only. The app window captures black, which is
+expected because the window is excluded from capture. Windows pops the dialogs up for a few
+minutes, but no keystrokes or clicks reach the desktop.
+
+Release binaries are also checked by `.github/scripts/check-pe-hardening.ps1` (ASLR, DEP, CFG,
+CET, manifest) and a startup check in `.github/workflows/release.yml`.
+
 ## Results by phase
 
 | Phase | Script | Result |

@@ -2,7 +2,10 @@
 <!-- Embedded into every target (app binary AND test executables).
      Tauri's default `common-controls-v6` feature imports TaskDialogIndirect,
      which only resolves with this Common Controls v6 dependency; without it,
-     test executables die with STATUS_ENTRYPOINT_NOT_FOUND. -->
+     test executables die with STATUS_ENTRYPOINT_NOT_FOUND.
+     supportedOS opts out of legacy (Vista-era) compatibility behaviour, asInvoker
+     states that shush never asks for elevation, longPathAware lifts MAX_PATH for
+     vaults and attachments in deep folders (when the OS policy allows it). #74 -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <dependency>
     <dependentAssembly>
@@ -16,4 +19,22 @@
       />
     </dependentAssembly>
   </dependency>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 and 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
 </assembly>
