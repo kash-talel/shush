@@ -12,12 +12,38 @@ Follow this strict step-by-step procedure:
   ```powershell
   gh issue list --state open --limit 50 --json number,title,labels
   ```
-  Sort and pick the **single highest-priority open issue**:
+  Sort the open issues by priority:
   1. `severity:critical` (Highest)
   2. `severity:high`
   3. `severity:medium`
   4. `severity:low`
   *(If multiple have the same severity, pick the lowest issue number).*
+
+  Then select the first issue in that order whose runner is `claude`:
+  1. For each candidate in priority order, run `powershell -NoProfile -File .claude/scripts/route-issue.ps1 -Number <NUMBER>` and read its `runner`. New issues are classified and saved on the first lookup.
+  2. Stop at the first candidate with runner `claude`. Every candidate before it is an `agy` issue that was skipped.
+  3. For each skipped `agy` issue, print this notice, filling in the skipped number and the selected number:
+     `💡 Note: Issue #<NUM> is mapped to AGY CLI. Auto-selecting next highest Claude issue #<NUM>.`
+  4. If no open issue has runner `claude`, stop and report that no issue is currently routed to Claude.
+
+## Step 1.5: Model & Runner Gatekeeper
+Look up the routing for the selected issue (it is classified once and saved in `.claude/issue-routing.json`). An auto-picked issue is already `claude` from Step 1, so this gate stops only an explicit `/issue <NUMBER>` that maps to `agy`:
+```powershell
+powershell -NoProfile -File .claude/scripts/route-issue.ps1 -Number <NUMBER>
+```
+The script prints JSON with `title`, `model`, and `runner`. Act on it:
+- **If `runner` is `agy`:** STOP immediately. Do not modify code, create branches, file issues, or run any later step. Print this block with `<NUMBER>` and `<TITLE>` filled in, then end the turn:
+  ```
+  ======================================================================
+  ⚡ TOKEN OPTIMIZATION GATE: RUN IN AGY CLI (Gemini 3.8 Flash)
+  Issue #<NUMBER> ("<TITLE>") is mapped to Gemini 3.8 Flash.
+  Running this in Claude will consume unnecessary high-cost tokens.
+  👉 Switch to AGY CLI and execute:
+     agy "resolve issue #<NUMBER>"
+  ======================================================================
+  ```
+- **If `runner` is `claude` and `model` is `claude-opus-5.5`:** print "⚠️ This issue involves complex cryptography/concurrency. Ensure your active Claude model is set to Opus before proceeding." Then continue to Step 2.
+- **If `runner` is `claude` and `model` is `claude-sonnet-5.5`:** proceed to Step 2.
 
 ## Step 2: Deep Dive the Selected Issue
 1. Inspect the issue requirements and history:
