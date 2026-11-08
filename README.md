@@ -1,7 +1,7 @@
 <div align="center">
 
 <a href="https://kash-talel.github.io/shush/">
-  <img src=".github/banner.svg" alt="shush" width="720">
+  <img src=".github/logo.png" alt="shush logo" width="180" height="180">
 </a>
 
 <br><br>
