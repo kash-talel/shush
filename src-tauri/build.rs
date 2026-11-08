@@ -11,6 +11,7 @@ const COMMANDS: &[&str] = &[
     "add_existing_vault",
     "update_vault",
     "forget_vault",
+    "set_hide_vault_names",
     "delete_vault",
     "inspect_keyfile",
     "create_vault",

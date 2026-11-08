@@ -38,6 +38,7 @@ export interface VaultStatus {
   cipher: CipherInfo | null;
   kdf: KdfParams | null;
   error: CmdError | null;
+  hide_names: boolean;
 }
 
 /** Counts only: item contents never cross the IPC boundary here. */
@@ -107,6 +108,7 @@ export interface VaultList {
   vaults: VaultCard[];
   colors: VaultColor[];
   max_name_chars: number;
+  hide_names: boolean;
 }
 
 /** Where and under which name to create an additional vault. */
@@ -125,6 +127,8 @@ export const addExistingVault = (path: string, name: string, color: VaultColor |
 export const updateVault = (id: string, name: string, color: VaultColor) =>
   invoke<void>("update_vault", { id, name, color });
 export const forgetVault = (id: string) => invoke<void>("forget_vault", { id });
+export const setHideVaultNames = (hide: boolean) =>
+  invoke<VaultStatus>("set_hide_vault_names", { hide });
 export const deleteVault = (id: string, password: string, keyfilePath: string | null, confirmName: string) =>
   invoke<void>("delete_vault", { id, password, keyfilePath, confirmName });
 export const lock = () => invoke<void>("lock");

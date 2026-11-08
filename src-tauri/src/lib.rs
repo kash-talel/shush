@@ -280,9 +280,16 @@ struct VaultStatus {
     kdf: Option<KdfParams>,
     /// Set when a file exists but its header is unreadable.
     error: Option<CmdError>,
+    /// Whether vault names and paths are hidden on the lock screen.
+    hide_names: bool,
 }
 
-fn status_for(entry: Option<&VaultEntry>, path: &Path, unlocked: bool) -> VaultStatus {
+fn status_for(
+    entry: Option<&VaultEntry>,
+    path: &Path,
+    unlocked: bool,
+    hide_names: bool,
+) -> VaultStatus {
     let mut status = VaultStatus {
         id: entry.map(|e| e.id.clone()),
         name: entry.map(|e| e.name.clone()),
@@ -296,6 +303,7 @@ fn status_for(entry: Option<&VaultEntry>, path: &Path, unlocked: bool) -> VaultS
         cipher: None,
         kdf: None,
         error: None,
+        hide_names,
     };
     if entry.is_some() && !status.exists {
         status.error = Some(CmdError::new(
@@ -319,8 +327,13 @@ fn status_for(entry: Option<&VaultEntry>, path: &Path, unlocked: bool) -> VaultS
 #[tauri::command]
 fn vault_status(app: tauri::AppHandle) -> Result<VaultStatus, CmdError> {
     let unlocked = app.state::<VaultState>().is_unlocked();
-    let (entry, path) = selected_vault(&app)?;
-    Ok(status_for(entry.as_ref(), &path, unlocked))
+    let (entry, path, hide_names) = edit_registry(&app, |reg, def| {
+        Ok(match reg.selected_entry() {
+            Some(e) => (Some(e.clone()), e.path.clone(), reg.hide_names),
+            None => (None, def.to_path_buf(), reg.hide_names),
+        })
+    })?;
+    Ok(status_for(entry.as_ref(), &path, unlocked, hide_names))
 }
 
 // ---- Vault list: switch, add, create elsewhere, delete ----------------------
@@ -346,16 +359,18 @@ struct VaultList {
     vaults: Vec<VaultCard>,
     colors: Vec<&'static str>,
     max_name_chars: usize,
+    hide_names: bool,
 }
 
 #[tauri::command]
 fn list_vaults(app: tauri::AppHandle) -> Result<VaultList, CmdError> {
     let (reg, def) = edit_registry(&app, |reg, def| Ok((reg.clone(), def.to_path_buf())))?;
+    let hide_names = reg.hide_names;
     let vaults = reg
         .vaults
         .iter()
         .map(|e| {
-            let s = status_for(Some(e), &e.path, false);
+            let s = status_for(Some(e), &e.path, false, hide_names);
             VaultCard {
                 id: e.id.clone(),
                 name: e.name.clone(),
@@ -373,6 +388,7 @@ fn list_vaults(app: tauri::AppHandle) -> Result<VaultList, CmdError> {
         vaults,
         colors: VAULT_COLORS.to_vec(),
         max_name_chars: vault::registry::MAX_NAME_CHARS,
+        hide_names,
     })
 }
 
@@ -380,11 +396,14 @@ fn list_vaults(app: tauri::AppHandle) -> Result<VaultList, CmdError> {
 #[tauri::command]
 fn select_vault(app: tauri::AppHandle, id: String) -> Result<VaultStatus, CmdError> {
     require_locked(&app)?;
-    let entry = edit_registry(&app, |reg, _| {
+    let (entry, hide_names) = edit_registry(&app, |reg, _| {
         reg.select(&id)?;
-        Ok(reg.get(&id).cloned().expect("just selected"))
+        Ok((
+            reg.get(&id).cloned().expect("just selected"),
+            reg.hide_names,
+        ))
     })?;
-    Ok(status_for(Some(&entry), &entry.path, false))
+    Ok(status_for(Some(&entry), &entry.path, false, hide_names))
 }
 
 /// Validates a location and name for a new vault before the user sets a
@@ -410,13 +429,14 @@ async fn add_existing_vault(
     blocking(move || {
         let p = PathBuf::from(&path);
         vault::read_header(&p)?;
-        let entry = edit_registry(&app, |reg, def| {
+        let (entry, hide_names) = edit_registry(&app, |reg, def| {
             if def.is_file() && vault::registry::same_file(&p, def) {
                 reg.hide_default = false;
             }
-            Ok(reg.add(p.clone(), &name, color.as_deref())?)
+            let entry = reg.add(p.clone(), &name, color.as_deref())?;
+            Ok((entry, reg.hide_names))
         })?;
-        Ok(status_for(Some(&entry), &entry.path, false))
+        Ok(status_for(Some(&entry), &entry.path, false, hide_names))
     })
     .await
 }
@@ -454,6 +474,21 @@ fn forget_vault(app: tauri::AppHandle, id: String) -> Result<(), CmdError> {
         .unwrap_or_else(|e| e.into_inner())
         .succeed(&id);
     Ok(())
+}
+
+/// Toggles or sets whether vault names and paths are hidden on the lock screen.
+#[tauri::command]
+fn set_hide_vault_names(app: tauri::AppHandle, hide: bool) -> Result<VaultStatus, CmdError> {
+    require_locked(&app)?;
+    let (entry, path) = edit_registry(&app, |reg, def| {
+        reg.hide_names = hide;
+        let (entry, path) = match reg.selected_entry() {
+            Some(e) => (Some(e.clone()), e.path.clone()),
+            None => (None, def.to_path_buf()),
+        };
+        Ok((entry, path))
+    })?;
+    Ok(status_for(entry.as_ref(), &path, false, hide))
 }
 
 /// Deletes a vault: its file, backup generation, temp file and attachments
@@ -1613,6 +1648,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             add_existing_vault,
             update_vault,
             forget_vault,
+            set_hide_vault_names,
             delete_vault,
             inspect_keyfile,
             create_vault,
@@ -1705,8 +1741,10 @@ mod tests {
         assert_eq!(v.header().suite, CipherSuite::XChaCha20Poly1305);
         assert_eq!(std::fs::metadata(&key).unwrap().len(), 32);
 
-        let status = status_for(None, &vault_file, false);
+        let status = status_for(None, &vault_file, false, false);
         assert!(status.exists);
+        assert!(!status.hide_names);
+        assert!(status_for(None, &vault_file, false, true).hide_names);
         assert_eq!(status.keyfile_required, Some(true));
         assert!(status.error.is_none());
 
@@ -1790,8 +1828,10 @@ mod tests {
             b"definitely not a vault, just text of some length",
         )
         .unwrap();
-        let status = status_for(None, &vault_file, false);
+        let status = status_for(None, &vault_file, false, false);
         assert!(status.exists);
+        assert!(!status.hide_names);
+        assert!(status_for(None, &vault_file, false, true).hide_names);
         assert_eq!(status.error.unwrap().code, "VAULT_UNREADABLE");
         assert_eq!(
             unlock_blocking(&vault_file, b"pw", None).unwrap_err().code,
