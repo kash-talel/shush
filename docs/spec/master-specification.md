@@ -149,6 +149,10 @@ The vault is stored as a single, self-contained binary file. Any write is execut
 +-------------------------------------------------------------------------+
 ```
 
+> **Superseded:** this is the original v1 layout. The current format is **version 2**, which inserts a
+> 32-byte `SAVE_ID` at 0x6E and derives a fresh payload key from it on every write (issue #2).
+> `docs/FORMAT.md` is normative.
+
 ---
 
 ## 5. In-Memory Data Models & Schema

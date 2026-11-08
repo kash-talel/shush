@@ -6,12 +6,15 @@
 //! NFC(password) ── P ┐
 //! SHA-256(keyfile) ─ K ┼─ Argon2id(params) ─ MasterKey ─ HKDF-SHA256 ─┬─ VEK         (payload AEAD)
 //! vault salt ─────── S ┘                                               └─ canary key  (credential check)
+//!
+//! VEK ─ HKDF-SHA256(salt = SAVE_ID, fresh per write) ─ payload key (format v2, issue #2)
 //! ```
 //!
 //! Design invariants enforced here:
 //! - Every key type is wiped on drop and never prints its bytes in `Debug`.
 //! - Encryption always draws a fresh nonce from the OS CSPRNG; callers cannot
-//!   supply one (issue #2).
+//!   supply one (issue #2). The payload additionally gets a fresh per-save key
+//!   derived from a random `SAVE_ID`, so a repeated nonce is harmless.
 //! - KDF parameters are bounds-checked *before* Argon2 runs, because a hostile
 //!   header must not be able to make us allocate unbounded memory (issue #1).
 //! - The AEAD layer takes AAD from the caller; which header bytes are bound is
@@ -108,7 +111,7 @@ mod tests {
         salt: [u8; SALT_LEN],
         suite: CipherSuite,
         canary: SealedBox,
-        payload: SealedBox,
+        payload: cipher::SealedPayload,
     }
 
     fn create(password: &str, kf: Option<&KeyfileDigest>, suite: CipherSuite) -> Vault {
@@ -131,7 +134,14 @@ mod tests {
         let mk = derive_master_key(password.as_bytes(), kf, &v.salt, &FAST)?;
         let keys = VaultKeys::derive(&mk);
         cipher::verify_canary(v.suite, &keys, &v.canary.nonce, AAD, &v.canary.ciphertext)?;
-        cipher::open_payload(v.suite, &keys, &v.payload.nonce, AAD, &v.payload.ciphertext)
+        cipher::open_payload(
+            v.suite,
+            &keys,
+            Some(&v.payload.save_id),
+            &v.payload.sealed.nonce,
+            AAD,
+            &v.payload.sealed.ciphertext,
+        )
     }
 
     #[test]
@@ -196,7 +206,7 @@ mod tests {
     fn payload_tamper_is_distinguished_from_wrong_credentials() {
         for suite in CipherSuite::ALL {
             let mut v = create("pw", None, suite);
-            v.payload.ciphertext[3] ^= 0x80;
+            v.payload.sealed.ciphertext[3] ^= 0x80;
             // Canary still verifies, so the user is told the *data* is bad,
             // not that they mistyped their password.
             assert_eq!(
