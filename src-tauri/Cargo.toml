@@ -60,6 +60,8 @@ windows-sys = { version = "0.52", features = [
     "Win32_System_Threading",
     # Crash reports exclude heap memory (issue #6).
     "Win32_System_ErrorReporting",
+    # Safe memory scanning for memory hygiene regression tests (issue #59).
+    "Win32_System_Diagnostics_Debug",
 ] }
 # --- Additions ---
 thiserror = "2"

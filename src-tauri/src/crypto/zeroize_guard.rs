@@ -7,17 +7,14 @@
 //! page-locked by `os::memory::LockedBox`.
 
 use core::fmt;
-use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Length in bytes of every symmetric key in shush (256 bits).
 pub const KEY_LEN: usize = 32;
 
 /// Heap buffer for variable-length secrets (passwords, decrypted payloads),
-/// wiped on drop.
-///
-/// Note: growing a `Vec` reallocates and leaves the old allocation unwiped.
-/// Allocate with the final capacity up front wherever possible.
-pub type SecretBytes = Zeroizing<Vec<u8>>;
+/// page-locked with `VirtualLock` (up to 32 MiB) and zeroized on drop (spec §6.1, issue #59).
+pub type SecretBytes = crate::os::memory::LockedBytes;
 
 /// A 256-bit symmetric key, wiped on drop and redacted in `Debug`.
 ///
