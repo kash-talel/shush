@@ -8,8 +8,9 @@
 //! - [`frame`]: 4-byte little-endian length + JSON framing with size caps.
 //! - [`origin`]: exact origin matching (scheme + host + port, IDNA, default
 //!   ports, trailing dots). The extension's own matching is never trusted.
-//! - [`pairing`]: one-time pairing code shown in shush, then an HMAC-SHA256
-//!   session key with a strictly increasing counter (replays are refused).
+//! - [`pairing`]: SPAKE2 PAKE (Ed25519) pairing with an 8-character one-time
+//!   code shown in shush (issue #54), then an HMAC-SHA256 session key with a
+//!   strictly increasing counter (replays are refused).
 //! - [`protocol`]: `hello` / `pair` / `match` / `fill` / `save` / `revoke`.
 //!   Unpaired callers get `hello` and `pair` only. `fill` never returns an
 //!   archived password: the spec's automatic "smart fallback" is dropped

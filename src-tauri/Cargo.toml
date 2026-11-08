@@ -68,8 +68,9 @@ unicode-normalization = "0.1"
 tauri-plugin-single-instance = "2"
 csv = "1"
 base64 = "0.22"
-# Browser bridge (issue #16): request MACs and origin normalization (IDNA, default ports).
+# Browser bridge (issue #16, #54): request MACs, SPAKE2 pairing, origin normalization (IDNA, default ports).
 hmac = "0.12"
+spake2 = "0.4"
 url = "2"
 
 [dev-dependencies]
