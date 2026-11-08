@@ -131,7 +131,7 @@
         {shudder}
         color={vault.color}
         size="clamp(128px, 29vh, 212px)"
-        label={unsealed ? "Vault case (open)" : `Unseal the vault${vault.name ? ` ${vault.name}` : ""}`}
+        label={unsealed ? "Vault case (open)" : `Unseal the vault${vault.name && !vault.hide_names ? ` ${vault.name}` : ""}`}
         expanded={unsealed}
         controls="unlock-form"
         onclick={unsealed ? () => passwordInput?.focus() : unseal}
@@ -142,7 +142,7 @@
     <!-- Sealed: only the case and the prompt. -->
     <div class={["unfold w-full", !unsealed && "open"]} aria-hidden={unsealed} inert={unsealed}>
       <div class="flex flex-col items-center gap-3 pt-7 [@media(max-height:640px)]:pt-4">
-        {#if vault.name}
+        {#if vault.name && !vault.hide_names}
           <p class="font-display text-[17px] leading-none font-bold text-zinc-100">{vault.name}</p>
         {/if}
         <p class="font-mono text-[11px] tracking-[0.08em] text-zinc-400">[ CLICK DISC TO UNSEAL VAULT ]</p>
@@ -170,12 +170,14 @@
     <div id="unlock-form" class={["unfold w-full", unsealed && "open"]} inert={!unsealed}>
       <div>
         <header class="mt-6 mb-5 flex flex-col items-center gap-2 text-center [@media(max-height:640px)]:mt-3 [@media(max-height:640px)]:mb-3">
-          <h1 class="font-display text-[26px] leading-none font-bold tracking-[-0.01em] text-zinc-50">{vault.name ? `Unlock ${vault.name}` : "Unlock vault"}</h1>
-          <!-- Middle-truncate: the directory may shrink, the file name never does. -->
-          <p class="flex max-w-full font-mono text-[10.5px] text-zinc-500" title={vault.path}>
-            <span class="truncate">{vault.path.slice(0, cut + 1)}</span>
-            <span class="shrink-0 text-uv">{vault.path.slice(cut + 1)}</span>
-          </p>
+          <h1 class="font-display text-[26px] leading-none font-bold tracking-[-0.01em] text-zinc-50">{vault.name && !vault.hide_names ? `Unlock ${vault.name}` : "Unlock vault"}</h1>
+          {#if !vault.hide_names}
+            <!-- Middle-truncate: the directory may shrink, the file name never does. -->
+            <p class="flex max-w-full font-mono text-[10.5px] text-zinc-500" title={vault.path}>
+              <span class="truncate">{vault.path.slice(0, cut + 1)}</span>
+              <span class="shrink-0 text-uv">{vault.path.slice(cut + 1)}</span>
+            </p>
+          {/if}
         </header>
 
         <form class="flex flex-col gap-3" onsubmit={submit} novalidate>

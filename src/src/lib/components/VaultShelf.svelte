@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { FolderOpen, Pencil, Plus, Trash2 } from "@lucide/svelte";
+  import { Eye, EyeOff, FolderOpen, Pencil, Plus, Trash2 } from "@lucide/svelte";
   import Spindle from "./Spindle.svelte";
   import VaultFormDialog from "./VaultFormDialog.svelte";
   import DeleteVaultDialog from "./DeleteVaultDialog.svelte";
@@ -8,6 +8,7 @@
   import {
     listVaults,
     selectVault,
+    setHideVaultNames,
     toCmdError,
     vaultStatus,
     type CmdError,
@@ -58,6 +59,19 @@
     onswitch(await vaultStatus());
   }
 
+  async function toggleHideNames() {
+    if (!list) return;
+    error = null;
+    try {
+      const next = !list.hide_names;
+      const status = await setHideVaultNames(next);
+      await reload();
+      onswitch(status);
+    } catch (e) {
+      error = toCmdError(e);
+    }
+  }
+
   onMount(reload);
 </script>
 
@@ -71,7 +85,8 @@
             type="button"
             role="radio"
             aria-checked={on}
-            title={v.error ? `${v.name}: ${v.error.message}` : v.path}
+            aria-label={list.hide_names ? `Vault (${v.color})` : v.name}
+            title={list.hide_names ? `Vault (${v.color})` : (v.error ? `${v.name}: ${v.error.message}` : v.path)}
             onclick={() => pick(v.id)}
             class={["slot", on && "on", !v.exists && "missing"]}
             style:--glow={vaultColor(v.color).glow}
@@ -80,14 +95,18 @@
             }}
           >
             <Spindle size={56} spin="off" color={v.color} />
-            <span class="max-w-[84px] truncate text-[11px] leading-4">{v.name}</span>
+            {#if !list.hide_names}
+              <span class="max-w-[84px] truncate text-[11px] leading-4">{v.name}</span>
+            {/if}
           </button>
         {/each}
         <button type="button" class="slot add" onclick={() => (dialog = "new")} title="New vault">
           <span class="grid size-14 place-items-center rounded-[4px] border border-dashed border-edge">
             <Plus class="size-4" aria-hidden="true" />
           </span>
-          <span class="text-[11px] leading-4">New</span>
+          {#if !list.hide_names}
+            <span class="text-[11px] leading-4">New</span>
+          {/if}
         </button>
       </div>
     {/if}
@@ -103,6 +122,18 @@
           <button type="button" class="act hazardous" onclick={() => (dialog = "delete")}><Trash2 aria-hidden="true" /> Delete</button>
         {/if}
       {/if}
+      <button
+        type="button"
+        class="act"
+        onclick={toggleHideNames}
+        title={list.hide_names ? "Show vault names and paths on lock screen" : "Hide vault names and paths on lock screen"}
+      >
+        {#if list.hide_names}
+          <Eye aria-hidden="true" /> Show names
+        {:else}
+          <EyeOff aria-hidden="true" /> Hide names
+        {/if}
+      </button>
     </div>
 
     {#if error}

@@ -40,6 +40,7 @@
       cipher: null,
       kdf: null,
       error: null,
+      hide_names: status?.hide_names ?? false,
     },
   );
 

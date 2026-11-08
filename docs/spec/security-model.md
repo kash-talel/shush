@@ -127,6 +127,34 @@ Titles, usernames, URLs and notes come from untrusted sources (CSV, backups, bro
 
 ---
 
+## 4.4 Multi-Vault Registry & Local Metadata Exposure (issue #44)
+
+The multi-vault architecture introduces `%APPDATA%\com.shush.vault\vaults.json`. It maintains the list of registered vaults known to the workstation: each vault's unique random identifier, display name (e.g., "Personal", "Work"), absolute filesystem path (including removable USB drives), assigned disc colour, the last-used vault selection, and the `hide_names` lock-screen privacy flag.
+
+### 4.4.1 Threat Boundary & Metadata Classification
+- **Non-Secret Local Metadata**: `vaults.json` contains no cryptographic keys, salts, Argon2id parameters, master passwords, or item payloads. The exposure matches the industry standard for password managers: KeePass's recent-files list (`%APPDATA%\KeePass\KeePass.config.xml`), 1Password's local account registry, or Windows shell MRU / Jump Lists. Anyone with access to the Windows account or an unencrypted filesystem backup learns that vaults exist and where they reside, but gains no advantage toward decrypting vault contents.
+- **Evaluation and Rejection of DPAPI Registry Encryption**:
+  - Encrypting `vaults.json` via DPAPI (`CryptProtectData` with `CurrentUser`) was explicitly evaluated and rejected. As detailed in §2, DPAPI provides zero defense against malware running in the user's logged-in session: any process running in the user's security token can silently invoke `CryptUnprotectData` without user notification or authentication.
+  - Furthermore, DPAPI master keys are tied to the local Windows user profile SID. Encrypting `vaults.json` under DPAPI would break vault portability across machines, render filesystem-level backups of `%APPDATA%` unrecoverable upon restore to a new installation, and cause permanent registry corruption if the user's Windows profile SID changes.
+  - Relying on DPAPI for non-secret metadata would create a misleading facade of security while introducing operational brittleness.
+
+### 4.4.2 Architectural Separation from Duress Vaults (Phase 8a)
+- **Container-Level vs. Registry-Level Deniability**: Plausible deniability under physical duress is implemented **strictly at the container level** within format v3 (`docs/FORMAT.md`, issue #8). A single `.shush` file contains two fixed-size slots with indistinguishable uniform random padding, identical container length, and constant-work unlock timing across both slots.
+- **Decoys Have No Registry Footprint**: Unlocking a vault with a duress password opens the secondary decoy slot inside the *same* `.shush` file. Decoy vaults have no entry in `vaults.json` and never appear on the vault shelf.
+- **Anti-Pattern Warning**: Creating multiple separate `.shush` files on the shelf (e.g. creating a second vault titled "Decoy") provides **zero plausible deniability**, as `vaults.json` explicitly lists all registered files. The security model explicitly warns users that distinct shelf entries are separate vaults, not deniable decoys.
+
+### 4.4.3 Lock Screen Visual Privacy & Shoulder-Surfing Mitigation
+- **Threat Vector**: An observer standing near an unattended, locked workstation (or viewing a screen-share) can read vault display names and file paths on the locked unlock screen and shelf rack.
+- **Implemented Mitigation (`hide_names`)**:
+  - `shush` provides a lock-screen privacy toggle ("Hide names" / "Show names") persisted in `vaults.json`.
+  - When enabled:
+    - Vault display names and filesystem paths are suppressed from the locked screen.
+    - The shelf rack renders only colored disc spindles without textual names, and tooltips/ARIA labels use generic color identifiers (e.g. `Vault (crimson)`).
+    - The unsealed credential form displays a generic "Unlock vault" header without exposing directory or filename paths.
+  - Non-default vaults can also be removed from the shelf registry at any time ("Forget vault" in edit mode) without deleting the underlying file, clearing paths from `%APPDATA%`.
+
+---
+
 ## 5. Summary Recommendation for "shush"
 
 1. **Default Mode**: Master Password (Argon2id) for vault creation and disaster recovery.

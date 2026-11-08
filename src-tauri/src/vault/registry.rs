@@ -45,6 +45,9 @@ pub struct Registry {
     /// Id of the vault the unlock screen shows (the last one used).
     #[serde(default)]
     pub selected: Option<String>,
+    /// Whether to hide vault names and paths on the locked screen (colours only).
+    #[serde(default)]
+    pub hide_names: bool,
 }
 
 fn one() -> u32 {
@@ -554,7 +557,10 @@ impl DeleteThrottle {
             return None;
         }
         let secs = (BASE_WAIT_SECS << (entry.failures - FREE_ATTEMPTS).min(10)).min(MAX_WAIT_SECS);
-        entry.deadline_ticks = Some(now.monotonic_millis.saturating_add(secs.saturating_mul(1000)));
+        entry.deadline_ticks = Some(
+            now.monotonic_millis
+                .saturating_add(secs.saturating_mul(1000)),
+        );
         entry.deadline_wall = Some(now.wall_secs.saturating_add(secs));
         let _ = self.save();
         Some(secs)
@@ -723,6 +729,28 @@ mod tests {
         assert_eq!(names, ["Personal", "A", "a 2"]);
         assert_eq!(reg.vaults[1].color, "crimson");
         assert_eq!(reg.selected.as_deref(), Some(reg.vaults[0].id.as_str()));
+    }
+
+    #[test]
+    fn hide_names_defaults_to_false_and_roundtrips() {
+        let dir = tempfile::tempdir().unwrap();
+        let def = dir.path().join("vault.shush");
+        touch(&def);
+
+        // Absence in JSON deserializes as false.
+        let json = serde_json::json!({
+            "version": 1,
+            "vaults": []
+        });
+        std::fs::write(dir.path().join(REGISTRY_FILE), json.to_string()).unwrap();
+        let mut reg = Registry::load(dir.path(), &def);
+        assert!(!reg.hide_names);
+
+        // Setting hide_names to true persists across save and load.
+        reg.hide_names = true;
+        reg.save(dir.path()).unwrap();
+        let reloaded = Registry::load(dir.path(), &def);
+        assert!(reloaded.hide_names);
     }
 
     #[test]

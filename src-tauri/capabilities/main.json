@@ -15,6 +15,7 @@
     "allow-add-existing-vault",
     "allow-update-vault",
     "allow-forget-vault",
+    "allow-set-hide-vault-names",
     "allow-delete-vault",
     "allow-inspect-keyfile",
     "allow-create-vault",
