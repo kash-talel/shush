@@ -17,6 +17,7 @@
     "allow-forget-vault",
     "allow-set-hide-vault-names",
     "allow-delete-vault",
+    "allow-show-in-explorer",
     "allow-inspect-keyfile",
     "allow-create-vault",
     "allow-unlock",

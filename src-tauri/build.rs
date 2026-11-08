@@ -13,6 +13,7 @@ const COMMANDS: &[&str] = &[
     "forget_vault",
     "set_hide_vault_names",
     "delete_vault",
+    "show_in_explorer",
     "inspect_keyfile",
     "create_vault",
     "unlock",

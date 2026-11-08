@@ -39,6 +39,7 @@ export interface VaultStatus {
   kdf: KdfParams | null;
   error: CmdError | null;
   hide_names: boolean;
+  can_delete: boolean;
 }
 
 /** Counts only: item contents never cross the IPC boundary here. */
@@ -102,6 +103,7 @@ export interface VaultCard {
   exists: boolean;
   keyfile_required: boolean | null;
   error: CmdError | null;
+  can_delete: boolean;
 }
 
 export interface VaultList {
@@ -131,6 +133,7 @@ export const setHideVaultNames = (hide: boolean) =>
   invoke<VaultStatus>("set_hide_vault_names", { hide });
 export const deleteVault = (id: string, password: string, keyfilePath: string | null, confirmName: string) =>
   invoke<void>("delete_vault", { id, password, keyfilePath, confirmName });
+export const showInExplorer = (id: string) => invoke<void>("show_in_explorer", { id });
 export const lock = () => invoke<void>("lock");
 export const showSpotlight = () => invoke<void>("show_spotlight");
 
