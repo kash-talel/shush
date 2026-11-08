@@ -6,12 +6,6 @@
 
 <br><br>
 
-<a href="https://kash-talel.github.io/shush/">
-  <img src=".github/logo.png" alt="shush logo" width="120" height="120" style="border-radius: 24px;">
-</a>
-
-<br><br>
-
 ### Offline-first, zero-knowledge password manager & 2FA authenticator for Windows.
 
 **Tauri v2 · Rust · Svelte 5 · Tailwind v4**<br>
