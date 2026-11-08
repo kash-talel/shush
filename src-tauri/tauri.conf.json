@@ -14,6 +14,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "shush",
         "width": 1100,
         "height": 720,
@@ -26,6 +27,7 @@
       },
       {
         "label": "spotlight",
+        "create": false,
         "title": "shush quick search",
         "width": 640,
         "height": 440,
