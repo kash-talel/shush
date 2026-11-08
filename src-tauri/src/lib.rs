@@ -1173,16 +1173,76 @@ fn is_app_url(url: &tauri::Url) -> bool {
     }
 }
 
+/// The app identifier for debug builds. Keys on `com.shush.vault.debug`, and
+/// when a scratch vault path is set, incorporates a normalized hash of that path
+/// so independent test runs do not hand off to each other (issue #56).
+pub fn debug_app_identifier(vault_path: Option<&Path>) -> String {
+    match vault_path {
+        Some(p) => {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            p.to_string_lossy()
+                .replace('\\', "/")
+                .to_lowercase()
+                .hash(&mut hasher);
+            format!("com.shush.vault.debug-{:016x}", hasher.finish())
+        }
+        None => "com.shush.vault.debug".to_string(),
+    }
+}
+
+/// The WebView2 user data directory for the windows. In debug builds, avoids
+/// clashing with an installed shush instance (issue #56).
+fn webview_data_dir() -> Option<PathBuf> {
+    #[cfg(debug_assertions)]
+    {
+        resolve_webview_data_dir(
+            std::env::var_os("WEBVIEW2_USER_DATA_FOLDER"),
+            std::env::var_os("SHUSH_VAULT_PATH"),
+        )
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        None
+    }
+}
+
+/// Computes the debug WebView2 data directory from environment variables:
+/// 1. An explicit `WEBVIEW2_USER_DATA_FOLDER` takes precedence.
+/// 2. If `SHUSH_VAULT_PATH` is set, WebView2 uses a `webview2` scratch folder
+///    alongside the scratch vault.
+/// 3. Otherwise returns `None`, falling back to Tauri's local data directory
+///    (which uses the debug identifier in debug builds).
+fn resolve_webview_data_dir(
+    wv_env: Option<std::ffi::OsString>,
+    vault_env: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    if let Some(folder) = wv_env {
+        return Some(PathBuf::from(folder));
+    }
+    if let Some(p) = vault_env {
+        let p = PathBuf::from(p);
+        let dir = p.parent().map(Path::to_path_buf).unwrap_or_default();
+        return Some(dir.join("webview2"));
+    }
+    None
+}
+
 /// Builds the windows declared in `tauri.conf.json` (they have `create: false`)
 /// with navigation locked to the app and every popup refused: injected script
 /// can neither leave the bundle nor open a page that phishes from inside a
 /// trusted shush window (issue #20).
 fn create_windows(app: &tauri::App) -> tauri::Result<()> {
+    let data_dir = webview_data_dir();
     for cfg in &app.config().app.windows {
-        tauri::WebviewWindowBuilder::from_config(app.handle(), cfg)?
+        let mut builder = tauri::WebviewWindowBuilder::from_config(app.handle(), cfg)?
             .on_navigation(is_app_url)
-            .on_new_window(|_url, _features| tauri::webview::NewWindowResponse::Deny)
-            .build()?;
+            .on_new_window(|_url, _features| tauri::webview::NewWindowResponse::Deny);
+        if let Some(ref dir) = data_dir {
+            let _ = std::fs::create_dir_all(dir);
+            builder = builder.data_directory(dir.clone());
+        }
+        builder.build()?;
     }
     Ok(())
 }
@@ -2214,5 +2274,41 @@ mod tests {
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .collect();
         assert_eq!(files.len(), 2, "unexpected capability file: {files:?}");
+    }
+
+    #[test]
+    fn debug_app_identifier_isolation() {
+        assert_eq!(debug_app_identifier(None), "com.shush.vault.debug");
+        let p1 = Path::new("C:\\temp\\scratch\\vault.shush");
+        let p2 = Path::new("c:/temp/scratch/vault.shush");
+        let id1 = debug_app_identifier(Some(p1));
+        let id2 = debug_app_identifier(Some(p2));
+        assert!(id1.starts_with("com.shush.vault.debug-"));
+        assert_eq!(
+            id1, id2,
+            "path normalization should yield identical identifiers"
+        );
+
+        let p3 = Path::new("C:\\temp\\other\\vault.shush");
+        let id3 = debug_app_identifier(Some(p3));
+        assert_ne!(
+            id1, id3,
+            "different scratch vaults get distinct identifiers"
+        );
+    }
+
+    #[test]
+    fn resolve_webview_data_dir_precedence() {
+        let explicit = resolve_webview_data_dir(
+            Some("C:\\custom\\wv2".into()),
+            Some("C:\\scratch\\vault.shush".into()),
+        );
+        assert_eq!(explicit, Some(PathBuf::from("C:\\custom\\wv2")));
+
+        let from_vault = resolve_webview_data_dir(None, Some("C:\\scratch\\vault.shush".into()));
+        assert_eq!(from_vault, Some(PathBuf::from("C:\\scratch\\webview2")));
+
+        let none = resolve_webview_data_dir(None, None);
+        assert_eq!(none, None);
     }
 }

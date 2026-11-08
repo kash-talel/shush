@@ -34,6 +34,22 @@ describes in its header comment (for example "vault: e2e7, password only").
 `SHUSH_VAULT_PATH` is compiled out of release builds. The CDP flag only affects the process it is
 set for. Neither changes anything for a normal install.
 
+### Running side-by-side with an installed shush
+
+Debug builds (`npx tauri dev` or `cargo run`) can safely run while your installed `shush` is
+running in the background:
+
+- **Single-instance isolation**: Debug builds key their single-instance mutex on a distinct identifier
+  (`com.shush.vault.debug` or `com.shush.vault.debug-<hash>` when `SHUSH_VAULT_PATH` is set), so they
+  never hand off to the installed app's `com.shush.vault` or focus your real vault window. Automated
+  testing can also bypass the single-instance plugin entirely by setting `$env:SHUSH_NO_SINGLE_INSTANCE = "1"`.
+- **WebView2 data directory isolation**: When `SHUSH_VAULT_PATH` is set, WebView2 user data is directed
+  to a `webview2` scratch folder alongside the scratch vault (e.g. `$env:TEMP\shush-e2e\webview2`).
+  You can also override this explicitly with `$env:WEBVIEW2_USER_DATA_FOLDER`. Unset debug builds use
+  `%LOCALAPPDATA%\com.shush.vault.debug`. This prevents `0x8007139F` collisions with the installed instance
+  when browser arguments differ.
+- Release builds strictly use `com.shush.vault` and compile out these debug overrides.
+
 ## What the scripts deliberately do not do
 
 - **Press the global hotkey or type keys.** That would inject input into the tester's session.
