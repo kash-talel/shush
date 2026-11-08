@@ -4,6 +4,10 @@
 //! A generation counter makes the transition race-free: `lock()` bumps the
 //! generation, and an unlock that started before it is discarded (and wiped)
 //! instead of resurrecting an unlocked vault the user just locked.
+//!
+//! Every mutation and its save run inside [`VaultState::with_mut`], so
+//! `lock()` (including the suspend and idle paths) waits for an in-flight
+//! save to finish and never wipes keys out from under it.
 
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
@@ -60,6 +64,12 @@ impl VaultState {
         ticket: UnlockTicket,
         unlocked: Unlocked,
     ) -> Result<(), Superseded> {
+        // A vault whose encryption key was never derived (or was already
+        // wiped) must not become the live state (issue #10).
+        debug_assert!(
+            !unlocked.vault.keys().vault_encryption_key().is_all_zero(),
+            "unlocked vault has an all-zero encryption key"
+        );
         let mut g = self.guard();
         if g.generation != ticket.0 {
             return Err(Superseded);
@@ -143,6 +153,39 @@ mod tests {
         s.lock(); // user hits Ctrl+L while Argon2 is running
         assert_eq!(s.finish_unlock(t, unlocked()), Err(Superseded));
         assert!(!s.is_unlocked());
+    }
+
+    #[test]
+    fn lock_waits_for_an_in_flight_mutation() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{mpsc, Arc};
+
+        let s = Arc::new(VaultState::default());
+        let t = s.begin_unlock();
+        s.finish_unlock(t, unlocked()).unwrap();
+
+        // A mutation (apply + save) is in progress while `lock()` is requested.
+        let finished = Arc::new(AtomicBool::new(false));
+        let (started_tx, started_rx) = mpsc::channel();
+        let writer = {
+            let s = Arc::clone(&s);
+            let finished = Arc::clone(&finished);
+            std::thread::spawn(move || {
+                s.with_mut(|_| {
+                    started_tx.send(()).unwrap();
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    finished.store(true, Ordering::SeqCst);
+                    42
+                })
+            })
+        };
+        started_rx.recv().unwrap();
+        s.lock();
+        // `lock()` could only take the state after the mutation released it, so
+        // the mutation never observes a wiped key or vault.
+        assert!(finished.load(Ordering::SeqCst));
+        assert!(!s.is_unlocked());
+        assert_eq!(writer.join().unwrap(), Some(42));
     }
 
     #[test]
