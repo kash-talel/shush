@@ -208,14 +208,40 @@ mod tests {
 
     #[test]
     fn try_acquire_returns_none_on_read_only_location() {
-        #[cfg(windows)]
-        let readonly_path = Path::new(r"C:\Windows\System32\shush_test_ro_vault.shush");
-        #[cfg(not(windows))]
-        let readonly_path = Path::new("/proc/shush_test_ro_vault.shush");
+        let dir = tempfile::tempdir().unwrap();
+        let readonly_vault = dir.path().join("shush_test_ro_vault.shush");
 
-        let res = VaultLock::try_acquire(readonly_path).unwrap();
+        #[cfg(windows)]
+        {
+            // Deny write on directory so creating a sibling lock file fails with access denied
+            let status = std::process::Command::new("icacls")
+                .arg(dir.path())
+                .arg("/deny")
+                .arg("*S-1-1-0:(W)")
+                .status();
+            if status.is_err() || !status.unwrap().success() {
+                return;
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let mut perms = std::fs::metadata(dir.path()).unwrap().permissions();
+            perms.set_readonly(true);
+            let _ = std::fs::set_permissions(dir.path(), perms);
+        }
+
+        let res = VaultLock::try_acquire(&readonly_vault).unwrap();
         assert!(res.is_none());
-        assert!(VaultLock::acquire(readonly_path).is_err());
+        assert!(VaultLock::acquire(&readonly_vault).is_err());
+
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("icacls")
+                .arg(dir.path())
+                .arg("/remove:d")
+                .arg("*S-1-1-0")
+                .status();
+        }
     }
 
     #[cfg(windows)]
