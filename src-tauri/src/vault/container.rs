@@ -420,7 +420,7 @@ fn rename_with_retry(from: &Path, to: &Path) -> Result<(), VaultError> {
     const ATTEMPTS: u32 = 10;
     let mut attempt = 0;
     loop {
-        match fs::rename(from, to) {
+        match crate::os::replace::replace_file(from, to) {
             Ok(()) => return Ok(()),
             Err(e) if attempt + 1 < ATTEMPTS && is_transient(&e) => {
                 attempt += 1;
