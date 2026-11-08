@@ -61,22 +61,85 @@
     ::selection { background: rgba(6, 182, 212, 0.35); }
     .shimmer-text { background: linear-gradient(135deg, #22d3ee 0%, #c084fc 50%, #f472b6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
     .prism-badge { background: linear-gradient(135deg, rgba(6, 182, 212, 0.1), rgba(168, 85, 247, 0.1)); border: 1px solid rgba(6, 182, 212, 0.3); }
+    .perspective-1000 {
+      perspective: 1200px;
+    }
+    .case-container {
+      position: relative;
+      width: 220px;
+      height: 220px;
+      margin: 0 auto;
+      transform-style: preserve-3d;
+      transform: rotateX(8deg) rotateY(-4deg);
+      transition: transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @media (min-width: 640px) {
+      .case-container {
+        width: 260px;
+        height: 260px;
+      }
+    }
+    .case-container:hover {
+      transform: rotateX(4deg) rotateY(0deg) scale(1.04);
+    }
+    .case-tray {
+      position: absolute;
+      inset: 0;
+      border-radius: 6px;
+      background-image: url('case-tray.png');
+      background-size: cover;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.85), 0 0 40px rgba(6, 182, 212, 0.25);
+    }
+    .case-disc {
+      position: absolute;
+      width: 84.5%;
+      height: 84.5%;
+      top: 7.75%;
+      left: 7.75%;
+      border-radius: 50%;
+      filter: drop-shadow(0 4px 18px rgba(0, 0, 0, 0.8));
+    }
     @keyframes cd-rotation {
       from { transform: rotate(0deg); }
       to { transform: rotate(360deg); }
     }
     .cd-spin {
-      animation: cd-rotation 20s linear infinite;
+      animation: cd-rotation 18s linear infinite;
       will-change: transform;
     }
-    .cd-spin:hover {
+    .cd-spin:hover, .case-container:hover .cd-spin {
       animation-duration: 4.5s;
     }
     .cd-spin.paused {
       animation-play-state: paused;
     }
-    .prism-aura {
-      background: radial-gradient(circle, rgba(6, 182, 212, 0.25) 0%, rgba(168, 85, 247, 0.18) 45%, rgba(236, 72, 153, 0.1) 70%, transparent 100%);
+    .case-lid {
+      position: absolute;
+      inset: 0;
+      border-radius: 6px;
+      background-image: url('case-lid.png');
+      background-size: cover;
+      transform-origin: 0% 50%;
+      transform-style: preserve-3d;
+      transform: rotateY(-58deg);
+      transition: transform 0.9s cubic-bezier(0.2, 0.9, 0.2, 1), box-shadow 0.9s ease;
+      box-shadow: 15px 20px 45px rgba(0, 0, 0, 0.7);
+    }
+    .case-lid::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 6px;
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.22) 0%, transparent 45%, rgba(255, 255, 255, 0.08) 60%, transparent 100%);
+      pointer-events: none;
+    }
+    .case-container:hover .case-lid {
+      transform: rotateY(-82deg);
+      box-shadow: 25px 30px 60px rgba(0, 0, 0, 0.85);
+    }
+    .case-container.closed .case-lid {
+      transform: rotateY(0deg);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
     }
   </style>
 </head>
@@ -116,24 +179,35 @@
       <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-gradient-to-tr from-cyan-500/10 via-fuchsia-500/10 to-transparent rounded-full blur-[120px]"></div>
     </div>
     <div class="max-w-4xl mx-auto px-6 text-center relative fade-in">
-      <!-- Borderless Animated Spinning CD -->
-      <div class="inline-block mb-8 relative group cursor-pointer" onclick="toggleSpin()" title="Click to pause/spin CD">
-        <!-- Rotating holographic backdrop glow -->
-        <div class="absolute -inset-6 prism-aura rounded-full blur-2xl group-hover:scale-125 transition-transform duration-700 opacity-90 animate-pulse pointer-events-none"></div>
-        
-        <!-- Spinning CD disc without borders -->
-        <div class="relative w-36 h-36 sm:w-44 sm:h-44 mx-auto select-none">
-          <img src="cd-512.png" 
-               alt="shush spinning cd" 
-               id="hero-cd"
-               class="w-full h-full object-contain rounded-full cd-spin transition-transform duration-500 drop-shadow-[0_12px_40px_rgba(6,182,212,0.4)] group-hover:scale-105 group-hover:drop-shadow-[0_16px_50px_rgba(168,85,247,0.55)]">
+      <!-- 3D Interactive Opening Jewel Case with Spinning CD -->
+      <div class="inline-block mb-8 relative select-none">
+        <!-- Ambient Prism Aura Glow behind case -->
+        <div class="absolute -inset-8 bg-gradient-to-tr from-cyan-500/20 via-purple-600/20 to-red-500/20 rounded-full blur-3xl opacity-75 pointer-events-none"></div>
+
+        <div class="relative perspective-1000 group cursor-pointer" onclick="toggleCase()" id="case-wrapper" title="Click to open / close case">
+          
+          <!-- Jewel Case Container in 3D -->
+          <div class="case-container" id="jewel-case-box">
+            
+            <!-- LAYER 1: Back Jewel Case Tray (Base) -->
+            <div class="case-tray"></div>
+
+            <!-- LAYER 2: Spinning CD Disc (Sitting inside the tray) -->
+            <img src="cd-512.png" 
+                 alt="shush spinning cd" 
+                 id="hero-cd"
+                 class="case-disc cd-spin">
+
+            <!-- LAYER 3: Crystal Front Lid (Hinged on the left, swings open in 3D!) -->
+            <div class="case-lid" id="case-lid"></div>
+          </div>
         </div>
 
-        <!-- Drive status indicator -->
-        <div class="mt-3 flex items-center justify-center gap-1.5 opacity-70 group-hover:opacity-100 transition-opacity">
-          <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
-          <span class="mono text-[11px] uppercase tracking-widest text-zinc-400 group-hover:text-cyan-300 font-medium" id="spin-status">
-            [ 700MB · 52X DRIVE · CLICK TO PAUSE ]
+        <!-- Interactive Drive / Case Status Indicator -->
+        <div class="mt-4 flex items-center justify-center gap-2 opacity-80 hover:opacity-100 transition-opacity cursor-pointer" onclick="toggleCase()">
+          <span class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
+          <span class="mono text-[11px] uppercase tracking-widest text-zinc-400 hover:text-cyan-300 font-medium" id="case-status">
+            [ JEWEL CASE: OPEN · DISK: SPINNING · CLICK TO TOGGLE ]
           </span>
         </div>
       </div>
@@ -512,15 +586,17 @@
     document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
 
     // Copy code
-        function toggleSpin() {
-      const cd = document.getElementById('hero-cd');
-      const status = document.getElementById('spin-status');
-      if (cd) {
-        cd.classList.toggle('paused');
+    let isCaseOpen = true;
+    function toggleCase() {
+      const box = document.getElementById('jewel-case-box');
+      const status = document.getElementById('case-status');
+      if (box) {
+        box.classList.toggle('closed');
+        isCaseOpen = !box.classList.contains('closed');
         if (status) {
-          status.textContent = cd.classList.contains('paused') 
-            ? '[ DRIVE PAUSED · CLICK TO SPIN ]' 
-            : '[ 700MB · 52X DRIVE · CLICK TO PAUSE ]';
+          status.textContent = isCaseOpen 
+            ? '[ JEWEL CASE: OPEN · DISK: SPINNING · CLICK TO TOGGLE ]' 
+            : '[ JEWEL CASE: CLOSED · CLICK TO OPEN ]';
         }
       }
     }
