@@ -1771,7 +1771,10 @@ mod tests {
         let end = start + build[start..].find("];").unwrap();
         let mut declared = quoted(&build[start..end]);
         declared.sort();
-        assert_eq!(handler, declared, "build.rs COMMANDS out of sync with generate_handler!");
+        assert_eq!(
+            handler, declared,
+            "build.rs COMMANDS out of sync with generate_handler!"
+        );
 
         let caps = |name: &str| -> Vec<String> {
             let text = std::fs::read_to_string(root.join("capabilities").join(name)).unwrap();
