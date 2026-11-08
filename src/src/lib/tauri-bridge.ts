@@ -87,8 +87,61 @@ export const createVault = (
   cipherId: number,
   target: NewVaultTarget | null = null,
 ) => invoke<VaultSummary>("create_vault", { password, keyfile, cipherId, target });
+
+/**
+ * Binary framing for unlock payload:
+ * Byte 0: flags (bit 0 = has vaultId, bit 1 = has keyfilePath)
+ * [vaultId length: u16 LE][vaultId UTF-8] (if bit 0 set)
+ * [keyfilePath length: u16 LE][keyfilePath UTF-8] (if bit 1 set)
+ * [password UTF-8]
+ *
+ * Sent as a raw byte array (Uint8Array) so Tauri receives `InvokeBody::Raw`
+ * and wipes the IPC buffer immediately without intermediate JSON String copies (issue #59).
+ */
+export function encodeUnlockPayload(
+  password: string,
+  keyfilePath: string | null,
+  vaultId: string | null,
+): Uint8Array {
+  const enc = new TextEncoder();
+  const pw = enc.encode(password);
+  const kf = keyfilePath ? enc.encode(keyfilePath) : null;
+  const id = vaultId ? enc.encode(vaultId) : null;
+
+  let flags = 0;
+  let len = 1;
+  if (id) {
+    flags |= 1;
+    len += 2 + id.length;
+  }
+  if (kf) {
+    flags |= 2;
+    len += 2 + kf.length;
+  }
+  len += pw.length;
+
+  const buf = new Uint8Array(len);
+  let off = 0;
+  buf[off++] = flags;
+  const view = new DataView(buf.buffer);
+  if (id) {
+    view.setUint16(off, id.length, true);
+    off += 2;
+    buf.set(id, off);
+    off += id.length;
+  }
+  if (kf) {
+    view.setUint16(off, kf.length, true);
+    off += 2;
+    buf.set(kf, off);
+    off += kf.length;
+  }
+  buf.set(pw, off);
+  return buf;
+}
+
 export const unlock = (password: string, keyfilePath: string | null, vaultId: string | null) =>
-  invoke<VaultSummary>("unlock", { password, keyfilePath, vaultId });
+  invoke<VaultSummary>("unlock", encodeUnlockPayload(password, keyfilePath, vaultId));
 /** Reloads the active vault from disk without locking (issue #49). */
 export const reloadVault = (password?: string, keyfilePath?: string) =>
   invoke<VaultSummary>("reload_vault", { password: password ?? null, keyfilePath: keyfilePath ?? null });

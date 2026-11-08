@@ -303,7 +303,7 @@ impl OpenVault {
             Parsed::Single(container::parse(&bytes)?)
         };
 
-        let decrypt_with_keys = |keys: &VaultKeys| -> Result<(Zeroizing<Vec<u8>>, SlotState), VaultError> {
+        let decrypt_with_keys = |keys: &VaultKeys| -> Result<(SecretBytes, SlotState), VaultError> {
             match &parsed {
                 Parsed::Slots(f) => {
                     let (index, h) = f.find_slot(keys)?;
@@ -600,9 +600,9 @@ pub(crate) fn encode_json<T: serde::Serialize>(data: &T) -> Result<SecretBytes, 
     let ser_err = |_| VaultError::CorruptPayload("serialization failed");
     let mut count = Count(0);
     serde_json::to_writer(&mut count, data).map_err(ser_err)?;
-    let mut json = SecretBytes::new(Vec::with_capacity(count.0));
+    let mut json = SecretBytes::with_capacity(count.0);
     let cap = json.capacity();
-    serde_json::to_writer(&mut *json, data).map_err(ser_err)?;
+    serde_json::to_writer(&mut json, data).map_err(ser_err)?;
     debug_assert_eq!(json.capacity(), cap, "JSON buffer reallocated");
     let compressed = Zeroizing::new(
         zstd::bulk::compress(&json, ZSTD_LEVEL)
@@ -610,7 +610,7 @@ pub(crate) fn encode_json<T: serde::Serialize>(data: &T) -> Result<SecretBytes, 
     );
     let framed_len = 4 + compressed.len();
     let total = padme(framed_len).max(MIN_PADDED);
-    let mut out = SecretBytes::new(Vec::with_capacity(total));
+    let mut out = SecretBytes::with_capacity(total);
     out.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
     out.extend_from_slice(&compressed);
     out.resize(total, 0);
@@ -638,11 +638,14 @@ pub(crate) fn decode_json<T: serde::de::DeserializeOwned>(
     if size > MAX_DECOMPRESSED {
         return Err(VaultError::TooLarge);
     }
-    // Exact capacity from the frame header: no reallocation, no stale copies.
-    let json = Zeroizing::new(
-        zstd::bulk::decompress(compressed, size as usize)
-            .map_err(|_| VaultError::CorruptPayload("decompression failed"))?,
-    );
+    // Exact capacity in page-locked memory: no reallocation, no stale copies (issue #59).
+    let mut json = SecretBytes::with_capacity(size as usize);
+    json.resize(size as usize, 0);
+    let written = zstd::bulk::decompress_to_buffer(compressed, json.as_mut_slice())
+        .map_err(|_| VaultError::CorruptPayload("decompression failed"))?;
+    if written != size as usize {
+        json.truncate(written);
+    }
     serde_json::from_slice(&json).map_err(|_| VaultError::CorruptPayload("invalid JSON"))
 }
 

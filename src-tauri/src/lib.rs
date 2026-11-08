@@ -951,14 +951,112 @@ fn unlock_blocking(
     Ok(OpenVault::unlock(&bytes, password, digest.as_ref())?)
 }
 
+struct ParsedUnlockRequest {
+    password: os::memory::LockedBytes,
+    keyfile_path: Option<String>,
+    vault_id: Option<String>,
+}
+
+fn parse_unlock_request(body: &tauri::ipc::InvokeBody) -> Result<ParsedUnlockRequest, CmdError> {
+    match body {
+        tauri::ipc::InvokeBody::Raw(bytes) => {
+            let slice = bytes.as_slice();
+            if slice.is_empty() {
+                return Err(CmdError::new("INVALID_INPUT", "Unlock payload is empty."));
+            }
+            let flags = slice[0];
+            let mut off = 1;
+
+            let vault_id = if (flags & 1) != 0 {
+                if slice.len() < off + 2 {
+                    return Err(CmdError::new(
+                        "INVALID_INPUT",
+                        "Truncated vault_id in unlock payload.",
+                    ));
+                }
+                let len = u16::from_le_bytes([slice[off], slice[off + 1]]) as usize;
+                off += 2;
+                if slice.len() < off + len {
+                    return Err(CmdError::new(
+                        "INVALID_INPUT",
+                        "Truncated vault_id string in unlock payload.",
+                    ));
+                }
+                let s = std::str::from_utf8(&slice[off..off + len])
+                    .map_err(|_| CmdError::new("INVALID_INPUT", "Invalid UTF-8 in vault_id."))?
+                    .to_string();
+                off += len;
+                Some(s)
+            } else {
+                None
+            };
+
+            let keyfile_path = if (flags & 2) != 0 {
+                if slice.len() < off + 2 {
+                    return Err(CmdError::new(
+                        "INVALID_INPUT",
+                        "Truncated keyfile_path in unlock payload.",
+                    ));
+                }
+                let len = u16::from_le_bytes([slice[off], slice[off + 1]]) as usize;
+                off += 2;
+                if slice.len() < off + len {
+                    return Err(CmdError::new(
+                        "INVALID_INPUT",
+                        "Truncated keyfile_path string in unlock payload.",
+                    ));
+                }
+                let s = std::str::from_utf8(&slice[off..off + len])
+                    .map_err(|_| CmdError::new("INVALID_INPUT", "Invalid UTF-8 in keyfile_path."))?
+                    .to_string();
+                off += len;
+                Some(s)
+            } else {
+                None
+            };
+
+            let pw_slice = &slice[off..];
+            let password = os::memory::LockedBytes::from_slice(pw_slice);
+
+            // Wiping Tauri's InvokeBody::Raw buffer immediately ensures no plaintext
+            // master password remains in Tauri's intermediate heap (issue #59).
+            os::memory::wipe_ipc_buffer(bytes);
+
+            Ok(ParsedUnlockRequest {
+                password,
+                keyfile_path,
+                vault_id,
+            })
+        }
+        tauri::ipc::InvokeBody::Json(val) => {
+            #[derive(serde::Deserialize)]
+            struct JsonUnlock {
+                password: String,
+                keyfile_path: Option<String>,
+                vault_id: Option<String>,
+            }
+            let parsed: JsonUnlock = serde_json::from_value(val.clone())
+                .map_err(|e| CmdError::new("INVALID_INPUT", e.to_string()))?;
+            let password = os::memory::LockedBytes::from_slice(parsed.password.as_bytes());
+            Ok(ParsedUnlockRequest {
+                password,
+                keyfile_path: parsed.keyfile_path,
+                vault_id: parsed.vault_id,
+            })
+        }
+    }
+}
+
 #[tauri::command]
 async fn unlock(
     app: tauri::AppHandle,
-    password: String,
-    keyfile_path: Option<String>,
-    vault_id: Option<String>,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<VaultSummary, CmdError> {
-    let password = Zeroizing::new(password);
+    let parsed = parse_unlock_request(request.body())?;
+    let password = parsed.password;
+    let keyfile_path = parsed.keyfile_path;
+    let vault_id = parsed.vault_id;
+
     // The UI names the vault it shows, so a switch in another window can
     // never make this unlock a different vault than the one on screen.
     let path = match vault_id {
@@ -994,7 +1092,7 @@ async fn unlock(
                 }
             }
         };
-        let mut vault = unlock_blocking(&path, password.as_bytes(), keyfile_path.as_deref())?;
+        let mut vault = unlock_blocking(&path, &password, keyfile_path.as_deref())?;
         // Re-seal a v3 vault so `.bak` and the file differ only in the slot
         // opened last (issue #8). Best effort: read-only media still unlock.
         if !read_only && vault.is_current_format() {
@@ -2347,5 +2445,80 @@ mod tests {
 
         let none = resolve_webview_data_dir(None, None);
         assert_eq!(none, None);
+    }
+
+    #[test]
+    fn parse_unlock_request_raw_payload_wipes_buffer() {
+        let mut raw = Vec::new();
+        let flags: u8 = 1 | 2; // vault_id + keyfile_path
+        raw.push(flags);
+        let vid = b"test-vault-id-42";
+        raw.extend_from_slice(&(vid.len() as u16).to_le_bytes());
+        raw.extend_from_slice(vid);
+        let kf = b"C:\\path\\to\\key.kf";
+        raw.extend_from_slice(&(kf.len() as u16).to_le_bytes());
+        raw.extend_from_slice(kf);
+        let pw = b"super-secret-password-123";
+        raw.extend_from_slice(pw);
+
+        let initial_len = raw.len();
+        let body = tauri::ipc::InvokeBody::Raw(raw);
+        let parsed = parse_unlock_request(&body).expect("successful parse");
+
+        assert_eq!(parsed.vault_id.as_deref(), Some("test-vault-id-42"));
+        assert_eq!(parsed.keyfile_path.as_deref(), Some("C:\\path\\to\\key.kf"));
+        assert_eq!(&parsed.password[..], pw);
+
+        // Verify that Tauri's raw buffer has been wiped in place to zeroes
+        if let tauri::ipc::InvokeBody::Raw(wiped) = body {
+            assert_eq!(wiped.len(), initial_len);
+            assert!(wiped.iter().all(|&b| b == 0), "Raw buffer must be wiped to zeroes");
+        } else {
+            panic!("Expected Raw body");
+        }
+    }
+
+    #[test]
+    fn parse_unlock_request_json_payload_compat() {
+        let val = serde_json::json!({
+            "password": "json-secret-password",
+            "keyfile_path": "my.key",
+            "vault_id": "vid-1",
+        });
+        let body = tauri::ipc::InvokeBody::Json(val);
+        let parsed = parse_unlock_request(&body).expect("successful JSON parse");
+        assert_eq!(parsed.vault_id.as_deref(), Some("vid-1"));
+        assert_eq!(parsed.keyfile_path.as_deref(), Some("my.key"));
+        assert_eq!(&parsed.password[..], b"json-secret-password");
+    }
+
+    #[test]
+    fn vault_unlock_and_lock_wipes_master_password_from_memory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hygiene.shush");
+        let canary_pw = b"__CANARY_MP_SECRET_TEST_99887766__";
+
+        let options = CreateOptions {
+            suite: CipherSuite::Aes256Gcm,
+            kdf: POLICY_MIN,
+        };
+        let vault = OpenVault::create(canary_pw, None, options).unwrap();
+        std::fs::write(&path, vault.to_bytes().unwrap()).unwrap();
+        drop(vault);
+
+        // Open the vault
+        let bytes = std::fs::read(&path).unwrap();
+        let opened = OpenVault::unlock(&bytes, canary_pw, None).unwrap();
+        assert_eq!(opened.data().items.len(), 0);
+
+        // Lock the vault (drop OpenVault)
+        drop(opened);
+
+        // Memory scan: canary password must not linger in accessible heap memory
+        #[cfg(windows)]
+        {
+            let matches = os::memory::count_occurrences_in_process_memory(canary_pw);
+            assert_eq!(matches, 0, "Master password must be zeroized after lock");
+        }
     }
 }
