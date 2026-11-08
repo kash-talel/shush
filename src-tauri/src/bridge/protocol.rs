@@ -114,10 +114,10 @@ fn code(e: AuthError) -> &'static str {
 }
 
 impl Bridge {
-    /// *Settings → Pair browser*: starts a new pairing and returns the code to show.
+    /// *Settings → Pair browser*: starts a new pairing and returns the formatted code to show (`XXXX-XXXX`).
     pub fn start_pairing(&mut self, now: Instant) -> Result<String, AuthError> {
         let offer = PairingOffer::new(now)?;
-        let code = offer.code().to_string();
+        let code = offer.formatted_code();
         self.offer = Some(offer);
         Ok(code)
     }

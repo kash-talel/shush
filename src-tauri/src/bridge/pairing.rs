@@ -77,18 +77,34 @@ impl From<CryptoError> for AuthError {
     }
 }
 
-/// Normalizes a pairing code: uppercase, strip whitespace/hyphens/underscores,
-/// and map common visual lookalikes ('0'->'O', '1'->'I', '8'->'B').
+/// Normalizes a pairing code per docs/spec/lan-sync.md §3:
+/// - Strips whitespace and all ASCII punctuation (hyphens, spaces, dots, colons, etc.)
+/// - Converts lowercase to uppercase
+/// - Maps visual lookalikes ('0' -> 'O', '1' -> 'I', '8' -> 'B')
+/// - Truncates to at most [`CODE_LEN`] characters
 pub fn normalize_code(raw: &str) -> String {
     raw.chars()
-        .filter(|c| !c.is_whitespace() && *c != '-' && *c != '_')
+        .filter(|c| !c.is_whitespace() && !c.is_ascii_punctuation())
         .map(|c| match c.to_ascii_uppercase() {
             '0' => 'O',
             '1' => 'I',
             '8' => 'B',
             other => other,
         })
+        .take(CODE_LEN)
         .collect()
+}
+
+/// Formats a pairing code dynamically as `XXXX-XXXX` (issue #114):
+/// Normalizes the code (stripping whitespace and punctuation, mapping lookalikes),
+/// and inserts a hyphen after 4 characters.
+pub fn format_code(raw: &str) -> String {
+    let norm = normalize_code(raw);
+    if norm.len() <= 4 {
+        norm
+    } else {
+        format!("{}-{}", &norm[..4], &norm[4..])
+    }
 }
 
 fn derive_keys(k: &[u8], transcript: &[u8]) -> (Zeroizing<[u8; 32]>, [u8; 32]) {
@@ -152,9 +168,14 @@ impl PairingOffer {
         Ok((state_b, host_msg))
     }
 
-    /// The code to show the user.
+    /// The unformatted 8-character code.
     pub fn code(&self) -> &str {
         std::str::from_utf8(&self.code).expect("Base32 alphabet is ASCII")
+    }
+
+    /// The formatted code to show the user on screen (`XXXX-XXXX`).
+    pub fn formatted_code(&self) -> String {
+        format_code(self.code())
     }
 
     /// Sent to the extension in `hello` while the offer is live (SPAKE2 msgB).
@@ -448,11 +469,32 @@ mod tests {
         assert_eq!(normalize_code("ABCD-EFGH"), "ABCDEFGH");
         assert_eq!(normalize_code("abcd efgh"), "ABCDEFGH");
         assert_eq!(normalize_code("018X_yz"), "OIBXYZ");
+        assert_eq!(normalize_code("a.b:c/d,e!f?g"), "ABCDEFG");
+        assert_eq!(normalize_code("018x.yz23extra"), "OIBXYZ23");
+        assert_eq!(normalize_code(""), "");
+
+        // format_code tests
+        assert_eq!(format_code(""), "");
+        assert_eq!(format_code("a"), "A");
+        assert_eq!(format_code("abcd"), "ABCD");
+        assert_eq!(format_code("abcde"), "ABCD-E");
+        assert_eq!(format_code("abcd efgh"), "ABCD-EFGH");
+        assert_eq!(format_code("018x yz23"), "OIBX-YZ23");
+        assert_eq!(format_code("a.b:c-d/e_f!g?h"), "ABCD-EFGH");
+        assert_eq!(format_code("ABCD-EFGH"), "ABCD-EFGH");
 
         let now = Instant::now();
         let mut offer = PairingOffer::new(now).unwrap();
-        let formatted = format!("{}-{}", &offer.code()[..4], &offer.code()[4..]).to_lowercase();
-        let (ext_msg, proof, key) = extension_pair(&formatted, offer.host_msg()).unwrap();
+        assert_eq!(offer.formatted_code(), format_code(offer.code()));
+        assert_eq!(offer.formatted_code().len(), 9);
+        assert_eq!(&offer.formatted_code()[4..5], "-");
+
+        let user_typed = format!("{}-{}", &offer.code()[..4], &offer.code()[4..])
+            .to_lowercase()
+            .replace('O', "0")
+            .replace('I', "1")
+            .replace('B', "8");
+        let (ext_msg, proof, key) = extension_pair(&user_typed, offer.host_msg()).unwrap();
         let pairing = offer.redeem(&ext_msg, &proof, now).unwrap();
         assert_eq!(pairing.key_for_tests(), key);
     }

@@ -1,0 +1,5 @@
+{
+  "name": "shush-companion-extension",
+  "private": true,
+  "type": "module"
+}
