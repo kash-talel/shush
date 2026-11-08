@@ -1,130 +1,80 @@
 ---
 name: issue
-description: Resolve a single GitHub issue for the shush repository, file discovered bugs/features as new issues, verify tests, create and merge PR, then stop and prompt for /clear.
+description: Resolve a single GitHub issue for the shush repository by routing it (.claude/issue-routing.json) and dispatching it to its assigned model - a Sonnet or Opus issue-worker subagent, or headless AGY CLI (Gemini 3.8 Flash) - then report and prompt for /clear.
+model: haiku
 ---
 
-# Single GitHub Issue Resolver for Shush
+# /issue: route and dispatch one shush issue
 
-You are resolving a single GitHub issue for the `shush` repository.
+You are the dispatcher. You pick ONE issue, look up its assigned runner and model, hand the whole
+job to that runner, and report the result. You never read code, edit files, branch, or run tests
+yourself: the runner does all of that on its own model, so the expensive work is billed at the
+right tier and this session stays cheap.
 
 Input arguments: $ARGUMENTS
 
-Follow this strict step-by-step procedure:
+## Step 1: Preflight
+Run `git status --porcelain`. Ignore `.claude/issue-routing.json` (routing lookups update it).
+If any other file is modified or untracked, STOP and print:
+```
+⛔ Working tree is not clean. /issue runners switch branches and pull main, which would carry
+   these changes along. Commit, stash, or move them first:
+   <list the files>
+```
 
-## Step 1: Select the Target Issue
-- If `$ARGUMENTS` contains an issue number (e.g. `20` or `#20`), target that specific issue.
-- Otherwise, run:
-  ```powershell
-  gh issue list --state open --limit 50 --json number,title,labels
-  ```
-  Sort the open issues by priority:
-  1. `severity:critical` (Highest)
-  2. `severity:high`
-  3. `severity:medium`
-  4. `severity:low`
-  *(If multiple have the same severity, pick the lowest issue number).*
-
-  Then select the first issue in that order whose runner is `claude`:
-  1. For each candidate in priority order, run `powershell -NoProfile -File .claude/scripts/route-issue.ps1 -Number <NUMBER>` and read its `runner`. New issues are classified and saved on the first lookup.
-  2. Stop at the first candidate with runner `claude`. Every candidate before it is an `agy` issue that was skipped.
-  3. For each skipped `agy` issue, print this notice, filling in the skipped number and the selected number:
-     `💡 Note: Issue #<NUM> is mapped to AGY CLI. Auto-selecting next highest Claude issue #<NUM>.`
-  4. If no open issue has runner `claude`, stop and report that no issue is currently routed to Claude.
-
-## Step 1.5: Model & Runner Gatekeeper
-Look up the routing for the selected issue (it is classified once and saved in `.claude/issue-routing.json`). An auto-picked issue is already `claude` from Step 1, so this gate stops only an explicit `/issue <NUMBER>` that maps to `agy`:
+## Step 2: Select and route the issue
+Routing is a single call per issue; it classifies new issues once and saves them:
 ```powershell
 powershell -NoProfile -File .claude/scripts/route-issue.ps1 -Number <NUMBER>
 ```
-The script prints JSON with `title`, `model`, and `runner`. Act on it:
-- **If `runner` is `agy`:** STOP immediately. Do not modify code, create branches, file issues, or run any later step. Print this block with `<NUMBER>` and `<TITLE>` filled in, then end the turn:
-  ```
-  ======================================================================
-  ⚡ TOKEN OPTIMIZATION GATE: RUN IN AGY CLI (Gemini 3.8 Flash)
-  Issue #<NUMBER> ("<TITLE>") is mapped to Gemini 3.8 Flash.
-  Running this in Claude will consume unnecessary high-cost tokens.
-  👉 Switch to AGY CLI and execute:
-     agy "resolve issue #<NUMBER>"
-  ======================================================================
-  ```
-- **If `runner` is `claude` and `model` is `claude-opus-5.5`:** print "⚠️ This issue involves complex cryptography/concurrency. Ensure your active Claude model is set to Opus before proceeding." Then continue to Step 2.
-- **If `runner` is `claude` and `model` is `claude-sonnet-5.5`:** proceed to Step 2.
+It prints JSON with `number`, `title`, `model`, `runner` (`claude` | `agy`) and `target`
+(`opus` | `sonnet` | an agy model id such as `gemini-3.8-flash-medium`).
 
-## Step 2: Deep Dive the Selected Issue
-1. Inspect the issue requirements and history:
-   ```powershell
-   gh issue view <NUMBER> --comments
-   ```
-2. Inspect related specifications in `docs/spec/`, `docs/FORMAT.md`, and the relevant code files (`src-tauri/src/` or `src/src/`).
-3. Check if an installed skill applies (e.g. `svelte-core-bestpractices`, `frontend-design`, `native-feel-cross-platform-desktop`). If the task involves a new tool, stack component, or testing workflow without an installed skill, invoke `find-skills` per `CLAUDE.md` to search and vet candidate skills before proceeding.
+- If `$ARGUMENTS` contains an issue number (`20` or `#20`), route that issue.
+- Otherwise run `gh issue list --state open --limit 50 --json number,title,labels`, sort by
+  `severity:critical` > `severity:high` > `severity:medium` > `severity:low` > no severity, then
+  lowest number, and route the first one. Every runner is handled, so do not skip any issue.
+- If there are no open issues, say so and stop.
 
-## Step 3: File Discovered Bugs & Feature Suggestions
-If during your analysis, review, or implementation you discover:
-- Secondary bugs, edge cases, or potential memory/crypto risks
-- Inconsistencies between specs and code
-- High-value feature ideas or usability improvements
+Print one line before dispatching:
+`🧭 Issue #<NUMBER> ("<TITLE>") → <runner> / <target>`
 
-**Immediately file them as new GitHub issues** before or during implementation:
-```powershell
-gh issue create --title "[<Category>] <Concise Title>" --body "<Detailed description of problem, impact, and suggested solution>" --label "<label1>,<label2>"
+## Step 3: Dispatch to the assigned runner
+
+### runner `claude` → issue-worker subagent on the routed model
+Call the Agent tool with:
+- `subagent_type`: `"issue-worker"`
+- `model`: the `target` value (`"opus"` or `"sonnet"`), exactly as routed. Never substitute.
+- `description`: `"Resolve issue #<NUMBER>"`
+- `prompt`: `Resolve issue #<NUMBER> ("<TITLE>"). It is routed to <model>. Follow your procedure and end with the Final report block.`
+
+Wait for the subagent's completion notification. Do not do anything else meanwhile, and never
+guess its result.
+
+### runner `agy` → AGY CLI headless
+Run this with the Bash tool, `run_in_background: true` (it can run longer than 10 minutes), from
+the repository root:
+```bash
+agy -p "/issue <NUMBER>. Resolve only this issue: do not pick up or offer the next AGY issue. Finish your reply with exactly these lines: STATUS: DONE|BLOCKED|FAILED, ISSUE: #<NUMBER>, PR: <url or none>, FILED: <new issue numbers or none>, SUMMARY: <2-4 lines>." --model <target> --mode auto --output-format text
 ```
-*(Use appropriate labels: `bug`, `enhancement`, `severity:critical`, `severity:high`, `severity:medium`, `severity:low`, `crypto`, `file-format`, `memory-hygiene`, `concurrency`, `os-integration`, `sync`, `spec-review`, `spec-inconsistency`).*
+Wait for the background-command notification, then read its output. Do not poll it.
 
-## Step 4: Implement & Verify
-1. Ensure your local `main` branch is clean:
-   ```powershell
-   git checkout main
-   git pull origin main
-   ```
-2. Create a dedicated branch:
-   ```powershell
-   git checkout -b fix/issue-<NUMBER>-<short-slug>
-   ```
-3. Implement the necessary code and/or documentation changes following the standards in `CLAUDE.md`.
-4. Run verification tests:
-   - For backend/Rust:
-     ```powershell
-     $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
-     cargo test --manifest-path src-tauri/Cargo.toml
-     ```
-   - For frontend/Svelte:
-     ```powershell
-     cd src; npm run check; cd ..
-     ```
-   All tests and checks must pass with 0 errors. Fix any failures before proceeding.
+## Step 4: Verify and record
+1. Check the outcome on GitHub rather than trusting the report alone:
+   `gh issue view <NUMBER> --json state,closedByPullRequestsReferences`
+2. For each issue number in `FILED`, run `route-issue.ps1 -Number <N>` so new issues are routed
+   right away.
+3. If `STATUS` is BLOCKED or FAILED, or the issue is still open, print the runner's report verbatim
+   under `⚠️ Issue #<NUMBER> was not completed by <runner>/<target>:` and stop. Do not retry on
+   another model unless the user asks.
 
-## Step 5: Commit, Push, PR, and Merge
-1. Commit the changes:
-   ```powershell
-   git add <modified-files>
-   git commit -m "fix(#<NUMBER>): <concise summary>"
-   ```
-2. Push branch:
-   ```powershell
-   git push -u origin fix/issue-<NUMBER>-<short-slug>
-   ```
-3. Open Pull Request:
-   ```powershell
-   gh pr create --title "fix(#<NUMBER>): <concise summary>" --body "Closes #<NUMBER>`n`n### Summary`n<Summary of changes>`n`n### Verification`n- [x] cargo test passed`n- [x] npm run check passed"
-   ```
-4. Merge the Pull Request:
-   ```powershell
-   gh pr merge --squash --delete-branch --admin
-   ```
-5. Checkout main and pull:
-   ```powershell
-   git checkout main
-   git pull origin main
-   ```
-6. Verify the issue is closed (run `gh issue close <NUMBER>` if not automatically closed).
-
-## Step 6: Stop & Instruct Token Reset
-**STOP HERE.** Do not start another issue.
-Print a clear final summary in this exact format:
+## Step 5: Stop and prompt for /clear
+**STOP HERE.** Do not start another issue. Print:
 ```
 ======================================================================
-✅ COMPLETED: Issue #<NUMBER> ("<TITLE>") has been resolved, PR opened, and merged.
-📦 Branches cleaned and main updated.
+✅ COMPLETED: Issue #<NUMBER> ("<TITLE>") resolved by <runner>/<target>, PR merged.
+🔗 PR: <url>
+🆕 Filed & routed: <numbers or none>
 💡 ACTION REQUIRED: Type `/clear` now to wipe context tokens before running `/issue` again!
 ======================================================================
 ```

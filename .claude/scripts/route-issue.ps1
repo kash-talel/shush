@@ -3,7 +3,8 @@
 # append it, and save. Existing entries are never reclassified.
 #
 # Usage:  powershell -NoProfile -File .claude/scripts/route-issue.ps1 -Number 42
-# Output: one JSON object on stdout: {"number","title","model","runner","reason"}
+# Output: one JSON object on stdout: {"number","title","model","runner","target","reason"}
+#         target = model to dispatch to: opus | sonnet (Agent tool) or an agy model id.
 # Exit:   0 on success, 1 on error.
 
 param(
@@ -58,11 +59,31 @@ function Get-Classification($issue) {
     return @{ model = 'claude-sonnet-5.5'; runner = 'claude'; reason = 'default systems code (auto-classified)' }
 }
 
+# The dispatch target for /issue: the Agent tool's model alias for claude issues,
+# the agy CLI model id for agy issues. Computed on output only; never stored.
+function Write-Entry($entry) {
+    $target = switch ([string]$entry.model) {
+        'claude-opus-5.5'   { 'opus' }
+        'claude-sonnet-5.5' { 'sonnet' }
+        'gemini-3.8-flash'  { 'gemini-3.8-flash-medium' }
+        default             { if ($entry.runner -eq 'agy') { 'gemini-3.8-flash-medium' } else { 'sonnet' } }
+    }
+    $out = [ordered]@{
+        number = [int]$entry.number
+        title  = [string]$entry.title
+        model  = [string]$entry.model
+        runner = [string]$entry.runner
+        target = $target
+        reason = [string]$entry.reason
+    }
+    [pscustomobject]$out | ConvertTo-Json -Compress
+}
+
 $doc = Read-Routing
 $existing = @($doc.issues) | Where-Object { [int]$_.number -eq $Number } | Select-Object -First 1
 
 if ($existing) {
-    $existing | ConvertTo-Json -Compress
+    Write-Entry $existing
     exit 0
 }
 
@@ -88,5 +109,5 @@ foreach ($i in @($doc.issues)) { [void]$issues.Add($i) }
 $doc.issues = $issues.ToArray()
 Write-Routing $doc
 
-$entry | ConvertTo-Json -Compress
+Write-Entry $entry
 exit 0
