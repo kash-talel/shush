@@ -31,16 +31,31 @@ pub enum PipeError {
 }
 
 /// Whether `peer` is the executable `expected_name` in the same folder as `own`
-/// (case-insensitive, as Windows paths are).
+/// (case-insensitive, as Windows paths are). If either path traverses a junction
+/// or symlink, their canonical paths are compared so junctioned installations
+/// match correctly.
 pub fn is_sibling_exe(peer: &Path, own: &Path, expected_name: &str) -> bool {
-    let same_dir = match (peer.parent(), own.parent()) {
-        (Some(a), Some(b)) => a.as_os_str().eq_ignore_ascii_case(b.as_os_str()),
-        _ => false,
+    if !peer
+        .file_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case(expected_name))
+    {
+        return false;
+    }
+    let (Some(peer_dir), Some(own_dir)) = (peer.parent(), own.parent()) else {
+        return false;
     };
-    same_dir
-        && peer
-            .file_name()
-            .is_some_and(|n| n.eq_ignore_ascii_case(expected_name))
+    if peer_dir.as_os_str().eq_ignore_ascii_case(own_dir.as_os_str()) {
+        return true;
+    }
+    let peer_canon = peer_dir
+        .canonicalize()
+        .unwrap_or_else(|_| peer_dir.to_path_buf());
+    let own_canon = own_dir
+        .canonicalize()
+        .unwrap_or_else(|_| own_dir.to_path_buf());
+    peer_canon
+        .as_os_str()
+        .eq_ignore_ascii_case(own_canon.as_os_str())
 }
 
 #[cfg(windows)]
@@ -355,13 +370,14 @@ mod imp {
                 (server, reply.to_vec())
             });
             let mut conn = l.accept().unwrap();
-            let me = std::env::current_exe().unwrap();
-            let client_exe = conn.client_image().unwrap();
+            let me = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+            let client_exe = std::fs::canonicalize(conn.client_image().unwrap()).unwrap();
             assert!(client_exe.as_os_str().eq_ignore_ascii_case(me.as_os_str()));
             let req = read_frame(&mut conn.pipe, MAX_REQUEST).unwrap().unwrap();
             assert_eq!(&**req, b"{\"ping\":1}");
             write_frame(&mut conn.pipe, b"{\"pong\":1}", MAX_REQUEST).unwrap();
             let (server, reply) = client.join().unwrap();
+            let server = std::fs::canonicalize(server).unwrap();
             assert!(server.as_os_str().eq_ignore_ascii_case(me.as_os_str()));
             assert_eq!(reply, b"{\"pong\":1}");
         }
@@ -400,5 +416,14 @@ mod tests {
             own,
             "shush-host.exe"
         ));
+    }
+
+    #[test]
+    fn sibling_exe_junction() {
+        let own = std::env::current_exe().unwrap();
+        let target = std::fs::canonicalize(&own).unwrap();
+        let exe_name = own.file_name().unwrap().to_str().unwrap();
+        assert!(is_sibling_exe(&target, &own, exe_name));
+        assert!(is_sibling_exe(&own, &target, exe_name));
     }
 }
