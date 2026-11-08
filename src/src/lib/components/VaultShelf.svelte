@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Eye, EyeOff, FolderOpen, Pencil, Plus, Trash2 } from "@lucide/svelte";
+  import { Eye, EyeOff, Folder, FolderOpen, Pencil, Plus, Trash2 } from "@lucide/svelte";
   import Spindle from "./Spindle.svelte";
   import VaultFormDialog from "./VaultFormDialog.svelte";
   import DeleteVaultDialog from "./DeleteVaultDialog.svelte";
@@ -9,6 +9,7 @@
     listVaults,
     selectVault,
     setHideVaultNames,
+    showInExplorer,
     toCmdError,
     vaultStatus,
     type CmdError,
@@ -72,6 +73,15 @@
     }
   }
 
+  async function openExplorer() {
+    if (!selected) return;
+    try {
+      await showInExplorer(selected.id);
+    } catch (e) {
+      error = toCmdError(e);
+    }
+  }
+
   onMount(reload);
 </script>
 
@@ -118,8 +128,10 @@
       <button type="button" class="act" onclick={() => (dialog = "existing")}><FolderOpen aria-hidden="true" /> Open vault file</button>
       {#if selected}
         <button type="button" class="act" onclick={() => (dialog = "edit")}><Pencil aria-hidden="true" /> Edit</button>
-        {#if selected.exists && !selected.error}
+        {#if selected.can_delete}
           <button type="button" class="act hazardous" onclick={() => (dialog = "delete")}><Trash2 aria-hidden="true" /> Delete</button>
+        {:else if selected.exists}
+          <button type="button" class="act" onclick={openExplorer}><Folder aria-hidden="true" /> Show in Explorer</button>
         {/if}
       {/if}
       <button

@@ -282,6 +282,8 @@ struct VaultStatus {
     error: Option<CmdError>,
     /// Whether vault names and paths are hidden on the lock screen.
     hide_names: bool,
+    /// Whether the vault can be deleted (header or .bak decrypts).
+    can_delete: bool,
 }
 
 fn status_for(
@@ -304,11 +306,12 @@ fn status_for(
         kdf: None,
         error: None,
         hide_names,
+        can_delete: false,
     };
     if entry.is_some() && !status.exists {
         status.error = Some(CmdError::new(
             "VAULT_MISSING",
-            "The vault file is not there. Was it moved, or is its drive disconnected?",
+            "The vault file is not there. Was it moved, or is its drive disconnected? If it was removed, use Edit to remove it from this list.",
         ));
     }
     if status.exists {
@@ -317,8 +320,26 @@ fn status_for(
                 status.keyfile_required = Some(h.keyfile_required);
                 status.cipher = Some(cipher_info(h.suite));
                 status.kdf = Some(h.kdf);
+                status.can_delete = true;
             }
-            Err(e) => status.error = Some(e.into()),
+            Err(e) => {
+                let bak = vault::container::sibling(path, "bak");
+                if bak.is_file() {
+                    if let Ok(bh) = vault::read_header(&bak) {
+                        status.keyfile_required = Some(bh.keyfile_required);
+                        status.cipher = Some(cipher_info(bh.suite));
+                        status.kdf = Some(bh.kdf);
+                        status.can_delete = true;
+                        status.error = Some(CmdError::new(
+                            "VAULT_UNREADABLE",
+                            "Vault header is unreadable, but its backup (.bak) is intact. You can delete this vault using its master password.",
+                        ));
+                    }
+                }
+                if status.error.is_none() {
+                    status.error = Some(e.into());
+                }
+            }
         }
     }
     status
@@ -352,6 +373,8 @@ struct VaultCard {
     keyfile_required: Option<bool>,
     /// Set when the file is missing or unreadable.
     error: Option<CmdError>,
+    /// Whether the vault can be deleted (header or .bak decrypts).
+    can_delete: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -381,6 +404,7 @@ fn list_vaults(app: tauri::AppHandle) -> Result<VaultList, CmdError> {
                 exists: s.exists,
                 keyfile_required: s.keyfile_required,
                 error: s.error,
+                can_delete: s.can_delete,
             }
         })
         .collect();
@@ -503,6 +527,42 @@ fn set_hide_vault_names(app: tauri::AppHandle, hide: bool) -> Result<VaultStatus
 ///   has been verified as a shush vault;
 /// - nothing is destroyed outright: Windows asks first if the drive has no
 ///   Recycle Bin.
+fn authenticate_for_delete_blocking(
+    path: &Path,
+    password: &[u8],
+    keyfile_path: Option<&str>,
+) -> Result<(), CmdError> {
+    let bak = vault::container::sibling(path, "bak");
+    let auth_path = if vault::read_header(path).is_ok() {
+        path.to_path_buf()
+    } else if bak.is_file() && vault::read_header(&bak).is_ok() {
+        bak
+    } else {
+        vault::read_header(path)?;
+        unreachable!()
+    };
+    let v = unlock_blocking(&auth_path, password, keyfile_path)?;
+    drop(v);
+    Ok(())
+}
+
+fn delete_vault_files_blocking(path: &Path) -> Result<(), CmdError> {
+    let files: Vec<PathBuf> = vault::registry::vault_files(path)
+        .into_iter()
+        .filter(|p| p.exists())
+        .collect();
+    let refs: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
+    os::recycle::recycle(&refs).map_err(|e| match e {
+        os::recycle::RecycleError::Cancelled => {
+            CmdError::new("DELETE_CANCELLED", "Deletion cancelled. The vault was kept.")
+        }
+        os::recycle::RecycleError::Failed(code) => CmdError::new(
+            "DELETE_FAILED",
+            format!("Windows could not move the vault to the Recycle Bin (error {code}). Is a file open elsewhere?"),
+        ),
+    })
+}
+
 #[tauri::command]
 async fn delete_vault(
     app: tauri::AppHandle,
@@ -535,13 +595,9 @@ async fn delete_vault(
 
     blocking(move || {
         let path = entry.path.clone();
-        // Must still be a shush vault: never delete whatever a hand-edited
-        // vault list points at.
-        vault::read_header(&path)?;
         let throttle = app.state::<std::sync::Mutex<DeleteThrottle>>();
-        match unlock_blocking(&path, password.as_bytes(), keyfile_path.as_deref()) {
-            Ok(v) => {
-                drop(v); // keys and data wiped
+        match authenticate_for_delete_blocking(&path, password.as_bytes(), keyfile_path.as_deref()) {
+            Ok(()) => {
                 throttle.lock().unwrap_or_else(|e| e.into_inner()).succeed(&id);
             }
             Err(e) if e.code == "WRONG_CREDENTIALS" => {
@@ -562,20 +618,7 @@ async fn delete_vault(
         // Someone may have unlocked during the slow KDF.
         require_locked(&app)?;
 
-        let files: Vec<PathBuf> = vault::registry::vault_files(&path)
-            .into_iter()
-            .filter(|p| p.exists())
-            .collect();
-        let refs: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
-        os::recycle::recycle(&refs).map_err(|e| match e {
-            os::recycle::RecycleError::Cancelled => {
-                CmdError::new("DELETE_CANCELLED", "Deletion cancelled. The vault was kept.")
-            }
-            os::recycle::RecycleError::Failed(code) => CmdError::new(
-                "DELETE_FAILED",
-                format!("Windows could not move the vault to the Recycle Bin (error {code}). Is a file open elsewhere?"),
-            ),
-        })?;
+        delete_vault_files_blocking(&path)?;
         edit_registry(&app, |reg, def| {
             reg.remove(&id)?;
             reg.ensure_safety_net(def);
@@ -583,6 +626,54 @@ async fn delete_vault(
         })
     })
     .await
+}
+
+/// Opens Windows Explorer to reveal the vault file (or its containing folder).
+#[tauri::command]
+fn show_in_explorer(app: tauri::AppHandle, id: String) -> Result<(), CmdError> {
+    let (reg, def) = edit_registry(&app, |reg, def| Ok((reg.clone(), def.to_path_buf())))?;
+    let path = if let Some(e) = reg.get(&id) {
+        e.path.clone()
+    } else if def.exists() {
+        def
+    } else {
+        return Err(RegistryError::UnknownVault.into());
+    };
+
+    reveal_path_in_explorer(&path)
+}
+
+fn reveal_path_in_explorer(path: &Path) -> Result<(), CmdError> {
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        if path.exists() {
+            Command::new("explorer")
+                .arg(format!("/select,{}", path.display()))
+                .spawn()
+                .map_err(|e| CmdError::new("EXPLORER_ERROR", format!("Could not open Explorer: {e}")))?;
+        } else if let Some(parent) = path.parent().filter(|p| p.exists()) {
+            Command::new("explorer")
+                .arg(parent.display().to_string())
+                .spawn()
+                .map_err(|e| CmdError::new("EXPLORER_ERROR", format!("Could not open Explorer: {e}")))?;
+        } else {
+            return Err(CmdError::new(
+                "PATH_NOT_FOUND",
+                "Neither the vault file nor its folder could be found on disk.",
+            ));
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if !path.exists() && !path.parent().map_or(false, |p| p.exists()) {
+            return Err(CmdError::new(
+                "PATH_NOT_FOUND",
+                "Neither the vault file nor its folder could be found on disk.",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn human_secs(s: u64) -> String {
@@ -1650,6 +1741,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             forget_vault,
             set_hide_vault_names,
             delete_vault,
+            show_in_explorer,
             inspect_keyfile,
             create_vault,
             unlock,
@@ -1832,11 +1924,81 @@ mod tests {
         assert!(status.exists);
         assert!(!status.hide_names);
         assert!(status_for(None, &vault_file, false, true).hide_names);
+        assert!(!status.can_delete);
         assert_eq!(status.error.unwrap().code, "VAULT_UNREADABLE");
         assert_eq!(
             unlock_blocking(&vault_file, b"pw", None).unwrap_err().code,
             "VAULT_UNREADABLE"
         );
+        assert_eq!(
+            authenticate_for_delete_blocking(&vault_file, b"pw", None)
+                .unwrap_err()
+                .code,
+            "VAULT_UNREADABLE"
+        );
+    }
+
+    #[test]
+    fn corrupt_vault_with_valid_backup_can_authenticate_for_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_file = dir.path().join("vault.shush");
+        let bak_file = dir.path().join("vault.shush.bak");
+
+        // Create a valid vault, then copy it to .bak and corrupt the main file.
+        create_vault_blocking(
+            &vault_file,
+            b"correct horse",
+            &KeyfileChoice::None,
+            1,
+            POLICY_MIN,
+        )
+        .unwrap();
+        std::fs::copy(&vault_file, &bak_file).unwrap();
+        std::fs::write(&vault_file, b"corrupted header content").unwrap();
+
+        let status = status_for(None, &vault_file, false, false);
+        assert!(status.exists);
+        assert!(status.can_delete);
+        let err = status.error.unwrap();
+        assert_eq!(err.code, "VAULT_UNREADABLE");
+        assert!(err.message.contains(".bak"));
+
+        // Authenticating for delete with wrong password fails and returns WRONG_CREDENTIALS
+        assert_eq!(
+            authenticate_for_delete_blocking(&vault_file, b"wrong horse", None)
+                .unwrap_err()
+                .code,
+            "WRONG_CREDENTIALS"
+        );
+
+        // Authenticating for delete with correct password succeeds against .bak
+        assert!(authenticate_for_delete_blocking(&vault_file, b"correct horse", None).is_ok());
+    }
+
+    #[test]
+    fn missing_vault_reports_missing_and_cannot_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_file = dir.path().join("nonexistent.shush");
+        let entry = vault::registry::VaultEntry {
+            id: "v1".into(),
+            name: "Missing".into(),
+            path: vault_file.clone(),
+            color: "crimson".into(),
+        };
+        let status = status_for(Some(&entry), &vault_file, false, false);
+        assert!(!status.exists);
+        assert!(!status.can_delete);
+        let err = status.error.unwrap();
+        assert_eq!(err.code, "VAULT_MISSING");
+        assert!(err.message.contains("remove"));
+    }
+
+    #[test]
+    fn reveal_path_in_explorer_returns_not_found_for_missing_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let ghost = dir.path().join("ghost_dir").join("ghost.shush");
+        let res = reveal_path_in_explorer(&ghost);
+        assert_eq!(res.unwrap_err().code, "PATH_NOT_FOUND");
     }
 
     #[test]

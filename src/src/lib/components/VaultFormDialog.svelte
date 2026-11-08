@@ -7,6 +7,7 @@
     addExistingVault,
     checkNewVault,
     forgetVault,
+    showInExplorer,
     splitPath,
     toCmdError,
     updateVault,
@@ -173,9 +174,35 @@
 
     {#if mode === "edit" && vault}
       {@const [dir, file] = splitPath(vault.path)}
-      <p class="flex max-w-full font-mono text-[10.5px] text-zinc-500" title={vault.path}>
-        <span class="truncate">{dir}</span><span class="shrink-0 text-zinc-300">{file}</span>
-      </p>
+      <div class="flex items-center justify-between gap-2">
+        <p class="flex min-w-0 flex-1 font-mono text-[10.5px] text-zinc-500" title={vault.path}>
+          <span class="truncate">{dir}</span><span class="shrink-0 text-zinc-300">{file}</span>
+        </p>
+        {#if vault.exists}
+          <button
+            type="button"
+            onclick={async () => {
+              try {
+                if (vault) await showInExplorer(vault.id);
+              } catch (e) {
+                error = toCmdError(e);
+              }
+            }}
+            class="shrink-0 font-sans text-[11px] text-uv hover:underline"
+          >
+            Show in Explorer
+          </button>
+        {/if}
+      </div>
+      {#if !vault.exists}
+        <p class="text-[11px] leading-4 text-zinc-400">
+          The vault file is missing. Remove from list is the right action if it was moved or deleted.
+        </p>
+      {:else if vault.error && !vault.can_delete}
+        <p class="text-[11px] leading-4 text-caution">
+          This vault is unreadable and cannot be authenticated. Use Show in Explorer to inspect or delete its files manually, or Remove from list to remove it from the app.
+        </p>
+      {/if}
     {:else}
       <div>
         <span class="mb-1.5 block text-xs font-medium text-zinc-300">{mode === "new" ? "Location" : "Vault file"}</span>

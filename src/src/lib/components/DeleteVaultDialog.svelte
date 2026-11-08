@@ -61,10 +61,19 @@
       </div>
     </div>
 
-    <p class="text-xs leading-5 text-zinc-400">
-      The vault, its backup copy and its attachments move to the Recycle Bin. Until you empty the bin you can restore
-      them there; they stay encrypted.
-    </p>
+    {#if vault.error}
+      <div class="rounded-[3px] border border-caution/40 bg-caution/10 px-3 py-2 text-xs leading-5 text-caution">
+        <p class="font-medium">Damaged vault file</p>
+        <p class="text-zinc-300">
+          The main vault file is unreadable, but its backup was found. Enter the master password to verify ownership before moving all vault files to the Recycle Bin.
+        </p>
+      </div>
+    {:else}
+      <p class="text-xs leading-5 text-zinc-400">
+        The vault, its backup copy and its attachments move to the Recycle Bin. Until you empty the bin you can restore
+        them there; they stay encrypted.
+      </p>
+    {/if}
 
     <label class="flex flex-col gap-1.5 text-xs font-medium text-zinc-300">
       <span>Type <span class="font-mono text-zinc-50 select-all">{vault.name}</span> to confirm</span>
