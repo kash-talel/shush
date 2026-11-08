@@ -147,11 +147,32 @@
     .case-aura { position: absolute; inset: -2rem; border-radius: 9999px; pointer-events: none; opacity: 0.75; filter: blur(64px);
       background-image: linear-gradient(to top right, rgb(225 29 72 / 0.3), rgb(147 51 234 / 0.25), transparent); }
     .case-wrapper { position: relative; cursor: pointer; }
-    .case-status { margin-top: 1rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem; opacity: 0.8; cursor: pointer; transition: opacity 0.15s; }
+    .case-status {
+      margin-top: 1rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      opacity: 0.8;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      background: none;
+      border: 0;
+      padding: 4px 8px;
+      color: inherit;
+      font: inherit;
+    }
     .case-status:hover { opacity: 1; }
+    .case-status:focus-visible {
+      outline: 2px solid var(--uv);
+      outline-offset: 4px;
+      border-radius: 4px;
+      opacity: 1;
+    }
     .case-status .dot { width: 0.5rem; height: 0.5rem; border-radius: 9999px; background: #f43f5e; animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite; }
     .case-status span:last-child { font: 500 11px "JetBrains Mono", "Cascadia Mono", Consolas, monospace; text-transform: uppercase; letter-spacing: 0.1em; color: #a1a1aa; }
-    .case-status:hover span:last-child { color: #fda4af; }
+    .case-status:hover span:last-child,
+    .case-status:focus-visible span:last-child { color: #fda4af; }
     @keyframes ping { 75%, 100% { transform: scale(2); opacity: 0; } }
     .cover h1 { margin: 0; font: 800 clamp(64px, 11vw, 168px)/0.82 var(--grot); font-stretch: 75%; letter-spacing: -0.045em; }
     .cover h1 span { display: block; color: transparent; -webkit-text-stroke: 1.5px rgb(221 214 254 / 0.75); }
@@ -212,7 +233,12 @@
       .cover p { margin-inline: auto; }
       .track .d { display: none; }
     }
-    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        transition: none !important;
+        animation: none !important;
+      }
+    }
   </style>
 </head>
 <body>
@@ -234,10 +260,17 @@
             <div class="case-lid" id="case-lid"></div>
           </div>
         </div>
-        <div class="case-status" onclick="toggleCase()">
-          <span class="dot"></span>
+        <button
+          type="button"
+          class="case-status"
+          id="case-toggle"
+          onclick="toggleCase()"
+          aria-expanded="true"
+          aria-controls="jewel-case-box"
+        >
+          <span class="dot" aria-hidden="true"></span>
           <span id="case-status" aria-live="polite">[ JEWEL CASE: OPEN · CLICK THE DISC TO PLAY ]</span>
-        </div>
+        </button>
       </div>
       <div>
         <h1>shush<span>offline</span></h1>
@@ -373,11 +406,13 @@ npx --prefix src tauri dev</code>
     const box = document.getElementById("jewel-case-box");
     const disc = document.getElementById("hero-cd");
     const caseStatus = document.getElementById("case-status");
+    const caseToggle = document.getElementById("case-toggle");
     let isCaseOpen = true, playing = false;
     function render() {
       disc.classList.toggle("paused", !playing);           // the disc only spins while it plays
       disc.setAttribute("aria-pressed", String(playing));
-      disc.alt = playing ? "Pause track 01" : "Play track 01";
+      disc.alt = !isCaseOpen ? "Open jewel case" : playing ? "Pause track 01" : "Play track 01";
+      caseToggle?.setAttribute("aria-expanded", String(isCaseOpen));
       caseStatus.textContent = !isCaseOpen ? "[ JEWEL CASE: CLOSED · CLICK TO OPEN ]"
         : playing ? "[ NOW PLAYING: TRACK 01 · CLICK THE DISC TO PAUSE ]"
         : "[ JEWEL CASE: OPEN · CLICK THE DISC TO PLAY ]";
