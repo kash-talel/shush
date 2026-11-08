@@ -13,7 +13,7 @@
 - **Core Philosophy**:
   - **Zero Knowledge**: The app never stores master credentials in plaintext. If the vault file is inspected on disk, zero metadata (no URLs, usernames, or item counts) is leaked.
   - **Defense in Depth**: Three-tier composite authentication (Master Password + Optional Physical Keyfile + Windows Hello TPM biometric quick-unlock).
-  - **Elite Desktop UX**: System tray persistence with a Raycast/Spotlight-style floating quick search (`Alt + Shift + S`) for instant, keyboard-first credential retrieval.
+  - **Elite Desktop UX**: System tray persistence with a Raycast/Spotlight-style floating quick search (`Ctrl + Alt + Space`) for instant, keyboard-first credential retrieval.
 
 ---
 
@@ -268,9 +268,10 @@ export interface VaultSettings {
    - Instead, the paired browser extension fills the fields via its content script after verifying the active tab's origin (see ROADMAP, "Extension-verified auto-type"). If the origin does not match, nothing is typed. Non-browser auto-type is out of scope.
    - **Security notes**: injected keystrokes are visible to `WH_KEYBOARD_LL` keyloggers, so typing is not a defence against them; and randomized delays do **not** defeat keystroke-timing analytics. Neither claim is made. Extension fill avoids the keystroke channel entirely, and the clipboard is not touched either.
 6. **Active Foreground Window Context Detection**:
-   - When the user presses `Alt + Shift + S`, `shush` reads the title of the active foreground window (`GetForegroundWindow` + `GetWindowTextW`) before opening the overlay.
-   - Extracts application and domain keywords (e.g. `"Sign in to GitHub - Google Chrome"` $\rightarrow$ `"github"`).
-   - Pre-populates the search and highlights the exact matching credential so the user can log in with a single `Enter`.
+   - When the user presses the Spotlight hotkey (`Ctrl + Alt + Space`; `Alt + Shift + S` was dropped because `Alt + Shift` is the Windows input-language switch, #14), `shush` reads the title of the active foreground window (`GetForegroundWindow` + `GetWindowTextW`) before opening the overlay.
+   - Extracts application and domain keywords (e.g. `"Sign in to GitHub - Google Chrome"` $ightarrow$ `"github"`).
+   - **The title is a search hint only.** Any web page can set its own `<title>`, so a phishing page could pre-select a real credential. The match only pre-fills the search and highlights a result; it never fills or types anything. Copying still needs an explicit `Enter`, and filling into a page happens only via the extension, which verifies the tab origin (item 5).
+   - If `RegisterHotKey` fails (another app owns the combo), shush keeps running, reports the hotkey as unavailable, and Spotlight stays reachable from the tray and the main window's "Quick search" button.
 7. **Plausible Deniability & Decoy Vault (Duress PIN)**:
    - For users facing physical coercion, `shush` allows configuring a secondary **Duress PIN / Password**.
    - If entered on the unlock screen:
@@ -316,7 +317,7 @@ The visual identity of `shush` merges the clandestine authority of a terminal/ha
      - Concealed password `••••••••••••` with quick reveal toggle.
      - Live 2FA / TOTP ring: displays 6-digit code with a circular SVG timer showing seconds remaining until next rotation.
      - Edit & Delete buttons.
-3. **Spotlight Quick Search (`Alt + Shift + S`)**:
+3. **Spotlight Quick Search (`Ctrl + Alt + Space`)**:
    - Floating, borderless mini-window centered on screen with backdrop-blur.
    - Terminal prompt: `shush > ` with instantaneous fuzzy search.
    - **Keyboard Navigation**:
@@ -597,7 +598,7 @@ When instructing Claude to build `shush`, direct it to execute these sequential 
    - Integrate TOTP generator calculation and countdown ring.
 5. **Step 5: Desktop Polish & Windows Integration**
    - Implement system tray with auto-minimize.
-   - Register global shortcut `Alt + Shift + S` for the Spotlight overlay with active window context detection.
+   - Register global shortcut `Ctrl + Alt + Space` for the Spotlight overlay with active window context detection.
    - Hook clipboard auto-clear, extension-verified auto-type (no `SendInput`), and `WDA_EXCLUDEFROMCAPTURE` window protection.
 6. **Step 6: Backup, Export & Import Engine**
    - Implement encrypted `.shushbackup` generator with metadata manifest.
