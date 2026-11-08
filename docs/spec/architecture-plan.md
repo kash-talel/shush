@@ -176,7 +176,7 @@ graph LR
 
 To make `shush` feel effortless and enjoyable for daily use:
 
-1. **Global Quick Search (`Alt + Shift + S` or `Ctrl + Space`)**:
+1. **Global Quick Search (`Ctrl + Alt + Space`)**:
    - Opens a Spotlight/Raycast-like mini search overlay.
    - Type 2 letters of a website name (e.g., `"gi"` for GitHub), press Enter to copy the password, or `Ctrl+Enter` to copy the username.
 2. **Integrated Built-in TOTP Authenticator**:
