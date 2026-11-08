@@ -263,10 +263,10 @@ export interface VaultSettings {
 4. **Session Lock Detection**:
    - Listen to Windows session messages (`WTSRegisterSessionNotification`).
    - If `WTS_SESSION_LOCK` or `WM_POWERBROADCAST` (sleep/suspend) is received, invoke `vault.lock()` immediately.
-5. **Direct Auto-Type (`SendInput` Synthesizer)**:
-   - In addition to standard clipboard copying, `shush` can simulate direct keyboard typing into the active application via `SendInput`.
-   - Injects credentials (`username` $\rightarrow$ `TAB` $\rightarrow$ `password` $\rightarrow$ `ENTER`) with randomized micro-delays (15–35ms) between strokes to defeat keystroke timing analytics.
-   - **Zero Clipboard Exposure**: Credentials never touch the Windows clipboard buffer, completely neutralizing clipboard-monitoring spyware.
+5. **Extension-Verified Auto-Type (replaces `SendInput` synthesis, #13)**:
+   - shush does **not** synthesize keystrokes with `SendInput`. Synthesized typing has an unfixable focus race (a toast, chat window or UAC prompt can take focus mid-sequence, and `username TAB password ENTER` would go to the wrong app, where a chat box would *send* the password), breaks on non-QWERTY layouts and dead keys, fails silently against elevated windows (UIPI), and can trigger the `Alt+Shift` input-language switch.
+   - Instead, the paired browser extension fills the fields via its content script after verifying the active tab's origin (see ROADMAP, "Extension-verified auto-type"). If the origin does not match, nothing is typed. Non-browser auto-type is out of scope.
+   - **Security notes**: injected keystrokes are visible to `WH_KEYBOARD_LL` keyloggers, so typing is not a defence against them; and randomized delays do **not** defeat keystroke-timing analytics. Neither claim is made. Extension fill avoids the keystroke channel entirely, and the clipboard is not touched either.
 6. **Active Foreground Window Context Detection**:
    - When the user presses `Alt + Shift + S`, `shush` reads the title of the active foreground window (`GetForegroundWindow` + `GetWindowTextW`) before opening the overlay.
    - Extracts application and domain keywords (e.g. `"Sign in to GitHub - Google Chrome"` $\rightarrow$ `"github"`).
@@ -375,7 +375,7 @@ shush/
 │   │   ├── os/
 │   │   │   ├── mod.rs
 │   │   │   ├── clipboard.rs        # Win32 sequence-aware clipboard auto-wiper
-│   │   │   ├── autotype.rs         # SendInput keystroke synthesizer with micro-delays
+│   │   │   ├── autotype.rs         # (removed: auto-type is extension-verified, see #13)
 │   │   │   ├── win_context.rs      # GetForegroundWindow title detection
 │   │   │   ├── win_hello.rs        # Windows Hello KeyCredentialManager session (windows-hello.md)
 │   │   │   ├── screen_protect.rs   # WDA_EXCLUDEFROMCAPTURE window hook
@@ -598,7 +598,7 @@ When instructing Claude to build `shush`, direct it to execute these sequential 
 5. **Step 5: Desktop Polish & Windows Integration**
    - Implement system tray with auto-minimize.
    - Register global shortcut `Alt + Shift + S` for the Spotlight overlay with active window context detection.
-   - Hook clipboard auto-clear, direct Auto-Type (`SendInput`), and `WDA_EXCLUDEFROMCAPTURE` window protection.
+   - Hook clipboard auto-clear, extension-verified auto-type (no `SendInput`), and `WDA_EXCLUDEFROMCAPTURE` window protection.
 6. **Step 6: Backup, Export & Import Engine**
    - Implement encrypted `.shushbackup` generator with metadata manifest.
    - Implement smart importer with visual diff preview and conflict resolution strategies (Merge & Update Newer vs Clean Restore).
