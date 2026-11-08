@@ -59,3 +59,4 @@ set for. Neither changes anything for a normal install.
 | 7a first run | `phase7a/e2e-phase7a.sh` | 10/10 |
 | Design overhaul | `design-audit/audit.sh` (17-view screenshot walk, fresh vault) + 5b and 7a re-run | 11/11, 10/10 |
 | Unseal unlock ritual | `unlock-ritual/e2e-unlock-ritual.sh`, reduced motion and full motion | 19/19, 19/19 |
+| Multiple vaults | `multi-vault/e2e-multi-vault.sh` (fresh scratch vault; uses `cdp.mjs` from `phase5b`) | 34/34 |

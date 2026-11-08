@@ -27,6 +27,11 @@ There is no recovery. Forgetting the password or losing the keyfile locks the va
 The vault lives at `%APPDATA%\com.shush.vault\vault.shush`. Attachments sit beside it in
 `vault.shush.d\`. The previous version is kept as `vault.shush.bak` on every save.
 
+More vaults can live anywhere, a USB drive included. `vaults.json` beside the default vault lists them
+by name, path and disc colour only (nothing secret), and remembers which one was opened last. Deleting a
+vault needs its typed name and its master password (plus keyfile), is throttled after three wrong tries,
+and moves the vault, its `.bak` and its attachments to the Recycle Bin.
+
 ### Import passwords
 
 The first-run screen lists the browsers it finds (it checks that a profile folder exists; it never
