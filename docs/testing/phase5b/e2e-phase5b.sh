@@ -20,7 +20,7 @@ r=$($WIN hotkey-owned | tr -d '\r')
 
 echo "--- unlock main, open Spotlight from the sidebar button"
 if [ "$($M eval "!!document.querySelector('#master-password')")" = "true" ]; then
-  $M fill "#master-password" "Onboarding-Test-2026" >/dev/null
+  $M click "#unseal" >/dev/null; $M fill "#master-password" "Onboarding-Test-2026" >/dev/null
   $M click "button[type=submit]" >/dev/null
 fi
 mwait "document.querySelector('nav[aria-label=\"Vault sections\"]')" 30000

@@ -98,7 +98,7 @@ await send('Emulation.clearDeviceMetricsOverride');ws.close();})()" "$OUT/14-min
 $D click "text:Lock vault" >/dev/null
 waitfor "document.querySelector('#master-password')"
 shot 15-unlock
-$D fill "#master-password" "wrong-password" >/dev/null
+$D click "#unseal" >/dev/null; $D fill "#master-password" "wrong-password" >/dev/null
 $D click "button[type=submit]" >/dev/null
 waitfor "document.body.textContent.includes('WRONG_CREDENTIALS')" 30000
 shot 16-unlock-error

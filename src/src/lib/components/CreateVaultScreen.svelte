@@ -121,7 +121,7 @@
   <div class="my-auto w-full max-w-[440px]">
     <header class="mb-5 flex items-center gap-4">
       <div class="shrink-0 [@media(max-height:620px)]:hidden">
-        <Spindle spinning={busy} size={76} />
+        <Spindle spin={busy ? "fast" : "idle"} size={76} />
       </div>
       <div class="min-w-0 flex-1">
         <h1 class="font-display text-[26px] leading-tight font-bold tracking-[-0.01em] text-zinc-50">New vault</h1>

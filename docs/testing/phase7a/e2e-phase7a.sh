@@ -51,7 +51,7 @@ check "dashboard shows the imported login" "[...document.querySelectorAll('[role
 echo "--- onboarding is first-run only"
 $D eval "window.dispatchEvent(new KeyboardEvent('keydown',{key:'l',ctrlKey:true})), 1" >/dev/null
 waitfor "document.querySelector('#master-password')"
-$D fill "#master-password" "Onboarding-Test-2026" >/dev/null
+$D click "#unseal" >/dev/null; $D fill "#master-password" "Onboarding-Test-2026" >/dev/null
 $D click "button[type=submit]" >/dev/null
 waitfor "document.querySelector('nav[aria-label=\"Vault sections\"]')" 30000
 check "normal unlock goes straight to the dashboard" "document.querySelector('nav') && !$body.includes('Bring your passwords')"

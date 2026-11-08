@@ -13,7 +13,7 @@ opts="[...document.querySelectorAll('[role=option]')]"
 
 echo "--- unlock"
 if [ "$($D eval "!!document.querySelector('#master-password')")" = "true" ]; then
-  $D fill "#master-password" "Tactical-Vault-2026" >/dev/null
+  $D click "#unseal" >/dev/null; $D fill "#master-password" "Tactical-Vault-2026" >/dev/null
   $D click "text:browse" >/dev/null; sleep 2; $DLG -Title "Select keyfile" -Path "$KEY" >/dev/null
   waitfor "$body.includes('KEYFILE ATTACHED')"; $D click "button[type=submit]" >/dev/null
 fi
