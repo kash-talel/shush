@@ -26,7 +26,7 @@ To satisfy the highest security and performance standards:
 | **Backend & Crypto Core** | **Rust** | 2021/2024 Edition | Guaranteed memory safety, zero-cost abstractions, deterministic memory wiping via `zeroize`, and audited cryptographic crates. |
 | **Desktop Shell** | **Tauri v2** | `tauri` v2.x | Native Windows WebView2 frame, global hotkeys, system tray, tiny footprint (~12 MB binary, ~30 MB idle RAM vs 180MB+ for Electron). |
 | **Frontend UI** | **Svelte 5** + **Vite** | Modern Runes syntax | Ultra-reactive, zero virtual DOM overhead, instantaneous state updates. |
-| **Styling & Icons** | **Tailwind CSS v4** + **Lucide** | Dark-mode palette (Zinc/Emerald) | Clean, sleek, minimalist aesthetic matching Linear / Raycast. |
+| **Styling & Icons** | **Tailwind CSS v4** + **Lucide** | CSS-first (`@tailwindcss/vite`, no legacy `tailwind.config.js`) | Clean, sleek, minimalist aesthetic matching Linear / Raycast. |
 | **Packaging** | **Tauri Bundler** | Single-file `.exe` / WiX installer | Standalone executable deployment. |
 
 ### 2.1 Critical Rust Crates
@@ -51,6 +51,9 @@ windows-sys = { version = "0.52", features = [
     "Win32_System_RemoteDesktop"
 ] }
 ```
+
+> [!NOTE] Crate Versioning & Upgrade Planning
+> Rust crate majors are pinned as specified above for baseline stability. Upgrades to `rand 0.9` (which revises `RngCore` and trait distributions) and the `windows` crate family (for WinRT `KeyCredentialManager` required by Windows Hello) are tracked in issue #91 for Phase 8.
 
 ---
 
@@ -319,6 +322,7 @@ The visual identity of `shush` merges the clandestine authority of a terminal/ha
      - Edit & Delete buttons.
 3. **Spotlight Quick Search (`Ctrl + Alt + Space`)**:
    - Floating, borderless mini-window centered on screen with backdrop-blur.
+   - Hotkey: `Ctrl + Alt + Space` (Owner decision #14: selected over earlier drafts of `Alt + Shift + S` and `Ctrl + Space` to prevent hotkey collisions with Windows keyboard layout switching).
    - Terminal prompt: `shush > ` with instantaneous fuzzy search.
    - **Keyboard Navigation**:
      - `↑ / ↓` or `j / k`: Navigate items.
@@ -388,8 +392,8 @@ shush/
 │   ├── index.html
 │   ├── vite.config.ts
 │   ├── package.json
-│   ├── tailwind.config.js
 │   ├── src/
+│   │   ├── app.css                 # CSS-first Tailwind v4 imports & theme
 │   │   ├── App.svelte              # Main router (Unlock vs Main View vs Spotlight)
 │   │   ├── lib/
 │   │   │   ├── components/
