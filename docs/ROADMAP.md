@@ -160,9 +160,11 @@ Owner order: duress vault → LAN sync → air-gapped mode (lands with the first
 
 ### 8b. On-demand LAN sync (#18, #19)
 
+- **Design:** [`docs/spec/lan-sync.md`](spec/lan-sync.md) (normative).
 - **Pairing.** *Sync → Pair device* opens a 2-minute window. Discovery is mDNS only inside that
   window, or manual address entry; nothing is advertised otherwise. Pairing runs SPAKE2 over a
-  one-time code shown on one device and typed on the other; then both pin each other's static key.
+  one-time code shown on one device and typed on the other, keying a Noise `XXpsk3` handshake;
+  then both pin each other's static key.
 - **Transport.** Noise XX (`snow`) with pinned static keys; peers can be revoked.
 - **Merge.** Needs an authenticated generation counter in the header (#9) and deletion tombstones
   with bounded history (#19) before any two vaults are merged.

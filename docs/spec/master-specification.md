@@ -371,8 +371,9 @@ shush/
 │   │   │   └── state.rs            # Thread-safe in-memory unlocked vault state
 │   │   ├── sync/
 │   │   │   ├── mod.rs
-│   │   │   ├── discovery.rs        # mDNS _shush-sync._tcp local peer locator
-│   │   │   └── tls_p2p.rs          # TLS 1.3 peer socket & 6-digit PIN handshake
+│   │   │   ├── discovery.rs        # mDNS, only inside a pairing/sync window (lan-sync.md)
+│   │   │   ├── pairing.rs          # SPAKE2 one-time code + Noise XXpsk3, peer pinning
+│   │   │   └── session.rs          # Noise XX sessions with pinned peers, revocation
 │   │   ├── os/
 │   │   │   ├── mod.rs
 │   │   │   ├── clipboard.rs        # Win32 sequence-aware clipboard auto-wiper
@@ -560,20 +561,22 @@ For users who want to keep multiple PCs/laptops in sync without ever uploading t
 
 ```mermaid
 flowchart LR
-    DevA["Device A (PC)\nshush.exe"] <-->|"1. mDNS Discovery (_shush-sync._tcp)"| DevB["Device B (Laptop)\nshush.exe"]
-    DevA <-->|"2. Ephemeral TLS 1.3 Handshake"| DevB
-    DevA <-->|"3. 6-Digit Visual PIN Verification"| DevB
+    DevA["Device A (PC)\nshush.exe"] <-->|"1. User opens a 2-minute window (mDNS or typed address)"| DevB["Device B (Laptop)\nshush.exe"]
+    DevA <-->|"2. SPAKE2 one-time code + Noise XXpsk3, pin static keys"| DevB
+    DevA <-->|"3. Later sessions: Noise XX, pinned peers only"| DevB
     DevA <-->|"4. Encrypted NDHM Vault Merge"| DevB
 ```
 
+The normative design is [`lan-sync.md`](lan-sync.md) (issue #18); this section summarizes it.
+
 ### 11.1 Zero-Cloud Architecture
-1. **Local Discovery (mDNS)**:
-   - Devices on the same home Wi-Fi / LAN announce their presence using **mDNS / DNS-SD** under the service name `_shush-sync._tcp.local`.
-   - Operates completely offline; zero external internet connection or router port-forwarding required.
-2. **Ephemeral TLS 1.3 with PIN Pairing**:
-   - Direct peer-to-peer connection secured with TLS 1.3.
-   - Initial pairing requires confirming an identical **6-digit visual PIN** (e.g. `482-195`) displayed on both device screens simultaneously.
-3. **Incremental NDHM Merge**:
+1. **On-demand discovery only**:
+   - Nothing listens and nothing is advertised until the user opens a **pairing or sync window** (2 minutes, one connection at a time, 3 failed attempts). Inside the window, mDNS uses a random instance and host name with no user, computer or vault name, and can be turned off in favour of typing the address.
+   - No router port-forwarding and no internet connection. **Air-gapped mode** (#25) disables sync entirely.
+2. **PAKE pairing, no TLS**:
+   - One device shows a one-time 8-character code; the user types it on the other. SPAKE2 turns the code into a key that feeds a Noise `XXpsk3` handshake, so a man-in-the-middle without the code cannot complete pairing, and a recorded transcript allows no offline guessing. (A short PIN compared on both screens over self-signed TLS was dropped: a MITM can grind keys until the PINs match.)
+   - Each side then pins the other's static key. Pinned peers live in the encrypted vault payload; *Forget device* revokes one, *Reset sync identity* revokes all.
+3. **Incremental NDHM Merge** (needs #9 and #19 first):
    - Once paired, devices synchronize delta changes using the **Non-Destructive Historical Merging** engine.
    - Conflicting edits preserve both passwords in history, ensuring seamless synchronization without data loss.
 
@@ -609,5 +612,5 @@ When instructing Claude to build `shush`, direct it to execute these sequential 
    - Implement standard Native Messaging Host (`stdin`/`stdout` JSON) to power the companion browser extension for automatic web save and inline auto-fill.
 8. **Step 8: Advanced Security & Local Sync**
    - Implement Plausible Deniability (Decoy Vault via Duress PIN).
-   - Implement Local LAN Wi-Fi peer synchronization via mDNS and TLS 1.3 with 6-digit PIN pairing.
+   - Implement on-demand LAN peer synchronization per `lan-sync.md`: time-boxed windows, SPAKE2 one-time-code pairing, Noise with pinned peers, revocation.
    - Implement Air-Gapped Mode toggle in Settings.
