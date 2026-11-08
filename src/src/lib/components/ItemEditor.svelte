@@ -3,7 +3,17 @@
   import { LoaderCircle, Sparkles, TriangleAlert } from "@lucide/svelte";
   import PasswordField from "./PasswordField.svelte";
   import PasswordGenerator from "./PasswordGenerator.svelte";
-  import { toCmdError, type CmdError, type FolderInfo, type ItemDetail, type ItemDraft, type ItemKind } from "../tauri-bridge";
+  import {
+    createItem,
+    getItem,
+    reloadVault,
+    toCmdError,
+    type CmdError,
+    type FolderInfo,
+    type ItemDetail,
+    type ItemDraft,
+    type ItemKind,
+  } from "../tauri-bridge";
 
   // Create / edit form. Secrets follow "keep unless changed": when editing,
   // the existing password and TOTP secret are never loaded into the UI.
@@ -14,6 +24,7 @@
     defaultFolderId = null,
     onsave,
     oncancel,
+    onrefresh,
   }: {
     kind: ItemKind;
     existing?: ItemDetail | null;
@@ -21,6 +32,7 @@
     defaultFolderId?: string | null;
     onsave: (draft: ItemDraft) => Promise<void>;
     oncancel: () => void;
+    onrefresh?: () => Promise<void>;
   } = $props();
 
   // The form copies the item once on mount; it is remounted per edit session.
@@ -46,31 +58,152 @@
   let error = $state<CmdError | null>(null);
   let titleInput: HTMLInputElement | undefined = $state();
 
+  // Recovery state for VAULT_CHANGED_ON_DISK (issue #49)
+  let conflictFields = $state<string[]>([]);
+  let conflictItem = $state<ItemDetail | null>(null);
+  let itemDeletedOnDisk = $state(false);
+  let requirePassword = $state(false);
+  let masterPassword = $state("");
+
   const isLogin = $derived(kind === "login");
   const canSave = $derived(!busy && title.trim().length > 0);
+
+  function buildDraft(): ItemDraft {
+    return {
+      title,
+      username,
+      url,
+      notes,
+      content,
+      favorite,
+      tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+      folder_id: folderId,
+      password: isLogin && passwordTouched ? password : null,
+      totp: isLogin && totpTouched ? totp : null,
+    };
+  }
 
   async function submit(e: SubmitEvent) {
     e.preventDefault();
     if (!canSave) return;
     busy = true;
     error = null;
+    conflictItem = null;
+    conflictFields = [];
+    itemDeletedOnDisk = false;
     try {
-      await onsave({
-        title,
-        username,
-        url,
-        notes,
-        content,
-        favorite,
-        tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
-        folder_id: folderId,
-        password: isLogin && passwordTouched ? password : null,
-        totp: isLogin && totpTouched ? totp : null,
-      });
+      await onsave(buildDraft());
+    } catch (err) {
+      const cmdErr = toCmdError(err);
+      if (cmdErr.code === "PASSWORD_REQUIRED") {
+        requirePassword = true;
+      }
+      error = cmdErr;
+      busy = false;
+      await tick();
+    }
+  }
+
+  async function reloadAndReapply(force = false) {
+    busy = true;
+    error = null;
+    try {
+      await reloadVault(requirePassword ? masterPassword : undefined);
+      requirePassword = false;
+      masterPassword = "";
+
+      // If updating an existing item and not forced: check if disk changed
+      if (initial && !force) {
+        try {
+          const diskItem = await getItem(initial.id);
+          const diffs: string[] = [];
+          if (diskItem.title !== initial.title) diffs.push("title");
+          if (diskItem.username !== initial.username) diffs.push("username");
+          if (diskItem.url !== initial.url) diffs.push("URL");
+          if (diskItem.notes !== initial.notes) diffs.push("notes");
+          if (diskItem.content !== initial.content) diffs.push("content");
+          if (diskItem.folder_id !== initial.folder_id) diffs.push("folder");
+          if (diskItem.favorite !== initial.favorite) diffs.push("favorite");
+          if (diskItem.tags.join(",") !== initial.tags.join(",")) diffs.push("tags");
+
+          if (diffs.length > 0) {
+            conflictItem = diskItem;
+            conflictFields = diffs;
+            busy = false;
+            return;
+          }
+        } catch (e) {
+          const err = toCmdError(e);
+          if (err.code === "ITEM_NOT_FOUND") {
+            itemDeletedOnDisk = true;
+            busy = false;
+            return;
+          }
+          throw e;
+        }
+      }
+
+      conflictItem = null;
+      conflictFields = [];
+      itemDeletedOnDisk = false;
+      await onsave(buildDraft());
+    } catch (err) {
+      const cmdErr = toCmdError(err);
+      if (cmdErr.code === "PASSWORD_REQUIRED") {
+        requirePassword = true;
+      }
+      error = cmdErr;
+      busy = false;
+      await tick();
+    }
+  }
+
+  function applyDiskVersion() {
+    if (!conflictItem) return;
+    title = conflictItem.title;
+    username = conflictItem.username;
+    url = conflictItem.url;
+    notes = conflictItem.notes;
+    content = conflictItem.content;
+    tags = conflictItem.tags.join(", ");
+    favorite = conflictItem.favorite;
+    folderId = conflictItem.folder_id;
+    password = "";
+    passwordTouched = false;
+    totp = "";
+    totpTouched = false;
+    conflictItem = null;
+    conflictFields = [];
+  }
+
+  async function reloadAndDiscard() {
+    busy = true;
+    error = null;
+    try {
+      await reloadVault(requirePassword ? masterPassword : undefined);
+      await onrefresh?.();
+      oncancel();
+    } catch (err) {
+      const cmdErr = toCmdError(err);
+      if (cmdErr.code === "PASSWORD_REQUIRED") {
+        requirePassword = true;
+      }
+      error = cmdErr;
+      busy = false;
+    }
+  }
+
+  async function saveAsNew() {
+    itemDeletedOnDisk = false;
+    busy = true;
+    error = null;
+    try {
+      await createItem(kind, buildDraft());
+      await onrefresh?.();
+      oncancel();
     } catch (err) {
       error = toCmdError(err);
       busy = false;
-      await tick();
     }
   }
 
@@ -249,12 +382,108 @@
       </label>
     </div>
 
-    <div aria-live="polite" class="min-h-5">
+    <div aria-live="polite" class="min-h-5 space-y-3">
       {#if error}
-        <p class="flex items-start gap-1.5 text-xs text-danger">
-          <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-          <span><span class="font-mono">[{error.code}]</span> {error.message}</span>
-        </p>
+        <div class="rounded border border-danger/40 bg-danger/10 p-3 text-xs text-danger">
+          <p class="flex items-start gap-1.5">
+            <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <span><span class="font-mono">[{error.code}]</span> {error.message}</span>
+          </p>
+
+          {#if error.code === "VAULT_CHANGED_ON_DISK" || error.code === "PASSWORD_REQUIRED"}
+            <div class="mt-2.5 flex flex-col gap-2 border-t border-danger/20 pt-2.5">
+              {#if requirePassword}
+                <div>
+                  <label for="f-reload-pw" class="mb-1 block text-[11px] font-medium text-zinc-300">
+                    Master password changed on disk. Enter new master password to reload:
+                  </label>
+                  <input
+                    id="f-reload-pw"
+                    type="password"
+                    bind:value={masterPassword}
+                    placeholder="New master password"
+                    class="well h-8 w-full px-2 text-xs text-zinc-100 outline-none"
+                  />
+                </div>
+              {/if}
+
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={busy || (requirePassword && !masterPassword)}
+                  onclick={() => reloadAndReapply(false)}
+                  class="key h-7 px-2.5 text-[11px]"
+                >
+                  {#if busy}<LoaderCircle class="size-3 animate-spin" aria-hidden="true" />{/if}
+                  Reload & Save
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onclick={reloadAndDiscard}
+                  class="key-steel h-7 px-2 text-[11px]"
+                >
+                  Discard & Reload
+                </button>
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      {#if conflictItem}
+        <div class="rounded border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200" role="alert">
+          <p class="font-semibold text-amber-100">
+            Conflict detected: this item was also modified on disk.
+          </p>
+          <p class="mt-1 text-[11px] text-zinc-300">
+            Conflicting fields: <span class="font-mono text-amber-300">{conflictFields.join(", ")}</span>.
+          </p>
+          <div class="mt-2.5 flex items-center gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onclick={() => reloadAndReapply(true)}
+              class="key h-7 px-2.5 text-[11px]"
+            >
+              Overwrite with my edits
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onclick={applyDiskVersion}
+              class="key-steel h-7 px-2 text-[11px]"
+            >
+              Keep disk version
+            </button>
+          </div>
+        </div>
+      {/if}
+
+      {#if itemDeletedOnDisk}
+        <div class="rounded border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200" role="alert">
+          <p class="font-semibold text-amber-100">
+            This item was deleted on disk by another program.
+          </p>
+          <div class="mt-2.5 flex items-center gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onclick={saveAsNew}
+              class="key h-7 px-2.5 text-[11px]"
+            >
+              Save as new item
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onclick={oncancel}
+              class="key-steel h-7 px-2 text-[11px]"
+            >
+              Discard
+            </button>
+          </div>
+        </div>
       {/if}
     </div>
   </div>

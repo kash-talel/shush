@@ -164,6 +164,11 @@ At every point either the old or the new vault is intact on disk.
   other program replaced or removed the file), the save is refused
   (`VAULT_CHANGED_ON_DISK`), nothing on disk changes, and the edit is rolled back in
   memory. No header field was added: the random per-save header already identifies a save.
+- **Recovery without locking (issue #49).** When `VAULT_CHANGED_ON_DISK` occurs, the user can
+  reload the vault directly into memory using the keys already held in memory without
+  re-running Argon2 (provided salt/KDF are unchanged; if credentials changed, the password is
+  requested). The pending edit can then be re-applied on top of the reloaded data without
+  losing user work, or diffs are presented if the same item was modified concurrently on disk.
 
 ## Attachments (sidecar blobs, issue #5)
 

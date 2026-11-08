@@ -88,6 +88,9 @@ pub enum VaultError {
     /// (another writer replaced it); saving would discard its changes (issue #9).
     #[error("the vault file was changed by another program since it was opened")]
     ChangedOnDisk,
+    /// Reloading the vault from disk requires the password because credentials or KDF parameters changed (issue #49).
+    #[error("the master password is required to reload because credentials changed on disk")]
+    PasswordRequired,
     /// Attachments are sidecar files a decoy could count (issue #8).
     #[error("remove all attachments before setting a duress password")]
     DuressWithAttachments,
@@ -267,6 +270,90 @@ impl OpenVault {
             disk_id: Some(disk_id(bytes)),
             slot,
         })
+    }
+
+    /// Reloads the vault from disk after a concurrent change (issue #49).
+    ///
+    /// If the on-disk file has the same salt and KDF parameters as the in-memory
+    /// vault and can be opened with the existing keys, it is decrypted directly
+    /// without re-running Argon2id.
+    ///
+    /// If credentials or KDF parameters changed on disk:
+    /// - If `password` is `None`, returns [`VaultError::PasswordRequired`].
+    /// - If `password` is provided, derives the new keys and reloads.
+    pub fn reload(
+        &mut self,
+        path: &Path,
+        password: Option<&[u8]>,
+        keyfile: Option<&KeyfileDigest>,
+    ) -> Result<(), VaultError> {
+        let bytes = read_vault_file(path)?;
+        let header = Header::parse(&bytes)?;
+        if header.kind != FileKind::Vault {
+            return Err(VaultError::WrongKind(header.kind));
+        }
+
+        enum Parsed<'a> {
+            Slots(slots::SlotFile<'a>),
+            Single(container::Sealed<'a>),
+        }
+        let parsed = if container::read_version(&bytes) == FORMAT_VERSION {
+            Parsed::Slots(slots::parse(&bytes)?)
+        } else {
+            Parsed::Single(container::parse(&bytes)?)
+        };
+
+        let decrypt_with_keys = |keys: &VaultKeys| -> Result<(Zeroizing<Vec<u8>>, SlotState), VaultError> {
+            match &parsed {
+                Parsed::Slots(f) => {
+                    let (index, h) = f.find_slot(keys)?;
+                    let plaintext = f.open_payload(index, &h, keys)?;
+                    let slot = SlotState {
+                        index,
+                        other: f.slot(1 - index).to_vec(),
+                        len: f.slot_len(),
+                    };
+                    Ok((plaintext, slot))
+                }
+                Parsed::Single(s) => {
+                    s.verify_canary(keys)?;
+                    Ok((s.open_payload(keys)?, SlotState::fresh()?))
+                }
+            }
+        };
+
+        let (new_keys, plaintext, slot) = match password {
+            None => {
+                if header.salt != self.header.salt || header.kdf != self.header.kdf {
+                    return Err(VaultError::PasswordRequired);
+                }
+                match decrypt_with_keys(&self.keys) {
+                    Ok((pt, slot)) => (None, pt, slot),
+                    Err(_) => return Err(VaultError::PasswordRequired),
+                }
+            }
+            Some(pw) => {
+                match (header.keyfile_required, keyfile.is_some()) {
+                    (true, false) => return Err(VaultError::KeyfileRequired),
+                    (false, true) => return Err(VaultError::KeyfileNotExpected),
+                    _ => {}
+                }
+                let master = derive_master_key(pw, keyfile, &header.salt, &header.kdf)?;
+                let keys = VaultKeys::derive(&master);
+                let (pt, slot) = decrypt_with_keys(&keys)?;
+                (Some(keys), pt, slot)
+            }
+        };
+
+        let data: VaultData = decode_json(&plaintext)?;
+        if let Some(keys) = new_keys {
+            self.keys = keys;
+        }
+        self.header = header;
+        self.data = data;
+        self.slot = slot;
+        self.disk_id = Some(disk_id(&bytes));
+        Ok(())
     }
 
     /// Serializes and seals the vault into a complete (format v3) file image.
@@ -702,6 +789,84 @@ mod tests {
         let on_disk = OpenVault::unlock(&read_vault_file(&path).unwrap(), b"pw", None).unwrap();
         assert_eq!(on_disk.data().items.len(), 2, "A's items survive");
         assert!(!sibling_exists(&path, "tmp"));
+    }
+
+    #[test]
+    fn reload_recovers_from_changed_on_disk_and_allows_reapply() {
+        // Issue #49: recover from VAULT_CHANGED_ON_DISK without locking
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.shush");
+        create_vault_file(&path, b"pw", None, FAST).unwrap();
+        let bytes = read_vault_file(&path).unwrap();
+        let mut a = OpenVault::unlock(&bytes, b"pw", None).unwrap();
+        let mut b = OpenVault::unlock(&bytes, b"pw", None).unwrap();
+
+        // A writes an item to disk
+        a.modify::<_, VaultError>(&path, |d| {
+            d.items.push(note("from-a", "content-a"));
+            Ok(())
+        })
+        .unwrap();
+
+        // B tries to save, gets ChangedOnDisk
+        let err = b.modify::<_, VaultError>(&path, |d| {
+            d.items.push(note("from-b", "content-b"));
+            Ok(())
+        });
+        assert_eq!(err, Err(VaultError::ChangedOnDisk));
+
+        // B reloads with keys in memory (no password needed because salt/KDF unchanged)
+        b.reload(&path, None, None).unwrap();
+        assert_eq!(b.data().items.len(), 1);
+        fn item_title(item: &VaultItem) -> &str {
+            match item {
+                VaultItem::Login(l) => &l.base.title,
+                VaultItem::SecureNote(n) => &n.base.title,
+            }
+        }
+        assert_eq!(item_title(&b.data().items[0]), "from-a");
+
+        // B re-applies its edit on top of the reloaded vault
+        b.modify::<_, VaultError>(&path, |d| {
+            d.items.push(note("from-b", "content-b"));
+            Ok(())
+        })
+        .unwrap();
+
+        // File on disk now contains both edits
+        let final_disk = OpenVault::unlock(&read_vault_file(&path).unwrap(), b"pw", None).unwrap();
+        assert_eq!(final_disk.data().items.len(), 2);
+        assert_eq!(item_title(&final_disk.data().items[0]), "from-a");
+        assert_eq!(item_title(&final_disk.data().items[1]), "from-b");
+    }
+
+    #[test]
+    fn reload_requires_password_when_credentials_change_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.shush");
+        create_vault_file(&path, b"old-pw", None, FAST).unwrap();
+        let bytes = read_vault_file(&path).unwrap();
+        let mut client = OpenVault::unlock(&bytes, b"old-pw", None).unwrap();
+
+        // Another program writes a new vault file with a different password
+        std::fs::remove_file(&path).unwrap();
+        create_vault_file(&path, b"new-pw", None, FAST).unwrap();
+
+        // Reload without password fails asking for password
+        assert_eq!(
+            client.reload(&path, None, None),
+            Err(VaultError::PasswordRequired)
+        );
+
+        // Reload with wrong password fails
+        assert!(matches!(
+            client.reload(&path, Some(b"wrong-pw"), None),
+            Err(VaultError::Crypto(CryptoError::WrongCredentials))
+        ));
+
+        // Reload with correct new password succeeds
+        client.reload(&path, Some(b"new-pw"), None).unwrap();
+        assert!(client.save(&path).is_ok());
     }
 
     #[test]

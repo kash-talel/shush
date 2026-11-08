@@ -105,7 +105,11 @@ impl From<VaultError> for CmdError {
             ),
             V::ChangedOnDisk => Self::new(
                 "VAULT_CHANGED_ON_DISK",
-                "The vault file was changed by another program since you unlocked it.                  Your change was not saved. Lock and unlock the vault to load the current version.",
+                "The vault file was changed by another program since you unlocked it. Your change was not saved. Reload to load the current version from disk.",
+            ),
+            V::PasswordRequired => Self::new(
+                "PASSWORD_REQUIRED",
+                "The vault credentials or parameters changed on disk. Enter your password to reload.",
             ),
             V::DuressWithAttachments => Self::new(
                 "DURESS_WITH_ATTACHMENTS",
@@ -1019,6 +1023,38 @@ async fn unlock(
     .await
 }
 
+/// Reloads the active vault from disk (issue #49).
+///
+/// Uses the existing derived keys in memory if salt and KDF are unchanged;
+/// otherwise uses `password` if credentials changed on disk.
+#[tauri::command]
+async fn reload_vault(
+    app: tauri::AppHandle,
+    password: Option<String>,
+    keyfile_path: Option<String>,
+) -> Result<VaultSummary, CmdError> {
+    blocking(move || {
+        let password = password.map(Zeroizing::new);
+        let digest = keyfile_path
+            .as_deref()
+            .map(|p| crypto::keyfile::digest_file(Path::new(p)).map_err(keyfile_error))
+            .transpose()?;
+        let s = app
+            .state::<VaultState>()
+            .with_mut(|u| {
+                let pw_bytes = password.as_ref().map(|p| p.as_bytes());
+                u.vault.reload(&u.path, pw_bytes, digest.as_ref())?;
+                if !u.read_only {
+                    vault::attachments::gc_orphans(&u.path, u.vault.data());
+                }
+                Ok(summary(&u.path, &u.vault, u.read_only))
+            })
+            .unwrap_or_else(|| Err(locked()))?;
+        Ok(s)
+    })
+    .await
+}
+
 /// Whether the unlocked vault has a duress password (issue #8).
 #[tauri::command]
 fn duress_status(app: tauri::AppHandle) -> Result<bool, CmdError> {
@@ -1871,6 +1907,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             inspect_keyfile,
             create_vault,
             unlock,
+            reload_vault,
             lock,
             list_items,
             get_item,
