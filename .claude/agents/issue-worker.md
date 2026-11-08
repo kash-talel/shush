@@ -35,7 +35,8 @@ Labels: `bug`, `enhancement`, `severity:critical`, `severity:high`, `severity:me
 `spec-inconsistency`. Do not classify them in `.claude/issue-routing.json`; `/issue` does that.
 
 ## Step 3: Implement and verify
-1. Start from an up-to-date main: `git checkout main; git pull origin main`
+1. Start from an up-to-date main: `git checkout main; git pull --autostash origin main`
+   (`--autostash` because `.claude/issue-routing.json` may hold uncommitted routing entries.)
 2. Branch: `git checkout -b fix/issue-<NUMBER>-<short-slug>`
 3. Implement the change.
 4. Verify. Both must pass with 0 errors; fix any failure before going on:
@@ -54,7 +55,7 @@ Labels: `bug`, `enhancement`, `severity:critical`, `severity:high`, `severity:me
    gh pr create --title "fix(#<NUMBER>): <concise summary>" --body "Closes #<NUMBER>`n`n### Summary`n<summary>`n`n### Verification`n- [x] cargo test passed`n- [x] npm run check passed"
    ```
 4. `gh pr merge --squash --delete-branch --admin`
-5. `git checkout main; git pull origin main`
+5. `git checkout main; git pull --autostash origin main`
 6. Make sure the issue is closed (`gh issue close <NUMBER>` if it did not auto-close).
 
 ## Final report

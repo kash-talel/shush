@@ -61,7 +61,7 @@ gh issue create --title "[<Category>] <Concise Title>" --body "<Detailed descrip
 1. Ensure your local `main` branch is clean:
    ```powershell
    git checkout main
-   git pull origin main
+   git pull --autostash origin main
    ```
 2. Create a dedicated feature branch:
    ```powershell
@@ -103,7 +103,7 @@ gh issue create --title "[<Category>] <Concise Title>" --body "<Detailed descrip
 5. Return to main and pull:
    ```powershell
    git checkout main
-   git pull origin main
+   git pull --autostash origin main
    ```
 6. Ensure the issue is closed on GitHub (`gh issue close <NUMBER>` if not auto-closed).
 
