@@ -21,7 +21,13 @@
   } from "../tauri-bridge";
 
   // Settings → Backup & Export (spec §9.1) and backup import.
-  let { onimported }: { onimported: () => void } = $props();
+  let {
+    readOnly = false,
+    onimported,
+  }: {
+    readOnly?: boolean;
+    onimported: () => void;
+  } = $props();
 
   // ---- export ----
   let exportMode = $state<"same_as_vault" | "dedicated">("same_as_vault");
@@ -201,91 +207,100 @@
     </div>
 
     <!-- Import -->
-    <div class="flex flex-col gap-3 rounded-[7px] border border-hairline bg-surface/60 p-4 shadow-[inset_0_1px_0_rgb(255_255_255/0.03)]">
-      <h3 class="flex items-center gap-2 font-display text-[15px] font-bold text-zinc-50">
-        <ArchiveRestore class="size-4 text-uv" aria-hidden="true" /> Import from backup
-      </h3>
-      <button
-        type="button"
-        onclick={pickBackup}
-        class={[
-          "flex h-12 items-center gap-2.5 rounded-[5px] border px-3 text-left text-xs transition",
-          importPath ? "border-uv/40 bg-uv/5" : "border-dashed border-edge text-zinc-400 hover:border-zinc-500",
-        ]}
-      >
-        <FileArchive class="size-4 shrink-0" aria-hidden="true" />
-        {#if importPath}
-          {@const [dir, file] = splitPath(importPath)}
-          <span class="flex min-w-0 flex-1 font-mono text-[11px] text-uv" title={importPath}>
-            <span class="truncate">{dir}</span><span class="shrink-0">{file}</span>
-          </span>
-        {:else}
-          Choose a .shushbackup file…
-        {/if}
-      </button>
-
-      {#if importPath}
-        <PasswordField
-          id="import-password"
-          label="Backup password"
-          bind:value={importPassword}
-          oninput={() => resetImport()}
-        />
-        {#if importInfo?.keyfile_required}
-          <div>
-            <span class="mb-1.5 block text-xs font-medium text-caution">This backup requires its keyfile</span>
-            <KeyfileAttach bind:keyfile={importKeyfile} required onerror={(e) => (importError = e)} onchange={resetImport} />
-          </div>
-        {/if}
-
-        {#if preview}
-          <dl class="grid grid-cols-4 divide-x divide-hairline rounded-[4px] border border-hairline bg-[#09090e] text-center font-mono shadow-[inset_0_1px_2px_rgb(0_0_0/0.6)]" aria-label="Import preview">
-            {#each [["in backup", preview.total, "text-zinc-200"], ["new", preview.new_items, "text-uv"], ["identical", preview.identical, "text-zinc-400"], ["conflicts", preview.conflicts, "text-caution"]] as [label, n, tone] (label)}
-              <div class="px-2 py-2">
-                <dd class={["text-lg tabular-nums", tone]}>{n}</dd>
-                <dt class="text-[9.5px] text-zinc-500">{label}</dt>
-              </div>
-            {/each}
-          </dl>
-          <fieldset class="flex flex-col gap-2 text-xs text-zinc-300">
-            <legend class="sr-only">Import mode</legend>
-            <label class="flex items-start gap-2">
-              <input type="radio" bind:group={importMode} value="merge" onchange={() => (confirmReplace = false)} class="mt-0.5 accent-crimson" />
-              <span><span class="text-zinc-100">Merge</span>: add new items. For conflicts your current password stays active; the backup's is archived in history.</span>
-            </label>
-            <label class="flex items-start gap-2">
-              <input type="radio" bind:group={importMode} value="replace" class="mt-0.5 accent-crimson" />
-              <span><span class="text-zinc-100">Clean restore</span>: replace the vault's contents with the backup.</span>
-            </label>
-          </fieldset>
-        {/if}
-
-        {@render errorLine(importError)}
-        {#if importResult}<p class="text-xs text-uv" role="status">{importResult}</p>{/if}
-
+    {#if readOnly}
+      <div class="rounded-[7px] border border-hairline bg-surface/60 p-4 text-xs text-zinc-500">
+        <h3 class="flex items-center gap-2 font-display text-[15px] font-bold text-zinc-400">
+          <ArchiveRestore class="size-4 text-zinc-500" aria-hidden="true" /> Import from backup
+        </h3>
+        <p class="mt-2 text-zinc-500">Importing is unavailable because this vault is read-only.</p>
+      </div>
+    {:else}
+      <div class="flex flex-col gap-3 rounded-[7px] border border-hairline bg-surface/60 p-4 shadow-[inset_0_1px_0_rgb(255_255_255/0.03)]">
+        <h3 class="flex items-center gap-2 font-display text-[15px] font-bold text-zinc-50">
+          <ArchiveRestore class="size-4 text-uv" aria-hidden="true" /> Import from backup
+        </h3>
         <button
           type="button"
-          onclick={preview ? doImport : doPreview}
-          disabled={importing || !canPreview}
+          onclick={pickBackup}
           class={[
-            "key h-9 text-xs",
-            confirmReplace && "hazard bg-danger! shadow-[0_2px_0_#7a2410]!",
+            "flex h-12 items-center gap-2.5 rounded-[5px] border px-3 text-left text-xs transition",
+            importPath ? "border-uv/40 bg-uv/5" : "border-dashed border-edge text-zinc-400 hover:border-zinc-500",
           ]}
         >
-          {#if importing}<LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />{/if}
-          {#if !preview}
-            DECRYPT &amp; PREVIEW
-          {:else if confirmReplace}
-            CONFIRM: REPLACE VAULT CONTENTS
+          <FileArchive class="size-4 shrink-0" aria-hidden="true" />
+          {#if importPath}
+            {@const [dir, file] = splitPath(importPath)}
+            <span class="flex min-w-0 flex-1 font-mono text-[11px] text-uv" title={importPath}>
+              <span class="truncate">{dir}</span><span class="shrink-0">{file}</span>
+            </span>
           {:else}
-            {importMode === "merge" ? "MERGE INTO VAULT" : "RESTORE BACKUP"}
+            Choose a .shushbackup file…
           {/if}
         </button>
-      {/if}
-      {#if !importPath}{@render errorLine(importError)}{/if}
-    </div>
-    <CsvImport {onimported} />
-    <DuressCard />
+
+        {#if importPath}
+          <PasswordField
+            id="import-password"
+            label="Backup password"
+            bind:value={importPassword}
+            oninput={() => resetImport()}
+          />
+          {#if importInfo?.keyfile_required}
+            <div>
+              <span class="mb-1.5 block text-xs font-medium text-caution">This backup requires its keyfile</span>
+              <KeyfileAttach bind:keyfile={importKeyfile} required onerror={(e) => (importError = e)} onchange={resetImport} />
+            </div>
+          {/if}
+
+          {#if preview}
+            <dl class="grid grid-cols-4 divide-x divide-hairline rounded-[4px] border border-hairline bg-[#09090e] text-center font-mono shadow-[inset_0_1px_2px_rgb(0_0_0/0.6)]" aria-label="Import preview">
+              {#each [["in backup", preview.total, "text-zinc-200"], ["new", preview.new_items, "text-uv"], ["identical", preview.identical, "text-zinc-400"], ["conflicts", preview.conflicts, "text-caution"]] as [label, n, tone] (label)}
+                <div class="px-2 py-2">
+                  <dd class={["text-lg tabular-nums", tone]}>{n}</dd>
+                  <dt class="text-[9.5px] text-zinc-500">{label}</dt>
+                </div>
+              {/each}
+            </dl>
+            <fieldset class="flex flex-col gap-2 text-xs text-zinc-300">
+              <legend class="sr-only">Import mode</legend>
+              <label class="flex items-start gap-2">
+                <input type="radio" bind:group={importMode} value="merge" onchange={() => (confirmReplace = false)} class="mt-0.5 accent-crimson" />
+                <span><span class="text-zinc-100">Merge</span>: add new items. For conflicts your current password stays active; the backup's is archived in history.</span>
+              </label>
+              <label class="flex items-start gap-2">
+                <input type="radio" bind:group={importMode} value="replace" class="mt-0.5 accent-crimson" />
+                <span><span class="text-zinc-100">Clean restore</span>: replace the vault's contents with the backup.</span>
+              </label>
+            </fieldset>
+          {/if}
+
+          {@render errorLine(importError)}
+          {#if importResult}<p class="text-xs text-uv" role="status">{importResult}</p>{/if}
+
+          <button
+            type="button"
+            onclick={preview ? doImport : doPreview}
+            disabled={importing || !canPreview}
+            class={[
+              "key h-9 text-xs",
+              confirmReplace && "hazard bg-danger! shadow-[0_2px_0_#7a2410]!",
+            ]}
+          >
+            {#if importing}<LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />{/if}
+            {#if !preview}
+              DECRYPT &amp; PREVIEW
+            {:else if confirmReplace}
+              CONFIRM: REPLACE VAULT CONTENTS
+            {:else}
+              {importMode === "merge" ? "MERGE INTO VAULT" : "RESTORE BACKUP"}
+            {/if}
+          </button>
+        {/if}
+        {#if !importPath}{@render errorLine(importError)}{/if}
+      </div>
+      <CsvImport {onimported} />
+      <DuressCard />
+    {/if}
 
     <!-- Emergency Recovery Kit (spec §7.2 item 6, issue #27) -->
     <div class="flex flex-col gap-3 rounded-[7px] border border-hairline bg-surface/60 p-4 shadow-[inset_0_1px_0_rgb(255_255_255/0.03)]">

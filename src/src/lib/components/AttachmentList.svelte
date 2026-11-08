@@ -13,7 +13,15 @@
 
   // Encrypted file attachments (spec §5, #5). Files are stored as separately
   // sealed blobs; contents only leave Rust when the user saves one to disk.
-  let { item, onchange }: { item: ItemDetail; onchange: (updated: ItemDetail) => void } = $props();
+  let {
+    item,
+    readOnly = false,
+    onchange,
+  }: {
+    item: ItemDetail;
+    readOnly?: boolean;
+    onchange: (updated: ItemDetail) => void;
+  } = $props();
 
   let busy = $state(false);
   let error = $state<CmdError | null>(null);
@@ -67,8 +75,9 @@
     <button
       type="button"
       onclick={add}
-      disabled={busy}
-      class="key-steel h-7 px-2 text-xs"
+      disabled={busy || readOnly}
+      title={readOnly ? "Vault is read-only" : undefined}
+      class={["key-steel h-7 px-2 text-xs", readOnly && "cursor-not-allowed opacity-50"]}
     >
       {#if busy}<LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />{:else}<Paperclip class="size-3.5" aria-hidden="true" />{/if}
       Add file
@@ -92,15 +101,17 @@
             >
               <Download class="size-3.5" />
             </button>
-            <button
-              type="button"
-              onclick={() => remove(a.id)}
-              onblur={() => (confirmDelete = null)}
-              class={["grid size-7 place-items-center rounded-[3px] hover:bg-raised", confirmDelete === a.id ? "text-danger" : "text-zinc-500 hover:text-danger"]}
-              aria-label={confirmDelete === a.id ? `Click again to delete ${a.filename}` : `Delete ${a.filename}`}
-            >
-              <Trash2 class="size-3.5" />
-            </button>
+            {#if !readOnly}
+              <button
+                type="button"
+                onclick={() => remove(a.id)}
+                onblur={() => (confirmDelete = null)}
+                class={["grid size-7 place-items-center rounded-[3px] hover:bg-raised", confirmDelete === a.id ? "text-danger" : "text-zinc-500 hover:text-danger"]}
+                aria-label={confirmDelete === a.id ? `Click again to delete ${a.filename}` : `Delete ${a.filename}`}
+              >
+                <Trash2 class="size-3.5" />
+              </button>
+            {/if}
           </li>
         {/each}
       </ul>

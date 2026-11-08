@@ -9,6 +9,7 @@
   let {
     item,
     folderName = null,
+    readOnly = false,
     onupdated,
     oncopy,
     onedit,
@@ -17,6 +18,7 @@
   }: {
     item: ItemDetail;
     folderName?: string | null;
+    readOnly?: boolean;
     onupdated: (updated: ItemDetail) => void;
     oncopy: (field: SecretField) => void;
     onedit: () => void;
@@ -85,20 +87,30 @@
     <button
       type="button"
       onclick={onfavorite}
-      class="grid size-8 place-items-center rounded-[3px] hover:bg-raised"
+      disabled={readOnly}
+      title={readOnly ? "Vault is read-only" : undefined}
+      class={["grid size-8 place-items-center rounded-[3px]", readOnly ? "cursor-not-allowed opacity-50" : "hover:bg-raised"]}
       aria-label={item.favorite ? "Remove from favorites" : "Add to favorites"}
       aria-pressed={item.favorite}
     >
       <Star class={["size-4", item.favorite ? "fill-caution text-caution" : "text-zinc-500"]} />
     </button>
-    <button type="button" onclick={onedit} class="key-steel h-8 px-2.5 text-xs">
+    <button
+      type="button"
+      onclick={onedit}
+      disabled={readOnly}
+      title={readOnly ? "Vault is read-only" : undefined}
+      class={["key-steel h-8 px-2.5 text-xs", readOnly && "cursor-not-allowed opacity-50"]}
+    >
       <Pencil class="size-3.5" aria-hidden="true" /> Edit
     </button>
     <button
       type="button"
       onclick={remove}
+      disabled={readOnly}
+      title={readOnly ? "Vault is read-only" : undefined}
       onblur={() => (confirmDelete = null)}
-      class={["key-steel h-8 px-2.5 text-xs", confirmDelete === item.id ? "hazard border-danger! text-danger!" : "hover:text-danger!"]}
+      class={["key-steel h-8 px-2.5 text-xs", readOnly ? "cursor-not-allowed opacity-50" : confirmDelete === item.id ? "hazard border-danger! text-danger!" : "hover:text-danger!"]}
     >
       <Trash2 class="size-3.5" aria-hidden="true" />
       {confirmDelete === item.id ? "Click again to delete" : "Delete"}
@@ -166,7 +178,7 @@
       </div>
     {/if}
 
-    <AttachmentList {item} onchange={onupdated} />
+    <AttachmentList {item} {readOnly} onchange={onupdated} />
 
     {#if item.tags.length}
       <div class="flex flex-wrap gap-1.5 border-b border-hairline px-5 py-3">

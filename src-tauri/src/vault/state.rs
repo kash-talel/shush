@@ -22,7 +22,10 @@ pub struct Unlocked {
     /// Decrypted vault (wiped on drop).
     pub vault: OpenVault,
     /// Exclusive cross-process lock on the file, released on lock (issue #9).
-    pub lock: VaultLock,
+    /// `None` when opened in read-only mode (issue #48).
+    pub lock: Option<VaultLock>,
+    /// Whether the vault was opened in read-only mode (issue #48).
+    pub read_only: bool,
 }
 
 #[derive(Default)]
@@ -125,9 +128,10 @@ mod tests {
         };
         let path = std::env::temp_dir().join("shush-state-test.shush");
         Unlocked {
-            lock: VaultLock::acquire(&path).unwrap(),
+            lock: Some(VaultLock::acquire(&path).unwrap()),
             path,
             vault: OpenVault::create(b"pw", None, opts).unwrap(),
+            read_only: false,
         }
     }
 

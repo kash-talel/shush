@@ -34,6 +34,7 @@ export interface VaultStatus {
   path: string;
   exists: boolean;
   unlocked: boolean;
+  read_only: boolean;
   keyfile_required: boolean | null;
   cipher: CipherInfo | null;
   kdf: KdfParams | null;
@@ -50,6 +51,7 @@ export interface VaultSummary {
   keyfile_required: boolean;
   item_count: number;
   folder_count: number;
+  read_only: boolean;
 }
 
 export interface KeyfileInfo {

@@ -8,12 +8,14 @@
   let {
     info,
     locked = true,
+    readOnly = false,
     cipher = null,
     kdf = null,
     clipboardUntil = 0,
   }: {
     info: AppInfo | null;
     locked?: boolean;
+    readOnly?: boolean;
     cipher?: CipherInfo | null;
     kdf?: KdfParams | null;
     /** Epoch ms at which the copied secret is auto-cleared (0 = nothing copied). */
@@ -40,6 +42,10 @@
     <span class={["led", locked ? "text-ruby" : "text-uv"]} aria-hidden="true"></span>
     vault <span class={locked ? "text-ruby" : "text-uv"}>{locked ? "LOCKED" : "UNLOCKED"}</span>
   </span>
+  {#if readOnly}
+    <span aria-hidden="true" class="h-3 w-px bg-hairline"></span>
+    <span class="rounded border border-caution/30 bg-caution/15 px-1.5 py-0.5 font-bold uppercase tracking-wider text-caution" role="status">READ-ONLY</span>
+  {/if}
   <span aria-hidden="true" class="h-3 w-px bg-hairline"></span>
   <span>cipher <span class="text-zinc-300">{cipherName.toLowerCase()}</span></span>
   <span aria-hidden="true" class="h-3 w-px bg-hairline max-sm:hidden"></span>

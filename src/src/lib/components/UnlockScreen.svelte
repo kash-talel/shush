@@ -173,9 +173,14 @@
           <h1 class="font-display text-[26px] leading-none font-bold tracking-[-0.01em] text-zinc-50">{vault.name && !vault.hide_names ? `Unlock ${vault.name}` : "Unlock vault"}</h1>
           {#if !vault.hide_names}
             <!-- Middle-truncate: the directory may shrink, the file name never does. -->
-            <p class="flex max-w-full font-mono text-[10.5px] text-zinc-500" title={vault.path}>
+            <p class="flex max-w-full items-center gap-1.5 font-mono text-[10.5px] text-zinc-500" title={vault.path}>
               <span class="truncate">{vault.path.slice(0, cut + 1)}</span>
               <span class="shrink-0 text-uv">{vault.path.slice(cut + 1)}</span>
+              {#if vault.read_only}
+                <span class="rounded border border-caution/40 bg-caution/10 px-1 py-0.2 font-mono text-[9px] font-bold uppercase tracking-wider text-caution" role="status">
+                  read-only
+                </span>
+              {/if}
             </p>
           {/if}
         </header>

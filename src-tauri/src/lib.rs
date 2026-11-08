@@ -274,6 +274,7 @@ struct VaultStatus {
     path: String,
     exists: bool,
     unlocked: bool,
+    read_only: bool,
     /// From the (authenticated) header; `None` if there is no readable vault.
     keyfile_required: Option<bool>,
     cipher: Option<CipherInfo>,
@@ -290,8 +291,13 @@ fn status_for(
     entry: Option<&VaultEntry>,
     path: &Path,
     unlocked: bool,
+    read_only: bool,
     hide_names: bool,
 ) -> VaultStatus {
+    let exists = path.is_file();
+    let file_ro = std::fs::metadata(path)
+        .map(|m| m.permissions().readonly())
+        .unwrap_or(false);
     let mut status = VaultStatus {
         id: entry.map(|e| e.id.clone()),
         name: entry.map(|e| e.name.clone()),
@@ -299,8 +305,9 @@ fn status_for(
             .map_or(VAULT_COLORS[0], |e| e.color.as_str())
             .to_string(),
         path: path.display().to_string(),
-        exists: path.is_file(),
+        exists,
         unlocked,
+        read_only: if unlocked { read_only } else { file_ro },
         keyfile_required: None,
         cipher: None,
         kdf: None,
@@ -347,14 +354,16 @@ fn status_for(
 
 #[tauri::command]
 fn vault_status(app: tauri::AppHandle) -> Result<VaultStatus, CmdError> {
-    let unlocked = app.state::<VaultState>().is_unlocked();
+    let state = app.state::<VaultState>();
+    let unlocked = state.is_unlocked();
+    let read_only = state.with(|u| u.read_only).unwrap_or(false);
     let (entry, path, hide_names) = edit_registry(&app, |reg, def| {
         Ok(match reg.selected_entry() {
             Some(e) => (Some(e.clone()), e.path.clone(), reg.hide_names),
             None => (None, def.to_path_buf(), reg.hide_names),
         })
     })?;
-    Ok(status_for(entry.as_ref(), &path, unlocked, hide_names))
+    Ok(status_for(entry.as_ref(), &path, unlocked, read_only, hide_names))
 }
 
 // ---- Vault list: switch, add, create elsewhere, delete ----------------------
@@ -393,7 +402,7 @@ fn list_vaults(app: tauri::AppHandle) -> Result<VaultList, CmdError> {
         .vaults
         .iter()
         .map(|e| {
-            let s = status_for(Some(e), &e.path, false, hide_names);
+            let s = status_for(Some(e), &e.path, false, false, hide_names);
             VaultCard {
                 id: e.id.clone(),
                 name: e.name.clone(),
@@ -427,7 +436,7 @@ fn select_vault(app: tauri::AppHandle, id: String) -> Result<VaultStatus, CmdErr
             reg.hide_names,
         ))
     })?;
-    Ok(status_for(Some(&entry), &entry.path, false, hide_names))
+    Ok(status_for(Some(&entry), &entry.path, false, false, hide_names))
 }
 
 /// Validates a location and name for a new vault before the user sets a
@@ -460,7 +469,7 @@ async fn add_existing_vault(
             let entry = reg.add(p.clone(), &name, color.as_deref())?;
             Ok((entry, reg.hide_names))
         })?;
-        Ok(status_for(Some(&entry), &entry.path, false, hide_names))
+        Ok(status_for(Some(&entry), &entry.path, false, false, hide_names))
     })
     .await
 }
@@ -512,7 +521,7 @@ fn set_hide_vault_names(app: tauri::AppHandle, hide: bool) -> Result<VaultStatus
         };
         Ok((entry, path))
     })?;
-    Ok(status_for(entry.as_ref(), &path, false, hide))
+    Ok(status_for(entry.as_ref(), &path, false, false, hide))
 }
 
 /// Deletes a vault: its file, backup generation, temp file and attachments
@@ -762,9 +771,10 @@ struct VaultSummary {
     keyfile_required: bool,
     item_count: usize,
     folder_count: usize,
+    read_only: bool,
 }
 
-fn summary(path: &Path, v: &OpenVault) -> VaultSummary {
+fn summary(path: &Path, v: &OpenVault, read_only: bool) -> VaultSummary {
     let h: &Header = v.header();
     VaultSummary {
         path: path.display().to_string(),
@@ -773,6 +783,7 @@ fn summary(path: &Path, v: &OpenVault) -> VaultSummary {
         keyfile_required: h.keyfile_required,
         item_count: v.data().items.len(),
         folder_count: v.data().folders.len(),
+        read_only,
     }
 }
 
@@ -905,9 +916,17 @@ async fn create_vault(
             }
             Ok(())
         })?;
-        let s = summary(&path, &vault);
+        let s = summary(&path, &vault, false);
         state
-            .finish_unlock(ticket, Unlocked { path, vault, lock })
+            .finish_unlock(
+                ticket,
+                Unlocked {
+                    path,
+                    vault,
+                    lock: Some(lock),
+                    read_only: false,
+                },
+            )
             .map_err(|_| {
                 CmdError::new("LOCKED_DURING_UNLOCK", "Vault was locked while opening.")
             })?;
@@ -955,18 +974,43 @@ async fn unlock(
         let ticket = state.begin_unlock();
         // Taken before reading the file, so the snapshot we load cannot be
         // replaced by another process while we hold it (issue #9).
-        let lock = vault::lock::VaultLock::acquire(&path)?;
+        // If the lock cannot be taken because the location or media is
+        // read-only or access is denied (not a sharing violation), unlock in
+        // read-only mode without a lock (issue #48).
+        let (lock, read_only) = {
+            let file_ro = std::fs::metadata(&path)
+                .map(|m| m.permissions().readonly())
+                .unwrap_or(false);
+            if file_ro {
+                (None, true)
+            } else {
+                match vault::lock::VaultLock::try_acquire(&path)? {
+                    Some(lock) => (Some(lock), false),
+                    None => (None, true),
+                }
+            }
+        };
         let mut vault = unlock_blocking(&path, password.as_bytes(), keyfile_path.as_deref())?;
         // Re-seal a v3 vault so `.bak` and the file differ only in the slot
         // opened last (issue #8). Best effort: read-only media still unlock.
-        if vault.is_current_format() {
+        if !read_only && vault.is_current_format() {
             let _ = vault.refresh(&path);
         }
         // Remove attachment blobs left behind by an interrupted add/delete.
-        vault::attachments::gc_orphans(&path, vault.data());
-        let s = summary(&path, &vault);
+        if !read_only {
+            vault::attachments::gc_orphans(&path, vault.data());
+        }
+        let s = summary(&path, &vault, read_only);
         state
-            .finish_unlock(ticket, Unlocked { path, vault, lock })
+            .finish_unlock(
+                ticket,
+                Unlocked {
+                    path,
+                    vault,
+                    lock,
+                    read_only,
+                },
+            )
             .map_err(|_| {
                 CmdError::new("LOCKED_DURING_UNLOCK", "Vault was locked while opening.")
             })?;
@@ -1006,6 +1050,9 @@ async fn set_duress_password(
             .transpose()?;
         app.state::<VaultState>()
             .with_mut(|u| {
+                if u.read_only {
+                    return Err(read_only_err());
+                }
                 let path = u.path.clone();
                 Ok(u.vault
                     .set_duress(&path, password.as_bytes(), digest.as_ref())?)
@@ -1021,6 +1068,9 @@ async fn clear_duress_password(app: tauri::AppHandle) -> Result<(), CmdError> {
     blocking(move || {
         app.state::<VaultState>()
             .with_mut(|u| {
+                if u.read_only {
+                    return Err(read_only_err());
+                }
                 let path = u.path.clone();
                 Ok(u.vault.clear_duress(&path)?)
             })
@@ -1210,6 +1260,10 @@ fn read<R>(
         .unwrap_or_else(|| Err(locked()))
 }
 
+fn read_only_err() -> CmdError {
+    CmdError::new("READ_ONLY", "This vault is read-only.")
+}
+
 /// Transactional mutation: applied, saved crash-safely, then committed.
 fn write<R>(
     app: &tauri::AppHandle,
@@ -1217,6 +1271,9 @@ fn write<R>(
 ) -> Result<R, CmdError> {
     app.state::<VaultState>()
         .with_mut(|u| {
+            if u.read_only {
+                return Err(read_only_err());
+            }
             let path = u.path.clone();
             u.vault.modify(&path, f)
         })
@@ -1330,6 +1387,9 @@ async fn add_attachment(
             .unwrap_or_else(|| String::from("file"));
         app.state::<VaultState>()
             .with_mut(|u| {
+                if u.read_only {
+                    return Err(read_only_err());
+                }
                 let path = u.path.clone();
                 u.vault
                     .add_attachment(&path, &item_id, &name, guess_mime(&src), &data)?;
@@ -1366,6 +1426,9 @@ async fn delete_attachment(
     blocking(move || {
         app.state::<VaultState>()
             .with_mut(|u| {
+                if u.read_only {
+                    return Err(read_only_err());
+                }
                 let path = u.path.clone();
                 u.vault.delete_attachment(&path, &item_id, &attachment_id)?;
                 Ok(u.vault.data().detail(&item_id)?)
@@ -1541,6 +1604,9 @@ async fn apply_import(
         let mut manifest = open_backup(&path, password.as_str(), keyfile_path.as_deref())?;
         app.state::<VaultState>()
             .with_mut(|u| {
+                if u.read_only {
+                    return Err(read_only_err());
+                }
                 let path = u.path.clone();
                 // Embedded files become this vault's blobs first; unreferenced
                 // ones (e.g. merge conflicts) are cleaned up afterwards.
@@ -1833,10 +1899,10 @@ mod tests {
         assert_eq!(v.header().suite, CipherSuite::XChaCha20Poly1305);
         assert_eq!(std::fs::metadata(&key).unwrap().len(), 32);
 
-        let status = status_for(None, &vault_file, false, false);
+        let status = status_for(None, &vault_file, false, false, false);
         assert!(status.exists);
         assert!(!status.hide_names);
-        assert!(status_for(None, &vault_file, false, true).hide_names);
+        assert!(status_for(None, &vault_file, false, false, true).hide_names);
         assert_eq!(status.keyfile_required, Some(true));
         assert!(status.error.is_none());
 
@@ -1920,10 +1986,10 @@ mod tests {
             b"definitely not a vault, just text of some length",
         )
         .unwrap();
-        let status = status_for(None, &vault_file, false, false);
+        let status = status_for(None, &vault_file, false, false, false);
         assert!(status.exists);
         assert!(!status.hide_names);
-        assert!(status_for(None, &vault_file, false, true).hide_names);
+        assert!(status_for(None, &vault_file, false, false, true).hide_names);
         assert!(!status.can_delete);
         assert_eq!(status.error.unwrap().code, "VAULT_UNREADABLE");
         assert_eq!(
@@ -1956,7 +2022,7 @@ mod tests {
         std::fs::copy(&vault_file, &bak_file).unwrap();
         std::fs::write(&vault_file, b"corrupted header content").unwrap();
 
-        let status = status_for(None, &vault_file, false, false);
+        let status = status_for(None, &vault_file, false, false, false);
         assert!(status.exists);
         assert!(status.can_delete);
         let err = status.error.unwrap();
@@ -1985,7 +2051,7 @@ mod tests {
             path: vault_file.clone(),
             color: "crimson".into(),
         };
-        let status = status_for(Some(&entry), &vault_file, false, false);
+        let status = status_for(Some(&entry), &vault_file, false, false, false);
         assert!(!status.exists);
         assert!(!status.can_delete);
         let err = status.error.unwrap();
@@ -2028,6 +2094,38 @@ mod tests {
                 .code,
             "VAULT_TAMPERED"
         );
+    }
+
+    #[test]
+    fn read_only_vault_status_and_unlock() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_file = dir.path().join("vault.shush");
+        let v = create_vault_blocking(
+            &vault_file,
+            b"correct horse",
+            &KeyfileChoice::None,
+            0x01,
+            POLICY_MIN,
+        )
+        .unwrap();
+
+        // Mark the file read-only on disk.
+        let mut perms = std::fs::metadata(&vault_file).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&vault_file, perms).unwrap();
+
+        let status = status_for(None, &vault_file, false, false, false);
+        assert!(status.exists);
+        assert!(status.read_only);
+
+        // Verify summary reports read-only.
+        let s = summary(&vault_file, &v, true);
+        assert!(s.read_only);
+
+        // Revert permissions so tempdir can clean up cleanly on drop.
+        let mut perms = std::fs::metadata(&vault_file).unwrap().permissions();
+        perms.set_readonly(false);
+        let _ = std::fs::set_permissions(&vault_file, perms);
     }
 
     #[test]
