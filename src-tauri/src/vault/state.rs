@@ -128,7 +128,9 @@ mod tests {
         let t = s.begin_unlock();
         s.finish_unlock(t, unlocked()).unwrap();
         assert!(s.is_unlocked());
-        assert!(s.with(|u| u.path.ends_with("shush-state-test.shush")).unwrap());
+        assert!(s
+            .with(|u| u.path.ends_with("shush-state-test.shush"))
+            .unwrap());
         s.lock();
         assert!(!s.is_unlocked());
         assert!(s.with(|_| ()).is_none());

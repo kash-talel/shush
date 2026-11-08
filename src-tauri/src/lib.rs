@@ -8,6 +8,7 @@
 #![deny(unsafe_code)] // OS modules opt in locally with a SAFETY comment.
 #![warn(missing_docs)]
 
+pub mod bridge;
 pub mod crypto;
 pub mod os;
 pub mod totp;

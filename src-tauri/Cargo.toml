@@ -51,6 +51,13 @@ windows-sys = { version = "0.52", features = [
     "Win32_Graphics_Gdi",
     # Deleted vaults go to the Recycle Bin.
     "Win32_UI_Shell",
+    # Authenticated browser-bridge pipe (issue #16).
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
 ] }
 # --- Additions ---
 thiserror = "2"
@@ -59,6 +66,9 @@ unicode-normalization = "0.1"
 tauri-plugin-single-instance = "2"
 csv = "1"
 base64 = "0.22"
+# Browser bridge (issue #16): request MACs and origin normalization (IDNA, default ports).
+hmac = "0.12"
+url = "2"
 
 [dev-dependencies]
 hex = "0.4"

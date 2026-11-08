@@ -18,7 +18,7 @@ the real app (see [`testing/`](testing/README.md)), and its PR is merged into `m
 | 6a | Encrypted `.shushbackup` export (vault or separate credentials), import preview, merge / clean restore | ✅ complete | #34 |
 | 6b | CSV migration (Bitwarden / 1Password / KeePass / Chrome / Firefox) with conflict handling | ✅ complete | #35 |
 | 7a | First-run onboarding: browser detection (folder existence only) + guided CSV import (#17) | ✅ complete | #36 |
-| 7b | Native messaging host + extension with one-time-code pairing (#16), extension-verified auto-type | 🔨 next, [plan](#phase-7b-plan) | |
+| 7b | Native messaging host + extension with one-time-code pairing (#16), extension-verified auto-type | 🔨 in progress (steps 1, 2, 4 done), [plan](#phase-7b-plan) | #50 |
 | 8 | Deniable duress vault (#8), on-demand PAKE LAN sync (#18), air-gapped mode (#25) | ⏳ [plan](#phase-8-plan) | |
 
 Not a phase: the punk industrial UI redesign and the liner-notes site (branch `design/punk-industrial`) are
@@ -98,14 +98,14 @@ focus race, keyboard-layout and UIPI problems of #13. Non-browser auto-type stay
 
 ### Steps
 
-1. **Vault lock file and single writer.** `LockFileEx` on `vault.shush.lock` while unlocked; a
+1. ✅ **Vault lock file and single writer** (#50: `vault/lock.rs`, save-time fingerprint check). `LockFileEx` on `vault.shush.lock` while unlocked; a
    second process that somehow opens the vault fails cleanly (#9). Unit test with two handles.
-2. **Pipe server** in the main instance: DACL, first-instance flag, squat detection, PID and path
+2. ✅ **Pipe server** (`os/pipe.rs`; rate limit and app wiring still open) in the main instance: DACL, first-instance flag, squat detection, PID and path
    checks, framing, request size cap (64 KiB) and per-connection rate limit. Rust tests over a real
    pipe.
 3. **`shush-host.exe`**: stdio framing (4-byte little-endian length, 1 MiB cap for host → browser),
    relay, exits when either side closes. Tests feed it framed stdin.
-4. **Protocol and origin matching** in Rust: `match`, `fill`, `save`, `revoke`, HMAC counter,
+4. ✅ **Protocol and origin matching** (`bridge/`; pairings not yet persisted in the vault) in Rust: `match`, `fill`, `save`, `revoke`, HMAC counter,
    origin normalization (IDNA, default ports, trailing dots). Table-driven tests including
    look-alike and subdomain cases.
 5. **Pairing UI** in shush: *Pair browser* shows the code with a countdown; paired browsers list
