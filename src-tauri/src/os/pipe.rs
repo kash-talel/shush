@@ -31,9 +31,9 @@ pub enum PipeError {
 }
 
 /// Whether `peer` is the executable `expected_name` in the same folder as `own`
-/// (case-insensitive, as Windows paths are). If either path traverses a junction
-/// or symlink, their canonical paths are compared so junctioned installations
-/// match correctly.
+/// (case-insensitive, as Windows paths are). `own` may also be matched via its
+/// canonical path so junctioned installations work; `peer` is never resolved
+/// on disk (TOCTOU, #97).
 pub fn is_sibling_exe(peer: &Path, own: &Path, expected_name: &str) -> bool {
     if !peer
         .file_name()
@@ -44,18 +44,22 @@ pub fn is_sibling_exe(peer: &Path, own: &Path, expected_name: &str) -> bool {
     let (Some(peer_dir), Some(own_dir)) = (peer.parent(), own.parent()) else {
         return false;
     };
-    if peer_dir.as_os_str().eq_ignore_ascii_case(own_dir.as_os_str()) {
+    // Only our own path is canonicalized: the peer path is untrusted input and
+    // resolving it on disk would let a junction retarget between the check and
+    // its use (TOCTOU, #97). The peer is compared lexically.
+    let same = |a: &Path, b: &Path| {
+        let strip = |p: &Path| -> String {
+            let s = p.to_string_lossy();
+            s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+        };
+        strip(a).eq_ignore_ascii_case(&strip(b))
+    };
+    if same(peer_dir, own_dir) {
         return true;
     }
-    let peer_canon = peer_dir
+    own_dir
         .canonicalize()
-        .unwrap_or_else(|_| peer_dir.to_path_buf());
-    let own_canon = own_dir
-        .canonicalize()
-        .unwrap_or_else(|_| own_dir.to_path_buf());
-    peer_canon
-        .as_os_str()
-        .eq_ignore_ascii_case(own_canon.as_os_str())
+        .is_ok_and(|own_canon| same(peer_dir, &own_canon))
 }
 
 #[cfg(windows)]
@@ -424,6 +428,20 @@ mod tests {
         let target = std::fs::canonicalize(&own).unwrap();
         let exe_name = own.file_name().unwrap().to_str().unwrap();
         assert!(is_sibling_exe(&target, &own, exe_name));
-        assert!(is_sibling_exe(&own, &target, exe_name));
+        // The reverse (junction-form peer, canonical own) must NOT match: the
+        // peer is never resolved on disk (#97).
+        assert!(!is_sibling_exe(&own, &target, exe_name) || own == target);
+    }
+
+    #[test]
+    fn peer_path_is_not_resolved_on_disk() {
+        // A peer path that only matches after canonicalization (".." segment)
+        // must not match: the peer is compared lexically (#97).
+        let own = std::env::current_exe().unwrap();
+        let dir = own.parent().unwrap();
+        let exe_name = own.file_name().unwrap().to_str().unwrap();
+        let dir_name = dir.file_name().unwrap();
+        let sneaky = dir.join("..").join(dir_name).join(exe_name);
+        assert!(!is_sibling_exe(&sneaky, &own, exe_name));
     }
 }
