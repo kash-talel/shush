@@ -42,8 +42,8 @@
     {"number": 80, "title": "[File format] Vault save: detect cloud-sync conflicted copies and surface them; recover stale vault.shush.tmp", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Vault save-path systems code, severity:medium"},
     {"number": 82, "title": "[OS] Clipboard not cleared on Windows logoff/shutdown or forced process exit", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Win32 shutdown and clipboard systems code, severity:medium"},
     {"number": 114, "title": "[Browser] Companion extension pairing UI: format code with hyphens and auto-normalize input", "model": "gemini-3.8-flash", "runner": "agy", "reason": "severity:low (auto-classified)"},
-    {"number": 125, "title": "[Brand] Replace all static logos, app icons, and installer graphics with updated jewel case artwork", "model": "gemini-3.8-flash", "runner": "agy", "reason": "severity:low (auto-classified)"},
-    {"number": 126, "title": "[Site/UI] Remove transparent box shadow/aura on 3D jewel case and decouple CD tray hub from rotating disc", "model": "gemini-3.8-flash", "runner": "agy", "reason": "severity:low (auto-classified)"},
-    {"number": 127, "title": "[UI] Dynamic app interface theming by vault color, eliminate red tint bleed, and fix onboarding disc color", "model": "gemini-3.8-flash", "runner": "agy", "reason": "severity:low (auto-classified)"}
+    {"number": 125, "title": "[Brand] Replace all static logos, app icons, and installer graphics with updated jewel case artwork", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Reassigned to Claude by user request"},
+    {"number": 126, "title": "[Site/UI] Remove transparent box shadow/aura on 3D jewel case and decouple CD tray hub from rotating disc", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Reassigned to Claude by user request"},
+    {"number": 127, "title": "[UI] Dynamic app interface theming by vault color, eliminate red tint bleed, and fix onboarding disc color", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Reassigned to Claude by user request"}
   ]
 }
