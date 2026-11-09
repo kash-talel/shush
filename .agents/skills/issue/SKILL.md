@@ -73,13 +73,15 @@ gh issue create --title "[<Category>] <Concise Title>" --body "<Detailed descrip
    - For backend/Rust:
      ```powershell
      $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+     cargo fmt --manifest-path src-tauri/Cargo.toml --check
+     cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
      cargo test --manifest-path src-tauri/Cargo.toml
      ```
    - For frontend/Svelte:
      ```powershell
      cd src; npm run check; cd ..
      ```
-   Both checks must pass cleanly with 0 errors. Fix any failures before proceeding.
+   All checks must pass cleanly with 0 errors. Fix any failures before proceeding.
 
 ---
 

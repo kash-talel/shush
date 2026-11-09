@@ -162,9 +162,7 @@ impl PairingOffer {
         let id_a = Identity::new(ID_EXTENSION);
         let id_b = Identity::new(ID_SHUSH);
         let (state_b, outbound) = Spake2::<Ed25519Group>::start_b(&pw, &id_a, &id_b);
-        let host_msg: [u8; MSG_LEN] = outbound
-            .try_into()
-            .map_err(|_| AuthError::Rng)?;
+        let host_msg: [u8; MSG_LEN] = outbound.try_into().map_err(|_| AuthError::Rng)?;
         Ok((state_b, host_msg))
     }
 
@@ -220,8 +218,8 @@ impl PairingOffer {
             transcript.extend_from_slice(ext_msg);
             transcript.extend_from_slice(&self.host_msg);
             let (confirm_key, pair_key) = derive_keys(&k, &transcript);
-            let mut mac = HmacSha256::new_from_slice(&*confirm_key)
-                .expect("HMAC takes any key length");
+            let mut mac =
+                HmacSha256::new_from_slice(&*confirm_key).expect("HMAC takes any key length");
             mac.update(&transcript);
             if mac.verify_slice(proof).is_ok() {
                 success = true;
@@ -303,6 +301,7 @@ impl Pairing {
 /// What the companion extension computes during pairing.
 /// Runs SPAKE2 role A (`start_a`), completes key exchange with `host_msg`,
 /// and derives `(ext_msg, proof, pair_key)`.
+#[allow(clippy::type_complexity)]
 pub fn extension_pair(
     code: &str,
     host_msg: &[u8],
@@ -312,9 +311,7 @@ pub fn extension_pair(
     let id_a = Identity::new(ID_EXTENSION);
     let id_b = Identity::new(ID_SHUSH);
     let (state_a, ext_msg_vec) = Spake2::<Ed25519Group>::start_a(&pw, &id_a, &id_b);
-    let ext_msg: [u8; MSG_LEN] = ext_msg_vec
-        .try_into()
-        .map_err(|_| AuthError::WrongCode)?;
+    let ext_msg: [u8; MSG_LEN] = ext_msg_vec.try_into().map_err(|_| AuthError::WrongCode)?;
     let k = state_a.finish(host_msg).map_err(|_| AuthError::WrongCode)?;
     let mut transcript = Vec::with_capacity(ext_msg.len() + host_msg.len());
     transcript.extend_from_slice(&ext_msg);

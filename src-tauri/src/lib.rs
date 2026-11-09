@@ -367,7 +367,13 @@ fn vault_status(app: tauri::AppHandle) -> Result<VaultStatus, CmdError> {
             None => (None, def.to_path_buf(), reg.hide_names),
         })
     })?;
-    Ok(status_for(entry.as_ref(), &path, unlocked, read_only, hide_names))
+    Ok(status_for(
+        entry.as_ref(),
+        &path,
+        unlocked,
+        read_only,
+        hide_names,
+    ))
 }
 
 // ---- Vault list: switch, add, create elsewhere, delete ----------------------
@@ -440,7 +446,13 @@ fn select_vault(app: tauri::AppHandle, id: String) -> Result<VaultStatus, CmdErr
             reg.hide_names,
         ))
     })?;
-    Ok(status_for(Some(&entry), &entry.path, false, false, hide_names))
+    Ok(status_for(
+        Some(&entry),
+        &entry.path,
+        false,
+        false,
+        hide_names,
+    ))
 }
 
 /// Validates a location and name for a new vault before the user sets a
@@ -473,7 +485,13 @@ async fn add_existing_vault(
             let entry = reg.add(p.clone(), &name, color.as_deref())?;
             Ok((entry, reg.hide_names))
         })?;
-        Ok(status_for(Some(&entry), &entry.path, false, false, hide_names))
+        Ok(status_for(
+            Some(&entry),
+            &entry.path,
+            false,
+            false,
+            hide_names,
+        ))
     })
     .await
 }
@@ -609,19 +627,23 @@ async fn delete_vault(
     blocking(move || {
         let path = entry.path.clone();
         let throttle = app.state::<std::sync::Mutex<DeleteThrottle>>();
-        match authenticate_for_delete_blocking(&path, password.as_bytes(), keyfile_path.as_deref()) {
+        match authenticate_for_delete_blocking(&path, password.as_bytes(), keyfile_path.as_deref())
+        {
             Ok(()) => {
-                throttle.lock().unwrap_or_else(|e| e.into_inner()).succeed(&id);
-            }
-            Err(e) if e.code == "WRONG_CREDENTIALS" => {
-                let wait = throttle
+                throttle
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .fail(&id);
+                    .succeed(&id);
+            }
+            Err(e) if e.code == "WRONG_CREDENTIALS" => {
+                let wait = throttle.lock().unwrap_or_else(|e| e.into_inner()).fail(&id);
                 return Err(match wait {
                     Some(s) => CmdError::new(
                         "WRONG_CREDENTIALS",
-                        format!("Wrong master password or keyfile. Try again in {}.", human_secs(s)),
+                        format!(
+                            "Wrong master password or keyfile. Try again in {}.",
+                            human_secs(s)
+                        ),
                     ),
                     None => e,
                 });
@@ -664,12 +686,16 @@ fn reveal_path_in_explorer(path: &Path) -> Result<(), CmdError> {
             Command::new("explorer")
                 .arg(format!("/select,{}", path.display()))
                 .spawn()
-                .map_err(|e| CmdError::new("EXPLORER_ERROR", format!("Could not open Explorer: {e}")))?;
+                .map_err(|e| {
+                    CmdError::new("EXPLORER_ERROR", format!("Could not open Explorer: {e}"))
+                })?;
         } else if let Some(parent) = path.parent().filter(|p| p.exists()) {
             Command::new("explorer")
                 .arg(parent.display().to_string())
                 .spawn()
-                .map_err(|e| CmdError::new("EXPLORER_ERROR", format!("Could not open Explorer: {e}")))?;
+                .map_err(|e| {
+                    CmdError::new("EXPLORER_ERROR", format!("Could not open Explorer: {e}"))
+                })?;
         } else {
             return Err(CmdError::new(
                 "PATH_NOT_FOUND",
@@ -2319,6 +2345,7 @@ mod tests {
 
         // Revert permissions so tempdir can clean up cleanly on drop.
         let mut perms = std::fs::metadata(&vault_file).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
         perms.set_readonly(false);
         let _ = std::fs::set_permissions(&vault_file, perms);
     }
@@ -2472,7 +2499,10 @@ mod tests {
         // Verify that Tauri's raw buffer has been wiped in place to zeroes
         if let tauri::ipc::InvokeBody::Raw(wiped) = body {
             assert_eq!(wiped.len(), initial_len);
-            assert!(wiped.iter().all(|&b| b == 0), "Raw buffer must be wiped to zeroes");
+            assert!(
+                wiped.iter().all(|&b| b == 0),
+                "Raw buffer must be wiped to zeroes"
+            );
         } else {
             panic!("Expected Raw body");
         }

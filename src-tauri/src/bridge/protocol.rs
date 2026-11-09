@@ -238,9 +238,7 @@ impl Bridge {
                 }))
             }
             Request::Pair { ext_nonce, proof } => {
-                let ext = B64
-                    .decode(ext_nonce)
-                    .map_err(|_| "BAD_REQUEST")?;
+                let ext = B64.decode(ext_nonce).map_err(|_| "BAD_REQUEST")?;
                 let proof = B64.decode(proof).map_err(|_| "BAD_REQUEST")?;
                 let offer = self.offer.as_mut().ok_or(code(AuthError::NoOffer))?;
                 let result = offer.redeem(&ext, &proof, now);

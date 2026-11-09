@@ -25,9 +25,11 @@ When resolving issues in AGY CLI:
    ```
 4. **Branch & Verify**:
    - Branch: `git checkout -b fix/issue-<NUMBER>-<slug>`
-   - Backend tests:
+   - Backend checks:
      ```powershell
      $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+     cargo fmt --manifest-path src-tauri/Cargo.toml --check
+     cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
      cargo test --manifest-path src-tauri/Cargo.toml
      ```
    - Frontend checks:
