@@ -7,6 +7,7 @@
     duressStatus,
     setDuressPassword,
     toCmdError,
+    vaultInSyncFolder,
     vaultStatus,
     type CmdError,
     type KeyfileInfo,
@@ -17,6 +18,8 @@
   // vault and in a decoy, so the screen itself gives nothing away.
   let enabled = $state<boolean | null>(null);
   let keyfileRequired = $state(false);
+  let inSyncFolder = $state(false);
+  let current = $state("");
   let password = $state("");
   let confirm = $state("");
   let keyfile = $state<{ path: string; info: KeyfileInfo } | null>(null);
@@ -26,13 +29,14 @@
   let error = $state<CmdError | null>(null);
 
   const canSet = $derived(
-    password.length >= 8 && password === confirm && (!keyfileRequired || keyfile !== null),
+    current.length > 0 && password.length >= 8 && password === confirm && (!keyfileRequired || keyfile !== null),
   );
 
   async function load() {
     try {
       enabled = await duressStatus();
       keyfileRequired = (await vaultStatus()).keyfile_required ?? false;
+      inSyncFolder = await vaultInSyncFolder();
     } catch (e) {
       error = toCmdError(e);
     }
@@ -49,9 +53,10 @@
     error = null;
     result = null;
     try {
-      await setDuressPassword(password, keyfile?.path ?? null);
+      await setDuressPassword(current, password, keyfile?.path ?? null);
       enabled = true;
       result = "Duress password set. It opens an empty vault: add a few believable logins there.";
+      current = "";
       password = "";
       confirm = "";
     } catch (e) {
@@ -87,10 +92,17 @@
     this one. The file looks the same with or without it, and both passwords take the same time to open.
   </p>
 
+  {#if inSyncFolder}
+    <p class="flex items-start gap-1.5 text-xs text-caution" role="note">
+      <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+      <span>This vault is in a cloud-sync folder. Version history there keeps old copies of the file, and comparing them can show that a second vault exists. Move the vault out of the synced folder to keep the duress password deniable.</span>
+    </p>
+  {/if}
   {#if enabled}
     <p class="text-xs text-uv" role="status">A duress password is set. Attachments are turned off while it is.</p>
   {/if}
 
+  <PasswordField id="duress-current" label="Current password of this vault" autocomplete="current-password" placeholder="Required to overwrite the second vault space" bind:value={current} oninput={() => (armed = false)} />
   <PasswordField id="duress-password" label={enabled ? "New duress password" : "Duress password"} autocomplete="new-password" placeholder="8+ characters, not your master password" bind:value={password} oninput={() => (armed = false)} />
   <PasswordField id="duress-confirm" label="Confirm" autocomplete="new-password" bind:value={confirm} oninput={() => (armed = false)} />
   {#if keyfileRequired}

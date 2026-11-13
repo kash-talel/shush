@@ -54,6 +54,7 @@
     "allow-delete-attachment",
     "allow-duress-status",
     "allow-set-duress-password",
+    "allow-vault-in-sync-folder",
     "allow-clear-duress-password",
     "allow-bridge-state",
     "allow-bridge-start-pairing",
