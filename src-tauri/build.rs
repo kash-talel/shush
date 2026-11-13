@@ -51,6 +51,12 @@ const COMMANDS: &[&str] = &[
     "duress_status",
     "set_duress_password",
     "clear_duress_password",
+    "bridge_state",
+    "bridge_start_pairing",
+    "bridge_cancel_pairing",
+    "bridge_revoke",
+    "bridge_approve_save",
+    "bridge_reject_save",
 ];
 
 fn main() {

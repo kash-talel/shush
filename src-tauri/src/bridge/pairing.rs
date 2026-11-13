@@ -24,6 +24,7 @@
 
 use std::time::{Duration, Instant};
 
+use base64::Engine;
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
@@ -31,6 +32,7 @@ use spake2::{Ed25519Group, Identity, Password, Spake2};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::crypto::{fill_random, CryptoError};
+use crate::vault::models::StoredPairing;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -191,6 +193,14 @@ impl PairingOffer {
         self.attempts_left > 0 && now < self.expires
     }
 
+    /// Whole seconds until the code expires (rounded up; 0 once expired).
+    pub fn seconds_left(&self, now: Instant) -> u64 {
+        self.expires
+            .saturating_duration_since(now)
+            .as_secs_f64()
+            .ceil() as u64
+    }
+
     /// Checks the extension's SPAKE2 message and proof. On success the offer is
     /// used up (the caller drops it) and the new pairing is returned. Each failure
     /// costs an attempt; on failure, a fresh SPAKE2 ephemeral is generated if attempts
@@ -290,6 +300,30 @@ impl Pairing {
         m.update(&counter.to_le_bytes());
         m.update(body);
         m
+    }
+
+    /// The persisted form (stored inside the encrypted vault).
+    pub fn to_stored(&self) -> StoredPairing {
+        StoredPairing {
+            id: self.id.clone(),
+            key: base64::engine::general_purpose::STANDARD.encode(self.key),
+            last_counter: self.last_counter,
+        }
+    }
+
+    /// Restores a pairing from the vault; `None` if the record is malformed.
+    pub fn from_stored(s: &StoredPairing) -> Option<Self> {
+        let raw = zeroize::Zeroizing::new(
+            base64::engine::general_purpose::STANDARD
+                .decode(&s.key)
+                .ok()?,
+        );
+        let key: [u8; 32] = raw.as_slice().try_into().ok()?;
+        Some(Self {
+            id: s.id.clone(),
+            key,
+            last_counter: s.last_counter,
+        })
     }
 
     #[cfg(test)]

@@ -1248,9 +1248,18 @@ async fn clear_duress_password(app: tauri::AppHandle) -> Result<(), CmdError> {
     .await
 }
 
+/// Locks the vault and everything derived from it: the bridge drops its
+/// pairing keys and wipes queued plaintext passwords (issue #52).
+fn lock_vault(app: &tauri::AppHandle) {
+    app.state::<VaultState>().lock();
+    app.state::<bridge::state::BridgeState>()
+        .bridge()
+        .on_vault_locked();
+}
+
 #[tauri::command]
 fn lock(app: tauri::AppHandle) {
-    app.state::<VaultState>().lock();
+    lock_vault(&app);
     // Never leave a copied secret behind on the clipboard after locking.
     os::clipboard::clear_if_ours();
 }
@@ -1267,7 +1276,7 @@ fn auto_lock(app: &tauri::AppHandle, reason: os::session::LockReason) {
         .with(|u| !reason.is_sleep_related() || u.vault.data().settings.auto_lock_on_sleep)
         .unwrap_or(false); // already locked: nothing to do
     if wanted {
-        state.lock();
+        lock_vault(app);
         os::clipboard::clear_if_ours();
         let _ = app.emit(EVENT_AUTO_LOCKED, reason);
     }
@@ -1449,12 +1458,12 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
             "open" => show_main_window(app),
             "spotlight" => toggle_spotlight(app),
             "lock" => {
-                app.state::<VaultState>().lock();
+                lock_vault(app);
                 os::clipboard::clear_if_ours();
                 let _ = app.emit(EVENT_AUTO_LOCKED, "tray");
             }
             "quit" => {
-                app.state::<VaultState>().lock();
+                lock_vault(app);
                 os::clipboard::clear_if_ours();
                 app.exit(0);
             }
@@ -1974,6 +1983,192 @@ fn generate_password(
     })
 }
 
+// ---- Browser bridge (issue #52) ---------------------------------------------
+
+/// A paired browser, as listed in Settings. Never includes the key.
+#[derive(Serialize)]
+struct PairedBrowser {
+    id: String,
+}
+
+/// A save the extension offered, waiting for approval. Never includes the password.
+#[derive(Serialize)]
+struct PendingSaveInfo {
+    origin: String,
+    username: String,
+}
+
+/// The pairing code on screen.
+#[derive(Serialize)]
+struct PairingCode {
+    code: String,
+    seconds_left: u64,
+}
+
+/// Everything the Settings -> Browser panel shows.
+#[derive(Serialize)]
+struct BridgeInfo {
+    /// Whether the pipe listener is serving.
+    serving: bool,
+    /// Why not, in plain words (a squatted pipe name is the notable case).
+    warning: Option<String>,
+    pairings: Vec<PairedBrowser>,
+    pending: Vec<PendingSaveInfo>,
+    code: Option<PairingCode>,
+}
+
+fn serving_warning(s: bridge::state::Serving) -> (bool, Option<String>) {
+    use bridge::state::Serving;
+    match s {
+        Serving::Yes => (true, None),
+        Serving::Starting => (false, None),
+        Serving::NameTaken => (
+            false,
+            Some(
+                "Another program is using shush's browser pipe, so the browser extension is \
+                 disabled. Close the other program and restart shush."
+                    .into(),
+            ),
+        ),
+        Serving::Failed(e) => (
+            false,
+            Some(format!("The browser bridge could not start: {e}")),
+        ),
+    }
+}
+
+/// Loads the unlocked vault's pairings into the bridge if that has not happened yet.
+fn sync_pairings(app: &tauri::AppHandle, b: &mut bridge::protocol::Bridge) {
+    app.state::<VaultState>().with(|u| {
+        b.load_pairings(&u.vault.data().browser_pairings);
+    });
+}
+
+/// Writes the bridge's pairings into the vault when they changed (revocation).
+fn persist_pairings(app: &tauri::AppHandle) {
+    let bridge = app.state::<bridge::state::BridgeState>();
+    app.state::<VaultState>().with_mut(|u| {
+        let mut b = bridge.bridge();
+        if b.take_dirty() {
+            persist_into(&mut b, u);
+        }
+    });
+}
+
+#[cfg(windows)]
+fn persist_into(b: &mut bridge::protocol::Bridge, u: &mut vault::state::Unlocked) {
+    bridge::server::persist(b, u);
+}
+
+#[cfg(not(windows))]
+fn persist_into(_: &mut bridge::protocol::Bridge, _: &mut vault::state::Unlocked) {}
+
+#[tauri::command]
+fn bridge_state(app: tauri::AppHandle) -> Result<BridgeInfo, CmdError> {
+    if !app.state::<VaultState>().is_unlocked() {
+        return Err(locked());
+    }
+    let bridge = app.state::<bridge::state::BridgeState>();
+    let (serving, warning) = serving_warning(bridge.serving());
+    let mut b = bridge.bridge();
+    sync_pairings(&app, &mut b);
+    Ok(BridgeInfo {
+        serving,
+        warning,
+        pairings: b
+            .pairing_ids()
+            .into_iter()
+            .map(|id| PairedBrowser { id })
+            .collect(),
+        pending: b
+            .pending_saves()
+            .iter()
+            .map(|p| PendingSaveInfo {
+                origin: p.origin.clone(),
+                username: p.username.clone(),
+            })
+            .collect(),
+        code: b
+            .live_offer(std::time::Instant::now())
+            .map(|(code, seconds_left)| PairingCode { code, seconds_left }),
+    })
+}
+
+#[tauri::command]
+fn bridge_start_pairing(app: tauri::AppHandle) -> Result<PairingCode, CmdError> {
+    let read_only = app
+        .state::<VaultState>()
+        .with(|u| u.read_only)
+        .ok_or_else(locked)?;
+    if read_only {
+        return Err(CmdError::new(
+            "READ_ONLY",
+            "A read-only vault cannot remember paired browsers.",
+        ));
+    }
+    let bridge = app.state::<bridge::state::BridgeState>();
+    let mut b = bridge.bridge();
+    sync_pairings(&app, &mut b);
+    let now = std::time::Instant::now();
+    let code = b
+        .start_pairing(now)
+        .map_err(|_| CmdError::new("INTERNAL", "Could not create a pairing code. Try again."))?;
+    let seconds_left = b.live_offer(now).map_or(0, |(_, s)| s);
+    Ok(PairingCode { code, seconds_left })
+}
+
+#[tauri::command]
+fn bridge_cancel_pairing(app: tauri::AppHandle) {
+    app.state::<bridge::state::BridgeState>()
+        .bridge()
+        .cancel_pairing();
+}
+
+#[tauri::command]
+fn bridge_revoke(app: tauri::AppHandle, id: String) -> Result<(), CmdError> {
+    if !app.state::<VaultState>().is_unlocked() {
+        return Err(locked());
+    }
+    app.state::<bridge::state::BridgeState>()
+        .bridge()
+        .revoke(&id);
+    persist_pairings(&app);
+    Ok(())
+}
+
+#[tauri::command]
+async fn bridge_approve_save(
+    app: tauri::AppHandle,
+    origin: String,
+    username: String,
+) -> Result<String, CmdError> {
+    blocking(move || {
+        let bridge = app.state::<bridge::state::BridgeState>();
+        let pending = bridge
+            .bridge()
+            .take_pending_for(&origin, &username)
+            .ok_or_else(|| CmdError::new("NOT_FOUND", "That save is no longer waiting."))?;
+        // Through the normal transactional path; the bridge is not held across it.
+        match write(&app, |d| Ok(bridge::protocol::apply_save(d, &pending)?)) {
+            Ok(id) => Ok(id),
+            Err(e) => {
+                bridge.bridge().requeue(pending);
+                Err(e)
+            }
+        }
+    })
+    .await
+}
+
+#[tauri::command]
+fn bridge_reject_save(app: tauri::AppHandle, origin: String, username: String) {
+    // Dropping the pending save wipes its password.
+    let _ = app
+        .state::<bridge::state::BridgeState>()
+        .bridge()
+        .take_pending_for(&origin, &username);
+}
+
 /// Tauri builder with every shush command and the vault state registered.
 ///
 /// GUI plugins (e.g. the native file dialog) are attached in `main.rs`, not
@@ -1985,6 +2180,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
 
     tauri::Builder::default()
         .manage(VaultState::default())
+        .manage(bridge::state::BridgeState::default())
         .manage(std::sync::Mutex::new(DeleteThrottle::default()))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -2000,6 +2196,8 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             os::memory::harden_process();
             create_windows(app)?;
             setup_tray(app)?;
+            #[cfg(windows)]
+            bridge::server::start(app.handle().clone());
             if let Ok((dir, _)) = vault_home(app.handle()) {
                 *app.state::<std::sync::Mutex<DeleteThrottle>>()
                     .lock()
@@ -2085,7 +2283,13 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             delete_attachment,
             duress_status,
             set_duress_password,
-            clear_duress_password
+            clear_duress_password,
+            bridge_state,
+            bridge_start_pairing,
+            bridge_cancel_pairing,
+            bridge_revoke,
+            bridge_approve_save,
+            bridge_reject_save
         ])
 }
 
