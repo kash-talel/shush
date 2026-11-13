@@ -38,7 +38,7 @@ bright_lid = arr_lid.max(axis=2)
 
 mask_bg_lid = (bright_lid < 8)
 labeled_lid, _ = ndi.label(mask_bg_lid)
-corner_labels_lid = set([labeled_lid[0, 0], labeled_lid[0, -1], labeled[-1, 0], labeled[-1, -1]])
+corner_labels_lid = set([labeled_lid[0, 0], labeled_lid[0, -1], labeled_lid[-1, 0], labeled_lid[-1, -1]])
 is_bg_lid = np.isin(labeled_lid, list(corner_labels_lid))
 
 alpha_lid = np.zeros_like(bright_lid)
