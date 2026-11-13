@@ -147,11 +147,8 @@
   .tray {
     position: absolute;
     inset: 0;
-    border-radius: 5px;
     background: var(--tray) center / cover;
-    box-shadow:
-      0 22px 50px rgb(0 0 0 / 0.85),
-      0 0 46px rgb(var(--glow) / 0.2);
+    filter: drop-shadow(0 22px 40px rgb(0 0 0 / 0.85));
   }
   .disc {
     position: absolute;
@@ -170,27 +167,18 @@
     position: absolute;
     inset: 0;
     overflow: hidden;
-    border-radius: 5px;
     background: var(--lid) center / cover;
     transform-origin: 0% 50%;
     transform: rotateY(0deg);
-    box-shadow: 0 10px 25px rgb(0 0 0 / 0.5);
+    filter: drop-shadow(0 10px 20px rgb(0 0 0 / 0.45));
     transition:
+      filter 0.9s ease,
       transform 1.05s
-        linear(0, 0.03, 0.109, 0.218, 0.344, 0.475, 0.603, 0.72, 0.823, 0.909, 0.979, 1.031, 1.068, 1.092, 1.104, 1.107, 1.103, 1.094, 1.082, 1.068, 1.054, 1.041, 1.028, 1.018, 1.009, 1.002, 0.996, 0.992, 0.99, 0.989, 0.989, 0.989, 1),
-      box-shadow 0.9s ease;
-  }
-  /* Specular reflections on the acrylic. */
-  .lid::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(135deg, rgb(255 255 255 / 0.24) 0%, transparent 42%, rgb(255 255 255 / 0.09) 58%, transparent 100%);
-    pointer-events: none;
+        linear(0, 0.03, 0.109, 0.218, 0.344, 0.475, 0.603, 0.72, 0.823, 0.909, 0.979, 1.031, 1.068, 1.092, 1.104, 1.107, 1.103, 1.094, 1.082, 1.068, 1.054, 1.041, 1.028, 1.018, 1.009, 1.002, 0.996, 0.992, 0.99, 0.989, 0.989, 0.989, 1);
   }
   .open .lid {
     transform: rotateY(-65deg);
-    box-shadow: 18px 24px 50px rgb(0 0 0 / 0.75);
+    filter: drop-shadow(18px 24px 40px rgb(0 0 0 / 0.75));
   }
   /* Sealed and clickable: the lid gives a little under the cursor. */
   .interactive.sealed:hover .lid {
