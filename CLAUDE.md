@@ -45,6 +45,14 @@ working on the same machine). See `docs/testing/README.md` for the per-phase scr
   sets `CDP_PORT` + the WebView2 CDP flag (9222 in the main checkout, `10000 + N` in the issue-N
   worktree) and a scratch `SHUSH_VAULT_PATH`, so parallel runs never share a port or profile.
 
+## Trying merged work in the installed app
+
+`.claude/scripts/install-main.ps1` builds `origin/main` (or `-Ref <branch>`) as a release NSIS
+installer in its own worktree, backs up the vault files, and installs it silently over the owner's
+shush (`-CloseApp -Launch` to restart it, `-Status` to see what is installed). Stopgap until the
+signed update feed (#103) and in-app updater (#78). Only run it when the owner asks: it replaces
+their real app.
+
 ## GitHub Issue Clearing (`/issue`)
 
 When resolving issues via `/issue`:
