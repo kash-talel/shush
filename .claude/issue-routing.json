@@ -1,9 +1,10 @@
 {
-  "version": 1,
+  "version": 2,
   "description": "Model and runner routing for GitHub issues. Maintained by .claude/scripts/route-issue.ps1. Each issue is classified once and never reclassified automatically.",
   "rules": [
-    "Opus (claude): severity:high AND (crypto OR sync label)",
-    "Gemini (agy): severity:low OR spec-inconsistency OR docs/testing ([Docs]/[Testing] title or docs/testing label)",
+    "v2 (2026-11-13): Claude writes all code, UI and tests; AGY writes prose only. See route-issue.ps1.",
+    "Opus (claude): severity:critical, OR (crypto OR sync) AND severity:high",
+    "Gemini (agy): [Docs]/[Spec] title or docs/documentation/spec-inconsistency label, with no domain label and not severity:high; its PR may only touch docs (agy-gate.ps1)",
     "Sonnet (claude): everything else"
   ],
   "issues": [
@@ -29,7 +30,7 @@
     {"number": 49, "title": "[UX] Recover from VAULT_CHANGED_ON_DISK without locking: reload and re-apply the edit", "model": "gemini-3.8-flash", "runner": "agy", "reason": "UX recovery path, severity:low"},
     {"number": 51, "title": "[Browser] shush-host.exe: native-messaging relay binary (Phase 7b step 3)", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "New native-messaging binary, systems code, severity:medium"},
     {"number": 52, "title": "[Browser] Wire the bridge into the app: pipe listener, pairing UI, save approvals, persisted pairings (Phase 7b step 5)", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Pipe listener and persisted pairings, systems code, severity:medium"},
-    {"number": 53, "title": "[Browser] MV3 extension and per-user host registration (Phase 7b steps 6\u20137)", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Extension and registry integration, severity:medium"},
+    {"number": 53, "title": "[Browser] MV3 extension and per-user host registration (Phase 7b steps 6–7)", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Extension and registry integration, severity:medium"},
     {"number": 54, "title": "[Crypto] Browser pairing code can be brute-forced offline from a recorded transcript", "model": "gemini-3.8-flash", "runner": "agy", "reason": "Pairing-code issue, but severity:low so routed to Gemini"},
     {"number": 56, "title": "[Testing] Debug build can't run next to an installed shush (single-instance exit, WebView2 data-dir clash)", "model": "gemini-3.8-flash", "runner": "agy", "reason": "Testing workflow fix, severity:low"},
     {"number": 59, "title": "[Memory hygiene] Master password crosses IPC as a JSON String; decrypted payload is not page-locked", "model": "gemini-3.8-flash", "runner": "agy", "reason": "Memory-hygiene item, severity:low"},
@@ -41,7 +42,12 @@
     {"number": 78, "title": "[Distribution] Secure, offline-first auto-update system (signed, rollback/freeze-proof, opt-in)", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Auto-update design, crypto but severity:medium (below Opus rule)"},
     {"number": 80, "title": "[File format] Vault save: detect cloud-sync conflicted copies and surface them; recover stale vault.shush.tmp", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Vault save-path systems code, severity:medium"},
     {"number": 82, "title": "[OS] Clipboard not cleared on Windows logoff/shutdown or forced process exit", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Win32 shutdown and clipboard systems code, severity:medium"},
+    {"number": 91, "title": "[Dependencies] Plan upgrade path for rand 0.9 and windows-sys/windows", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 103, "title": "[Distribution] Release pipeline: release-please, immutable attested releases, signed update feed on Pages", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 106, "title": "[UX] Unhide default vault action or shortcut when default vault is hidden", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 113, "title": "[Sync] Watch vault file for changes on disk and notify or auto-reload in UI", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
     {"number": 114, "title": "[Browser] Companion extension pairing UI: format code with hyphens and auto-normalize input", "model": "gemini-3.8-flash", "runner": "agy", "reason": "severity:low (auto-classified)"},
+    {"number": 115, "title": "[Memory hygiene] create_vault, delete_vault, and set_duress_password still take master passwords as JSON strings over IPC", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
     {"number": 125, "title": "[Brand] Replace all static logos, app icons, and installer graphics with updated jewel case artwork", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Reassigned to Claude by user request"},
     {"number": 126, "title": "[Site/UI] Remove transparent box shadow/aura on 3D jewel case and decouple CD tray hub from rotating disc", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Reassigned to Claude by user request"},
     {"number": 127, "title": "[UI] Dynamic app interface theming by vault color, eliminate red tint bleed, and fix onboarding disc color", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Reassigned to Claude by user request"}

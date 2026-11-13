@@ -17,6 +17,11 @@ is never switched, stashed, or edited, so uncommitted work there is safe and doe
 
 Input arguments: $ARGUMENTS
 
+**One issue per session.** If this conversation already contains a `✅ COMPLETED` or
+`⚠️ Issue #` banner from an earlier `/issue`, do nothing except tell the user to type `/clear`
+first. Context carried from one issue into the next is re-read on every later call, which is how
+earlier sessions burned over a billion cached tokens.
+
 ## Step 1: Select and route the issue
 Routing is a single call per issue; it classifies new issues once and saves them:
 ```powershell
@@ -60,13 +65,22 @@ guess its result. The worktree path is in the notification and in the report's `
 2. Run agy from inside that worktree with the Bash tool, `run_in_background: true` (it can run
    longer than 10 minutes):
    ```bash
-   cd "<WORKTREE>" && agy -p "/issue <NUMBER>. Resolve only this issue: do not pick up or offer the next AGY issue. Finish your reply with exactly these lines: STATUS: DONE|BLOCKED|FAILED, ISSUE: #<NUMBER>, PR: <url or none>, FILED: <new issue numbers or none>, SUMMARY: <2-4 lines>." --model <target> --output-format text
+   cd "<WORKTREE>" && agy -p "/issue <NUMBER>. Resolve only this issue: do not pick up or offer the next AGY issue. Change only Markdown docs. Push your branch and open the PR, but do NOT merge it; the dispatcher gates and merges. Finish your reply with exactly these lines: STATUS: DONE|BLOCKED|FAILED, ISSUE: #<NUMBER>, PR: <url or none>, FILED: <new issue numbers or none>, SUMMARY: <2-4 lines>." --model <target> --output-format text
    ```
    Do not add `--mode auto`: it is not available on this account (agy warns and falls back), and
    the default mode already lets headless agy write files and run shell commands.
 3. Wait for the background-command notification, then read its output. Do not poll it.
    If the output has no `STATUS:` line (agy crashed, hit a limit, or ignored the format), treat it
    as FAILED and rely on the GitHub check in Step 3.
+4. Find agy's PR: the `PR:` line, or if missing,
+   `gh pr list --state open --json number,url,headRefName --jq '.[] | select(.headRefName | startswith("fix/issue-<NUMBER>-"))'`.
+   If there is one, gate and merge it:
+   ```powershell
+   powershell -NoProfile -File .claude/scripts/agy-gate.ps1 -Pr <PR number> -Merge
+   ```
+   Exit 0 = merged. Exit 3 = rejected: the PR touched something other than Markdown docs; it is
+   left open with a comment, and you report the issue as not completed. Never merge an AGY PR any
+   other way, and never with `--admin` by hand.
 
 ## Step 3: Verify, clean up, record
 1. Check the outcome on GitHub rather than trusting the report alone:
@@ -78,7 +92,9 @@ guess its result. The worktree path is in the notification and in the report's `
    git branch -D fix/issue-<NUMBER>-<short-slug>   # local branch, if one is left; ignore "not found"
    ```
    Always use the script, never a bare `git worktree remove` or `rm -r`: the worktree holds
-   junctions to the main checkout's `node_modules` and `target`, which the script unlinks first.
+   junctions to main's `node_modules` and to a leased cargo target slot. The script stops
+   processes still holding files in the worktree, unlinks the junctions, and releases the slot
+   so the next run reuses its compiled dependencies.
 3. Bring the main checkout up to date without touching uncommitted work:
    `git fetch origin main`, then, only if the current branch is `main`, `git merge --ff-only origin/main`.
    If that refuses (local changes overlap the incoming files), leave it and mention it in the summary.

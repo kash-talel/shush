@@ -34,6 +34,9 @@ working on the same machine). See `docs/testing/README.md` for the per-phase scr
 - Launch with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1"`.
 - Point the debug build at a scratch vault with `SHUSH_VAULT_PATH=<scratch>\vault.shush`. Never use
   the real `%APPDATA%\com.shush.vault` vault for testing.
+- Simplest: dot-source `.claude/scripts/issue-env.ps1` in the same command. It puts cargo on PATH and
+  sets `CDP_PORT` + the WebView2 CDP flag (9222 in the main checkout, `10000 + N` in the issue-N
+  worktree) and a scratch `SHUSH_VAULT_PATH`, so parallel runs never share a port or profile.
 
 ## GitHub Issue Clearing (`/issue`)
 
@@ -44,4 +47,9 @@ When resolving issues via `/issue`:
 - **Verify rigorously**: Ensure `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --manifest-path src-tauri/Cargo.toml`, and `npm run check` in `src/` all pass cleanly.
 - **Branch & PR Lifecycle**: Always create a feature branch (`fix/issue-<num>-<slug>`), commit, push, create a PR (`gh pr create`), and squash-merge (`gh pr merge --squash --delete-branch --admin`).
 - **Context discipline**: Run `/clear` after completing an issue to keep token usage minimal.
+- **Runners**: Claude (Sonnet by default; Opus for critical, or high crypto/sync) writes all code, UI
+  and tests. AGY gets Markdown-only docs/spec issues, opens a PR, and never merges; the dispatcher
+  merges it through `.claude/scripts/agy-gate.ps1`. Rules live in `.claude/scripts/route-issue.ps1`.
+- **Parallel runs**: each worktree gets its own leased cargo target slot (`issue-worktree.ps1 -Status`)
+  and shares main's `src/node_modules` read-only; never `npm install` in a worktree (use `-OwnNodeModules`).
 
