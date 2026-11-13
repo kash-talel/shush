@@ -24,6 +24,8 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: write
+      id-token: write      # build provenance (sigstore) attestation
+      attestations: write
     env:
       IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
@@ -136,6 +138,16 @@ jobs:
           } | Set-Content -Encoding ascii SHA256SUMS.txt
           Move-Item SHA256SUMS.txt $out/
           Get-Content $out/SHA256SUMS.txt
+
+      # Signed build provenance (#72 step 3): proves the installers came from this workflow run.
+      # Verify with: gh attestation verify shush_x64-setup.exe -R kash-talel/shush
+      - name: Attest build provenance
+        if: env.IS_TAG == 'true'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            release-assets/*.exe
+            release-assets/*.msi
 
       - name: Keep installers (dry run)
         if: env.IS_TAG != 'true'
