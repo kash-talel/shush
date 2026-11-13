@@ -155,6 +155,18 @@ The multi-vault architecture introduces `%APPDATA%\com.shush.vault\vaults.json`.
 
 ---
 
+## 4.5 Air-Gapped Mode Default (issue #25)
+
+shush is offline-first, so **every network feature is opt-in and `air_gapped_mode` defaults to `true`** for new vaults. Existing vaults keep the value they store.
+
+- **Network features** are the HaveIBeenPwned breach check, LAN sync (including mDNS discovery), and any future update or telemetry call. Native messaging is local stdio and a named pipe, not network, and stays available.
+- **One gate.** A single Rust-side function (`network::gate`) is the only way to obtain an HTTP client, open a listening or outbound socket, or start the mDNS responder. With Air-Gapped Mode on it returns an error and nothing is created. Hiding controls in the UI is not enough; the UI only mirrors the gate. No module may construct a socket or client directly (enforced by review and a grep test in CI once the first network feature lands).
+- **Turning it off** is an explicit setting with a one-line explanation per feature. Each feature then needs its own opt-in (for example, the breach check is a separate toggle), so leaving air-gapped mode never silently starts traffic.
+- **Turning it on** closes open sync windows, drops listeners and the mDNS responder at once, and cancels in-flight requests.
+- **HIBP privacy.** Send only the 5-character SHA-1 prefix, always with `Add-Padding: true` so response sizes do not leak the bucket, with no identifying headers.
+- **Build option.** A build without the `network` cargo feature links no socket or HTTP code (see ROADMAP 8c).
+- **Test.** With Air-Gapped Mode on, a harness confirms no socket is opened and no DNS or mDNS packet is sent.
+
 ## 5. Summary Recommendation for "shush"
 
 1. **Default Mode**: Master Password (Argon2id) for vault creation and disaster recovery.
