@@ -39,8 +39,8 @@ def main():
         h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
         hd = h * 360
         signed = hd - 360 if hd > 180 else hd  # -180..180, red at 0
-        hue_w = clamp(1 - (abs(signed) - 22) / 18)  # full within ±22°, gone by ±40°
-        sat_w = clamp((s - 0.25) / 0.25)
+        hue_w = clamp(1 - (abs(signed) - 45) / 20)  # full within +-45 deg, gone by +-65 deg
+        sat_w = clamp((s - 0.06) / 0.10)  # shaded stitching is low-saturation; keep near-white lettering
         pre.append((signed, s, v, hue_w * sat_w))
 
     for name, (hue, sat_k, val_k) in TINTS.items():
@@ -49,7 +49,7 @@ def main():
             if w <= 0:
                 out.append((r, g, b, a))
                 continue
-            nh = ((hue + signed) % 360) / 360
+            nh = ((hue + signed * 0.4) % 360) / 360  # compress hue spread so amber never wraps back to red
             nr, ng, nb = colorsys.hsv_to_rgb(nh, clamp(s * sat_k), clamp(v * val_k))
             out.append(
                 (

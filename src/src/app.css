@@ -27,6 +27,59 @@
   --font-display: "Syne Variable", "Segoe UI Variable Display", "Segoe UI", sans-serif;
 }
 
+/* Vault theming: the accent follows the active vault's disc colour. The tokens
+   above are the crimson default; App.svelte sets data-vault-color on its root and
+   these override the same tokens, so every crimson/ruby utility re-tints. */
+:root {
+  --accent-rgb: 225 29 72;
+  --accent-top: #f0284f;
+  --accent-bottom: #c8133c;
+  --accent-ink: #fff;
+}
+[data-vault-color="amber"] {
+  --color-crimson: #f59e0b;
+  --color-ruby: #fbbf24;
+  --color-crimson-deep: #78450a;
+  --accent-rgb: 245 158 11;
+  --accent-top: #fbad24;
+  --accent-bottom: #d98506;
+  --accent-ink: #1a1203;
+}
+[data-vault-color="teal"] {
+  --color-crimson: #14b8a6;
+  --color-ruby: #2dd4bf;
+  --color-crimson-deep: #0b5d54;
+  --accent-rgb: 20 184 166;
+  --accent-top: #22c7b4;
+  --accent-bottom: #0f9d8e;
+  --accent-ink: #041a17;
+}
+[data-vault-color="cobalt"] {
+  --color-crimson: #3b82f6;
+  --color-ruby: #60a5fa;
+  --color-crimson-deep: #1e3a8a;
+  --accent-rgb: 59 130 246;
+  --accent-top: #5b95f8;
+  --accent-bottom: #2f6fe0;
+}
+[data-vault-color="violet"] {
+  --color-crimson: #a855f7;
+  --color-ruby: #c084fc;
+  --color-crimson-deep: #4c1d95;
+  --accent-rgb: 168 85 247;
+  --accent-top: #b66cf9;
+  --accent-bottom: #9333ea;
+}
+[data-vault-color="chrome"] {
+  --color-crimson: #d4d4d8;
+  --color-ruby: #e4e4e7;
+  --color-crimson-deep: #52525b;
+  --accent-rgb: 212 212 216;
+  --accent-top: #e8e8ec;
+  --accent-bottom: #a1a1aa;
+  --accent-ink: #18181b;
+}
+
 html,
 body,
 #app {
@@ -61,7 +114,7 @@ textarea {
 }
 
 ::selection {
-  background: rgb(225 29 72 / 0.45);
+  background: rgb(var(--accent-rgb) / 0.45);
   color: #fff;
 }
 
@@ -100,7 +153,7 @@ textarea {
     inset: -1px -1px auto;
     height: 1px;
     border-radius: inherit;
-    background: linear-gradient(90deg, transparent 6%, rgb(192 132 252 / 0.55) 30%, rgb(244 63 94 / 0.45) 62%, transparent 94%);
+    background: linear-gradient(90deg, transparent 6%, rgb(192 132 252 / 0.55) 30%, rgb(var(--accent-rgb) / 0.45) 62%, transparent 94%);
     pointer-events: none;
   }
 
@@ -115,13 +168,13 @@ textarea {
     font-stretch: 87.5%;
     font-weight: 600;
     letter-spacing: 0.06em;
-    color: #fff;
-    background: linear-gradient(180deg, #f0284f, var(--color-crimson) 55%, #c8133c);
+    color: var(--accent-ink);
+    background: linear-gradient(180deg, var(--accent-top), var(--color-crimson) 55%, var(--accent-bottom));
     box-shadow:
       inset 0 1px 0 rgb(255 255 255 / 0.28),
       inset 0 -1px 0 rgb(0 0 0 / 0.25),
       0 2px 0 var(--color-crimson-deep),
-      0 6px 18px -6px rgb(225 29 72 / 0.55);
+      0 6px 18px -6px rgb(var(--accent-rgb) / 0.55);
     transition:
       transform 60ms ease-out,
       box-shadow 60ms ease-out,
@@ -135,7 +188,7 @@ textarea {
     box-shadow:
       inset 0 1px 0 rgb(255 255 255 / 0.18),
       0 0 0 var(--color-crimson-deep),
-      0 2px 8px -4px rgb(225 29 72 / 0.6);
+      0 2px 8px -4px rgb(var(--accent-rgb) / 0.6);
   }
   .key:disabled {
     cursor: not-allowed;
@@ -209,10 +262,10 @@ textarea {
   }
   .well:focus-within,
   .well:focus {
-    border-color: rgb(244 63 94 / 0.6);
+    border-color: rgb(var(--accent-rgb) / 0.6);
     box-shadow:
       inset 0 1px 2px rgb(0 0 0 / 0.6),
-      0 0 0 3px rgb(225 29 72 / 0.14);
+      0 0 0 3px rgb(var(--accent-rgb) / 0.14);
     outline: none;
   }
   .well[aria-invalid="true"],
@@ -236,7 +289,7 @@ textarea {
   .rail-on {
     box-shadow:
       inset 3px 0 0 var(--color-crimson),
-      inset 14px 0 18px -14px rgb(225 29 72 / 0.55);
+      inset 14px 0 18px -14px rgb(var(--accent-rgb) / 0.55);
   }
 
   /* Hazard stripe for armed destructive actions. */

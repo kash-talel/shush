@@ -7,7 +7,7 @@
 
   // First-run "bring your passwords" step (spec §10.1). Detection only checks
   // that a browser's profile folder exists; its password store is never read (#17).
-  let { ondone }: { ondone: () => void } = $props();
+  let { ondone, color = "crimson" }: { ondone: () => void; color?: string } = $props();
 
   let browsers = $state.raw<Browser[] | null>(null);
   let copied = $state<string | null>(null);
@@ -28,7 +28,7 @@
   <div class="my-auto flex w-full max-w-[560px] flex-col gap-5">
     <header class="flex items-center gap-4">
       <div class="shrink-0 [@media(max-height:620px)]:hidden">
-        <Spindle size={64} />
+        <Spindle size={64} {color} />
       </div>
       <div>
         <h1 class="font-display text-[26px] leading-tight font-bold tracking-[-0.01em] text-zinc-50">Bring your passwords</h1>
