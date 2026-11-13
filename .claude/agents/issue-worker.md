@@ -38,14 +38,23 @@ Labels: `bug`, `enhancement`, `severity:critical`, `severity:high`, `severity:me
 You run inside an isolated git worktree, not the owner's checkout. Stay in it: never
 `git checkout main` (it is checked out in the main worktree and the command fails), and never
 `cd` to or edit files in the main checkout.
-1. Link the shared build dirs (`src/node_modules`, `src-tauri/target`) into this worktree:
-   `powershell -NoProfile -File .claude/scripts/issue-worktree.ps1 -Link`
-2. Branch from a fresh main:
+1. Branch from a fresh main:
    `git fetch origin main; git checkout -B fix/issue-<NUMBER>-<short-slug> origin/main`
+2. Link the build dirs into this worktree **before any cargo or npm command**:
+   `powershell -NoProfile -File .claude/scripts/issue-worktree.ps1 -Link`
+   `src-tauri/target` becomes this worktree's own leased cargo target slot (other runners may be
+   building at the same time; never point cargo at another checkout's target). `src/node_modules`
+   is main's, shared read-only: **never run `npm install`, `npm ci` or `npm update` through it.**
+   If the issue changes `src/package.json` or `src/package-lock.json`, first run
+   `powershell -NoProfile -File .claude/scripts/issue-worktree.ps1 -OwnNodeModules`.
 3. Implement the change.
-4. Verify. All must pass with 0 errors; fix any failure before going on:
+4. Verify. Start every PowerShell command that builds, tests or launches the app with
+   `. .claude/scripts/issue-env.ps1;` — it puts cargo on PATH and gives this worktree its own
+   `CDP_PORT`, WebView2 CDP flag and scratch `SHUSH_VAULT_PATH`, so a parallel run's app and
+   tests never collide with yours. Use `$env:CDP_PORT` instead of 9222 everywhere. All must pass
+   with 0 errors; fix any failure before going on:
    ```powershell
-   $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+   . .claude/scripts/issue-env.ps1
    cargo fmt --manifest-path src-tauri/Cargo.toml --check
    cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
    cargo test --manifest-path src-tauri/Cargo.toml
@@ -66,6 +75,15 @@ You run inside an isolated git worktree, not the owner's checkout. Stay in it: n
    gh pr merge fix/issue-<NUMBER>-<short-slug> --squash --admin
    git push origin --delete fix/issue-<NUMBER>-<short-slug>
    ```
+   If the merge fails because main moved (another runner merged first and the PR now conflicts
+   or is out of date), recover instead of giving up, at most 3 rounds:
+   1. `git fetch origin main; git rebase origin/main`. Resolve conflicts by keeping both changes'
+      intent, never by dropping the other runner's work; `git rebase --continue`.
+   2. Re-run the full Step 3 verification (main changed under you, so a pass from before the
+      rebase proves nothing).
+   3. `git push --force-with-lease origin fix/issue-<NUMBER>-<short-slug>`, then merge again.
+   If it still cannot merge after 3 rounds, or a conflict needs a judgment call, stop with
+   `STATUS: FAILED` and say which files conflict.
 5. Make sure the issue is closed (`gh issue close <NUMBER>` if it did not auto-close).
    Do not switch branches or clean up the worktree; the dispatcher does that.
 
