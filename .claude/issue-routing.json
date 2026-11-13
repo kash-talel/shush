@@ -50,6 +50,9 @@
     {"number": 115, "title": "[Memory hygiene] create_vault, delete_vault, and set_duress_password still take master passwords as JSON strings over IPC", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
     {"number": 125, "title": "[Brand] Replace all static logos, app icons, and installer graphics with updated jewel case artwork", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Reassigned to Claude by user request"},
     {"number": 126, "title": "[Site/UI] Remove transparent box shadow/aura on 3D jewel case and decouple CD tray hub from rotating disc", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Reassigned to Claude by user request"},
-    {"number": 127, "title": "[UI] Dynamic app interface theming by vault color, eliminate red tint bleed, and fix onboarding disc color", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Reassigned to Claude by user request"}
+    {"number": 127, "title": "[UI] Dynamic app interface theming by vault color, eliminate red tint bleed, and fix onboarding disc color", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Reassigned to Claude by user request"},
+    {"number": 137, "title": "[Sync] Implement per-item hybrid logical clock and tombstone exchange for LAN sync merge", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 138, "title": "[Import] CSV re-import can re-add a login the user deleted (tombstones only match by id)", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 143, "title": "[Keyfile] No recovery path when a keyfile is lost or corrupted", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"}
   ]
 }
