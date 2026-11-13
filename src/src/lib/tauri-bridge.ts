@@ -322,6 +322,8 @@ export const getItem = (id: string) => invoke<ItemDetail>("get_item", { id });
 export const createItem = (kind: ItemKind, draft: ItemDraft) => invoke<ItemDetail>("create_item", { kind, draft });
 export const updateItem = (id: string, draft: ItemDraft) => invoke<ItemDetail>("update_item", { id, draft });
 export const deleteItem = (id: string) => invoke<void>("delete_item", { id });
+/** Erases a login's archived passwords (issue #19); resolves to the updated item. */
+export const purgeHistory = (id: string) => invoke<ItemDetail>("purge_history", { id });
 export const setFavorite = (id: string, favorite: boolean) => invoke<void>("set_favorite", { id, favorite });
 /** Copies in Rust (history/cloud-excluded); resolves to seconds until auto-clear. */
 export const copyField = (id: string, field: SecretField) => invoke<number>("copy_field", { id, field });
@@ -348,6 +350,8 @@ export interface ImportPreview {
   new_items: number;
   identical: number;
   conflicts: number;
+  /** Items deleted from this vault since; a merge does not bring them back. */
+  deleted_locally: number;
 }
 
 export type ImportMode = "merge" | "replace";

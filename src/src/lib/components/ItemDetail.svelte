@@ -2,7 +2,7 @@
   import { Copy, Eye, EyeOff, Folder, History, Pencil, Star, Trash2 } from "@lucide/svelte";
   import TotpBadge from "./TotpBadge.svelte";
   import AttachmentList from "./AttachmentList.svelte";
-  import { revealPassword, toCmdError, type ItemDetail, type SecretField } from "../tauri-bridge";
+  import { purgeHistory, revealPassword, toCmdError, type ItemDetail, type SecretField } from "../tauri-bridge";
 
   // Right pane (spec §7.2.2): click-to-copy fields, concealed password with
   // explicit reveal, live TOTP, edit / delete / favorite.
@@ -43,6 +43,23 @@
       revealError = null;
     } catch (e) {
       revealError = toCmdError(e).message;
+    }
+  }
+
+  // Explicit purge of archived passwords (issue #19), two-step like delete.
+  let confirmPurge = $state<string | null>(null);
+  let purgeError = $state<string | null>(null);
+  async function purge() {
+    if (confirmPurge !== item.id) {
+      confirmPurge = item.id;
+      return;
+    }
+    confirmPurge = null;
+    try {
+      onupdated(await purgeHistory(item.id));
+      purgeError = null;
+    } catch (e) {
+      purgeError = toCmdError(e).message;
     }
   }
 
@@ -151,8 +168,19 @@
         {#if item.history_count > 0}
           <p class="mt-1.5 flex items-center gap-1 font-mono text-[10.5px] text-zinc-500">
             <History class="size-3" aria-hidden="true" /> {item.history_count} previous password{item.history_count === 1 ? "" : "s"} archived
+            {#if !readOnly}
+              <button
+                type="button"
+                onclick={purge}
+                onblur={() => (confirmPurge = null)}
+                class={["ml-1 rounded-[2px] px-1 underline-offset-2 hover:underline", confirmPurge === item.id ? "text-danger" : "text-zinc-400 hover:text-danger"]}
+              >
+                {confirmPurge === item.id ? "click again to erase" : "purge"}
+              </button>
+            {/if}
           </p>
         {/if}
+        {#if purgeError}<p class="mt-1 text-xs text-danger">{purgeError}</p>{/if}
       </div>
 
       {#if item.has_totp}

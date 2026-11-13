@@ -24,6 +24,7 @@ const COMMANDS: &[&str] = &[
     "create_item",
     "update_item",
     "delete_item",
+    "purge_history",
     "set_favorite",
     "copy_field",
     "reveal_password",

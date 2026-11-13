@@ -169,6 +169,14 @@ export interface VaultData {
   items: VaultItem[];
   folders: Folder[];
   settings: VaultSettings;
+  tombstones?: Tombstone[]; // deleted item ids (issue #19); omitted when empty
+}
+
+// Left by a deleted item so no merge resurrects it. No item contents.
+// `deleted_at` only expires the marker (365 days, newest 10,000 kept).
+export interface Tombstone {
+  id: string; // the deleted item's id
+  deleted_at: string;
 }
 
 export type ItemType = 'login' | 'secure_note';
@@ -435,7 +443,7 @@ flowchart LR
         UnlockBackup --> DiffEngine["Smart Diff & Conflict Resolver"]
         DiffEngine --> Preview["Preview: New vs Conflicting Items"]
         Preview --> ApplyMerge{"Import Mode"}
-        ApplyMerge -->|"Merge & Update Newer"| MergedVault["Updated Vault"]
+        ApplyMerge -->|"Merge (keep current, archive conflicts)"| MergedVault["Updated Vault"]
         ApplyMerge -->|"Clean Restore"| ReplacedVault["Replaced Vault"]
     end
 ```
@@ -461,35 +469,51 @@ flowchart LR
   4. App writes the `.shushbackup` file to the user's chosen folder or external drive.
 
 ### 9.2 Cutting-Edge Conflict Resolution: Non-Destructive Historical Merging (NDHM)
-When importing from multiple browsers (e.g. Chrome vs. Firefox) or synchronizing backups where the **same account has conflicting passwords**, `shush` uses a **zero-data-loss, git-like versioning strategy**:
+When importing from multiple browsers (e.g. Chrome vs. Firefox) or merging backups where the **same account has conflicting passwords**, `shush` uses a **zero-data-loss** strategy.
+
+> **Revised (issue #19).** The original design promoted the "newer" password by comparing wall-clock
+> timestamps. Those are untrusted: clocks skew, and a crafted `.shushbackup` or CSV can claim
+> `updated_at: 2099-01-01` to make an attacker-chosen password active. Timestamps therefore **never**
+> decide which password is active. The rules below are normative and implemented in
+> `vault/backup.rs` and `vault/importer.rs`.
 
 ```mermaid
 flowchart TD
-    Conflict["Conflict Detected:\nSame URL + Username, Different Passwords"] --> Timestamp{"Compare Metadata\n(Last Modified / Last Used)"}
-    
-    Timestamp -->|"Pass A is Newer"| AutoPromote["1. Set Pass A as Active Primary Password\n2. Archive Pass B into password_history with source tag"]
-    Timestamp -->|"Pass B is Newer"| AutoPromoteB["1. Set Pass B as Active Primary Password\n2. Archive Pass A into password_history with source tag"]
-    Timestamp -->|"Timestamps Indeterminate"| ConflictInbox["Place in Asynchronous 'Conflict Inbox'\n(No blocking modal popups)"]
-
-    ConflictInbox --> InteractiveDiff["Side-by-Side Tactical Diff Card\n(Domain, Passwords, Timestamps, Origin)"]
-    InteractiveDiff --> UserChoice{"User Action"}
-    UserChoice -->|"Promote & Archive"| Merged["Merged with Full History"]
-    UserChoice -->|"Keep as Separate Accounts"| Fork["Split into Personal / Work items"]
+    Incoming["Imported item
+(.shushbackup or CSV row)"] --> Deleted{"Id tombstoned
+in this vault?"}
+    Deleted -->|"Yes (backup merge)"| Skip["Skipped: stays deleted
+(clean restore is the explicit way back)"]
+    Deleted -->|"No"| Match{"Same item?
+(backup: same id; CSV: canonical host + username)"}
+    Match -->|"No"| Add["Added as a new item"]
+    Match -->|"Yes, same passwords"| Noop["Identical: nothing changes"]
+    Match -->|"Yes, different password"| Archive["Current password stays active.
+Imported one archived in password_history
+(status archived_conflict, source tag)"]
+    Archive --> ConflictInbox["Reviewed in the Conflict Inbox
+(user may Swap Active & Archived)"]
 ```
 
 #### 1. Zero-Data-Loss Guarantee
-- `shush` **never destroys or discards a password**.
-- When two passwords conflict for the same account (e.g. `github.com` / `user@example.com` has `Password_A` in Chrome and `Password_B` in Firefox):
-  - The newer credential (by `last_modified` or `last_used_at`) is promoted to the **Active Password**.
-  - The conflicting alternative is automatically appended into the item's encrypted `password_history` array, enriched with metadata:
+- An import **never destroys a password and never promotes one**. When two passwords conflict for the same account (e.g. `github.com` / `user@example.com` has `Password_A` in the vault and `Password_B` in a Firefox export):
+  - The vault's current password **stays active**, whatever either side's timestamps say.
+  - The conflicting alternative is appended to the item's encrypted `password_history`, enriched with metadata:
     ```json
     {
       "password": "OldOrConflictingPassword123!",
       "changed_at": "2026-11-07T18:42:00Z",
-      "source": "Imported from Chrome (Conflict Resolution)",
+      "source": "Imported from Firefox (CSV)",
       "status": "archived_conflict"
     }
     ```
+  - Making the imported password active is always an explicit user action (`[Swap Active & Archived]` in the Conflict Inbox, or editing the item).
+- **Identity.** A backup item matches by `id`. A CSV row matches a login by *canonical host* + username (case-insensitive). The canonical host is the URL's host after IDNA to punycode (a Unicode look-alike never equals its ASCII twin), lower-casing, and removing one trailing dot and a leading `www.`; scheme, port, path, query and credentials are ignored. There is deliberately **no** registrable-domain (eTLD+1) folding: `mail.example.com` and `example.com` can hold different accounts, and folding them would archive one account's password into the other's history.
+- **Deletion tombstones.** Deleting an item leaves a `Tombstone { id, deleted_at }` (no contents). A backup merge never re-adds a tombstoned item, so removing a compromised credential sticks; the import preview reports these as *deleted locally*. A **clean restore** (replace mode) is the explicit way back and clears the tombstones of the items it restores. A backup's own tombstones never delete current items: an imported file can add, never destroy. Tombstones expire after **365 days** and at most the newest **10,000** are kept, so a backup or peer older than the horizon can resurrect an item. Wall-clock skew only moves when a marker expires. CSV rows carry no ids and are not matched against tombstones; a CSV import is an explicit user action whose preview lists every new item.
+- **Bounded history.** Each login keeps its newest **50** history entries; older ones are dropped. The item view offers an explicit **purge** (two-step confirm) that wipes a login's whole history, e.g. after a breach.
+
+#### Sync (future, issue #18): ordering without wall clocks
+LAN sync (`lan-sync.md` §8) must not reintroduce wall-clock ordering. Its merge uses a **hybrid logical clock** per item: `(physical_ms, counter, device_id)`, where `physical_ms = max(local_now, highest_seen)` and the counter breaks ties, so a skewed or lying peer cannot jump ahead by more than a bounded drift (a received clock more than 24 h ahead of local time is rejected as a conflict, not adopted). Even then the HLC only orders *non-secret* field edits; two different passwords for the same item still follow rule 1 (current stays active, the peer's is archived and lands in the Conflict Inbox). Tombstones are exchanged and unioned, a tombstone beats an edit with a lower HLC, and an edit with a higher HLC than the tombstone resurrects the item only as a Conflict Inbox entry.
 
 #### 2. Asynchronous "Conflict Inbox" (Zero Notification Fatigue)
 - Instead of spamming the user with 30 annoying modal dialogs during import, `shush` automatically executes NDHM and silently increments a tactical badge in the status bar:
@@ -586,7 +610,7 @@ The normative design is [`lan-sync.md`](lan-sync.md) (issue #18); this section s
 2. **PAKE pairing, no TLS**:
    - One device shows a one-time 8-character code; the user types it on the other. SPAKE2 turns the code into a key that feeds a Noise `XXpsk3` handshake, so a man-in-the-middle without the code cannot complete pairing, and a recorded transcript allows no offline guessing. (A short PIN compared on both screens over self-signed TLS was dropped: a MITM can grind keys until the PINs match.)
    - Each side then pins the other's static key. Pinned peers live in the encrypted vault payload; *Forget device* revokes one, *Reset sync identity* revokes all.
-3. **Incremental NDHM Merge** (needs #9 and #19 first):
+3. **Incremental NDHM Merge** (needs #9 first; merge rules from #19 in §9.2):
    - Once paired, devices synchronize delta changes using the **Non-Destructive Historical Merging** engine.
    - Conflicting edits preserve both passwords in history, ensuring seamless synchronization without data loss.
 
@@ -615,7 +639,7 @@ When instructing Claude to build `shush`, direct it to execute these sequential 
    - Hook clipboard auto-clear, extension-verified auto-type (no `SendInput`), and `WDA_EXCLUDEFROMCAPTURE` window protection.
 6. **Step 6: Backup, Export & Import Engine**
    - Implement encrypted `.shushbackup` generator with metadata manifest.
-   - Implement smart importer with visual diff preview and conflict resolution strategies (Merge & Update Newer vs Clean Restore).
+   - Implement smart importer with visual diff preview and conflict resolution strategies (Merge, never promoting, vs Clean Restore).
    - Implement CSV migration parser for Bitwarden/1Password/Chrome exports.
 7. **Step 7: First-Run Onboarding & Native Messaging Host**
    - Implement first-run guided CSV export onboarding for Chrome, Edge, Brave and Firefox (detection only, #17).
