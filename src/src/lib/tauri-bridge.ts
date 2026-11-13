@@ -464,3 +464,17 @@ export const bridgeApproveSave = (origin: string, username: string) =>
   invoke<string>("bridge_approve_save", { origin, username });
 export const bridgeRejectSave = (origin: string, username: string) =>
   invoke<void>("bridge_reject_save", { origin, username });
+
+// ---- browser support registration (issue #53) -----------------------------------
+
+export interface BrowserSupport {
+  /** Chrome, Edge and Firefox are all registered. */
+  enabled: boolean;
+  browsers: string[];
+  /** `shush-host.exe` sits next to the app. */
+  host_found: boolean;
+}
+export const browserSupportStatus = () => invoke<BrowserSupport>("browser_support_status");
+/** Writes or removes the per-user (HKCU) native-messaging registration. */
+export const setBrowserSupport = (enabled: boolean) =>
+  invoke<BrowserSupport>("set_browser_support", { enabled });

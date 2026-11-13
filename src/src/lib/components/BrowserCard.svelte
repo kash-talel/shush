@@ -6,8 +6,11 @@
     bridgeRevoke,
     bridgeStartPairing,
     bridgeState,
+    browserSupportStatus,
+    setBrowserSupport,
     toCmdError,
     type BridgeInfo,
+    type BrowserSupport,
     type CmdError,
   } from "../tauri-bridge";
 
@@ -19,12 +22,14 @@
   let info = $state<BridgeInfo | null>(null);
   let error = $state<CmdError | null>(null);
   let busy = $state(false);
+  let support = $state<BrowserSupport | null>(null);
   // Counted down locally between polls so the countdown is smooth.
   let secondsLeft = $state(0);
 
   async function refresh() {
     try {
       info = await bridgeState();
+      support = await browserSupportStatus();
       secondsLeft = info.code?.seconds_left ?? 0;
     } catch (e) {
       error = toCmdError(e);
@@ -66,6 +71,23 @@
     Connect the shush browser extension. Enter the code in the extension within two minutes. Logins are only
     filled on an exact site match, and saves wait here for your approval.
   </p>
+
+  <label class="flex items-start gap-2 text-xs text-zinc-300">
+    <input
+      type="checkbox"
+      class="mt-0.5"
+      checked={support?.enabled ?? false}
+      disabled={busy || support === null}
+      onchange={(e) => run(() => setBrowserSupport(e.currentTarget.checked))}
+    />
+    <span>
+      Allow browsers to talk to shush (Chrome, Edge, Firefox). Registers for your Windows user only; no
+      administrator rights.
+      {#if support && !support.enabled && support.browsers.length > 0}
+        <span class="text-caution">Partly registered: {support.browsers.join(", ")}.</span>
+      {/if}
+    </span>
+  </label>
 
   {#if info?.warning}
     <p class="flex items-start gap-1.5 text-xs text-caution" role="alert">

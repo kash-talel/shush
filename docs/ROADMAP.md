@@ -18,7 +18,7 @@ the real app (see [`testing/`](testing/README.md)), and its PR is merged into `m
 | 6a | Encrypted `.shushbackup` export (vault or separate credentials), import preview, merge / clean restore | ✅ complete | #34 |
 | 6b | CSV migration (Bitwarden / 1Password / KeePass / Chrome / Firefox) with conflict handling | ✅ complete | #35 |
 | 7a | First-run onboarding: browser detection (folder existence only) + guided CSV import (#17) | ✅ complete | #36 |
-| 7b | Native messaging host + extension with one-time-code pairing (#16), extension-verified auto-type | 🔨 in progress (steps 1, 2, 4 done), [plan](#phase-7b-plan) | #50 |
+| 7b | Native messaging host + extension with one-time-code pairing (#16), extension-verified auto-type | 🔨 in progress (steps 1-5, 7 done; 6 built, E2E pending), [plan](#phase-7b-plan) | #50 |
 | 8 | Deniable duress vault (#8), on-demand PAKE LAN sync (#18), air-gapped mode (#25) | 🔨 8a duress vault done, [plan](#phase-8-plan) | |
 
 Not a phase: the punk industrial UI redesign and the liner-notes site (branch `design/punk-industrial`) are

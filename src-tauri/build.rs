@@ -57,6 +57,8 @@ const COMMANDS: &[&str] = &[
     "bridge_revoke",
     "bridge_approve_save",
     "bridge_reject_save",
+    "browser_support_status",
+    "set_browser_support",
 ];
 
 fn main() {

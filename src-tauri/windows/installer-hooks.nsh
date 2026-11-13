@@ -30,5 +30,10 @@
   ${If} $UpdateMode <> 1
     DeleteRegValue HKCU "Software\Microsoft\Windows\Windows Error Reporting\ExcludedApplications" "${MAINBINARYNAME}.exe"
     DeleteRegKey /ifempty HKCU "Software\Microsoft\Windows\Windows Error Reporting\ExcludedApplications"
+    ; Browser native-messaging registration written by Settings > Pair browser (#53). Their
+    ; manifests live in the app data folder, which the uninstaller keeps or deletes as asked.
+    DeleteRegKey HKCU "Software\Google\Chrome\NativeMessagingHosts\com.shush.vault"
+    DeleteRegKey HKCU "Software\Microsoft\Edge\NativeMessagingHosts\com.shush.vault"
+    DeleteRegKey HKCU "Software\Mozilla\NativeMessagingHosts\com.shush.vault"
   ${EndIf}
 !macroend
