@@ -15,10 +15,14 @@ Show every open issue with its assigned model and runner.
 3. Read `.claude/issue-routing.json` and join it to the open-issue list. Ignore entries for closed issues.
 4. Print one markdown table, sorted by severity (critical, high, medium, low) and then by issue number:
 
-   | # | Title | Model | Runner |
-   |---|-------|-------|--------|
+   | # | Title | Model | Runner | Merge |
+   |---|-------|-------|--------|-------|
 
    - Model is the `model` field and runner is the `runner` field.
+   - Merge is `review` if the issue has any of the labels `crypto`, `sync`, `file-format`,
+     `memory-hygiene`, `browser-integration`, `severity:critical`, `severity:high`, or its title
+     starts with one of the review prefixes listed in the routing file's rules; else `auto`.
+     An entry's own `"merge"` field overrides that.
    - Shorten titles to about 70 characters.
    - Under the table, print counts per runner (for example `agy: 14 · claude: 20`).
    - Do not change any issue or file other than the routing file.

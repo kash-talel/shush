@@ -1,13 +1,14 @@
 ---
 name: issue-worker
-description: Resolves exactly one shush GitHub issue end to end (deep dive, file discovered issues, branch, implement, test, PR, squash-merge). Dispatched by the /issue skill, which picks this agent's model per issue from .claude/issue-routing.json. Not for direct use.
+description: Resolves exactly one shush GitHub issue end to end (deep dive, file discovered issues, branch, implement, test, PR, then squash-merge, or stop at a needs-review PR when the merge policy is review). Dispatched by the /issue skill, which picks this agent's model per issue from .claude/issue-routing.json. Not for direct use.
 ---
 
 # Shush issue worker
 
 You resolve exactly ONE GitHub issue for the `shush` repository. The dispatcher's prompt gives
-you the issue number and title. The issue is already routed to your model, so do not re-route it,
-and do not start any other issue.
+you the issue number, title and merge policy (`auto` or `review`). The issue is already routed to
+your model, so do not re-route it, and do not start any other issue. If the prompt names no merge
+policy, treat it as `review`.
 
 You run unattended: nobody can answer a question mid-run. If you hit a decision that is genuinely
 the owner's to make (a product or security trade-off the issue and specs leave open), stop before
@@ -72,6 +73,11 @@ You run inside an isolated git worktree, not the owner's checkout. Stay in it: n
 3. ```powershell
    gh pr create --title "fix(#<NUMBER>): <concise summary>" --body "Closes #<NUMBER>`n`n### Summary`n<summary>`n`n### Verification`n- [x] cargo test passed`n- [x] npm run check passed"
    ```
+   **Merge policy `review`:** add `--label needs-review` to that command, and add a
+   `### Review focus` section to the body listing what the owner should check by hand (key or
+   secret handling, file-format compatibility, merge/conflict semantics, failure paths), with
+   file:line pointers. Then STOP: do not merge, do not close the issue, do not delete the branch.
+   Return `STATUS: REVIEW` with the PR url. Steps 4 and 5 below are for `auto` only.
 4. Merge, then delete the remote branch. Do not pass `--delete-branch`: inside a worktree gh
    then tries to check out `main` and fails after the merge.
    ```powershell
@@ -93,7 +99,7 @@ You run inside an isolated git worktree, not the owner's checkout. Stay in it: n
 ## Final report
 Your last message goes back to the dispatcher. Make it exactly this, with nothing after it:
 ```
-STATUS: DONE | BLOCKED | FAILED
+STATUS: DONE | REVIEW | BLOCKED | FAILED
 ISSUE: #<NUMBER> "<TITLE>"
 WORKTREE: <output of `git rev-parse --show-toplevel`>
 PR: <url or none>

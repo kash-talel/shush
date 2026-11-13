@@ -5,7 +5,8 @@
     "v2 (2026-11-13): Claude writes all code, UI and tests; AGY writes prose only. See route-issue.ps1.",
     "Opus (claude): severity:critical, OR (crypto OR sync) AND severity:high",
     "Gemini (agy): [Docs]/[Spec] title or docs/documentation/spec-inconsistency label, with no domain label and not severity:high; its PR may only touch docs (agy-gate.ps1)",
-    "Sonnet (claude): everything else"
+    "Sonnet (claude): everything else",
+    "Merge (computed live, not stored): review = owner merges by hand, for labels crypto/sync/file-format/memory-hygiene/browser-integration/severity:critical/severity:high or titles [Crypto]/[Sync]/[File format]/[Memory hygiene]/[Keyfile]/[Duress]/[Distribution]/[Release]/[Updater]/[Signing]/[CI]/[Pipeline]/[Security]; auto otherwise. Pin with \"merge\": \"auto\"|\"review\" on an entry."
   ],
   "issues": [
     {"number": 11, "title": "[File format] Atomic write on Windows: rename is not enough (no fsync, AV sharing violations, cloud-sync forks, no .bak)", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Systems file-format and Win32 write-path work, severity:high but not crypto/sync-labelled"},

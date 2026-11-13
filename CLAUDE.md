@@ -53,6 +53,10 @@ When resolving issues via `/issue`:
 - **File discovered issues**: If bugs, architectural flaws, or high-value feature ideas are spotted during work, file them immediately with `gh issue create`.
 - **Verify rigorously**: Ensure `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --manifest-path src-tauri/Cargo.toml`, and `npm run check` in `src/` all pass cleanly.
 - **Branch & PR Lifecycle**: Always create a feature branch (`fix/issue-<num>-<slug>`), commit, push, create a PR (`gh pr create`), and squash-merge (`gh pr merge --squash --delete-branch --admin`).
+- **Merge policy**: `route-issue.ps1` returns `merge: auto | review`. `review` (crypto, sync, file
+  format, memory hygiene, browser bridge, release/updater/signing/CI, or severity high/critical)
+  means the runner opens the PR labelled `needs-review` and stops; only the owner merges it.
+  `/issue` skips issues whose PR is still awaiting review.
 - **Context discipline**: Run `/clear` after completing an issue to keep token usage minimal.
 - **Runners**: Claude (Sonnet by default; Opus for critical, or high crypto/sync) writes all code, UI
   and tests. AGY gets Markdown-only docs/spec issues, opens a PR, and never merges; the dispatcher
