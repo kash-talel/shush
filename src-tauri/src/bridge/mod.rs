@@ -21,6 +21,7 @@ pub mod frame;
 pub mod origin;
 pub mod pairing;
 pub mod protocol;
+pub mod relay;
 #[cfg(windows)]
 pub mod server;
 pub mod state;

@@ -104,7 +104,7 @@ focus race, keyboard-layout and UIPI problems of #13. Non-browser auto-type stay
 2. ✅ **Pipe server** (`os/pipe.rs`; rate limit and app wiring still open) in the main instance: DACL, first-instance flag, squat detection, PID and path
    checks, framing, request size cap (64 KiB) and per-connection rate limit. Rust tests over a real
    pipe.
-3. **`shush-host.exe`**: stdio framing (4-byte little-endian length, 1 MiB cap for host → browser),
+3. ✅ **`shush-host.exe`** (#51: `src/bin/shush-host.rs`, `bridge/relay.rs`; bundling beside `shush.exe` still open): stdio framing (4-byte little-endian length, 1 MiB cap for host → browser),
    relay, exits when either side closes. Tests feed it framed stdin.
 4. ✅ **Protocol and origin matching** (`bridge/`; pairings not yet persisted in the vault) in Rust: `match`, `fill`, `save`, `revoke`, HMAC counter,
    origin normalization (IDNA, default ports, trailing dots). Table-driven tests including
