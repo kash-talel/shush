@@ -272,9 +272,15 @@ export interface VaultSettings {
    - When copying a password, capture `GetClipboardSequenceNumber()`.
    - Start a 30-second background timer.
    - When the timer fires, check `GetClipboardSequenceNumber()`. Only clear the clipboard if the sequence number has **not changed** (meaning the user hasn't copied something else in the interim).
-4. **Session Lock Detection**:
-   - Listen to Windows session messages (`WTSRegisterSessionNotification`).
-   - If `WTS_SESSION_LOCK` or `WM_POWERBROADCAST` (sleep/suspend) is received, invoke `vault.lock()` immediately.
+4. **Session Lock Detection** (#15, implemented in `src-tauri/src/os/session.rs`):
+   - `WTSRegisterSessionNotification` delivers to an HWND, and tao owns the main window procedure, so a dedicated thread owns a hidden window and runs its own message loop. It sends lock requests into the vault state machine (`vault.lock()`, which waits for in-flight operations) and never touches the UI event loop.
+   - Events that lock immediately:
+     - `WM_WTSSESSION_CHANGE`: `WTS_SESSION_LOCK` (Win+L), `WTS_SESSION_LOGOFF`, `WTS_CONSOLE_DISCONNECT` and `WTS_REMOTE_DISCONNECT` (fast user switching, RDP disconnect). `WTS_SESSION_UNLOCK` and logon never lock.
+     - `WM_POWERBROADCAST` / `PBT_APMSUSPEND`, registered with `RegisterSuspendResumeNotification`.
+     - `PBT_POWERSETTINGCHANGE` for `GUID_CONSOLE_DISPLAY_STATE` = off. On Modern Standby (S0ix) laptops `PBT_APMSUSPEND` is often not delivered on lid close, but the display-off notification is.
+   - **Idle timeout** measures system-wide input via `GetLastInputInfo`, polled from a second thread, not input to shush alone.
+   - Resume does not unlock; the user must re-enter the master password.
+
 5. **Extension-Verified Auto-Type (replaces `SendInput` synthesis, #13)**:
    - shush does **not** synthesize keystrokes with `SendInput`. Synthesized typing has an unfixable focus race (a toast, chat window or UAC prompt can take focus mid-sequence, and `username TAB password ENTER` would go to the wrong app, where a chat box would *send* the password), breaks on non-QWERTY layouts and dead keys, fails silently against elevated windows (UIPI), and can trigger the `Alt+Shift` input-language switch.
    - Instead, the paired browser extension fills the fields via its content script after verifying the active tab's origin (see ROADMAP, "Extension-verified auto-type"). If the origin does not match, nothing is typed. Non-browser auto-type is out of scope.
