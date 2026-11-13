@@ -76,6 +76,10 @@ pub enum CryptoError {
     /// The keyfile contains no bytes.
     #[error("keyfile is empty")]
     EmptyKeyfile,
+    /// A shush-generated keyfile failed its integrity check (damaged,
+    /// truncated or edited). Reported before the KDF runs.
+    #[error("keyfile is damaged")]
+    KeyfileCorrupt,
     /// The keyfile could not be read or written.
     #[error("keyfile I/O error: {0}")]
     KeyfileIo(std::io::ErrorKind),

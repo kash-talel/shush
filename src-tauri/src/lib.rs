@@ -736,6 +736,9 @@ fn wait_error(s: u64) -> CmdError {
 struct KeyfileInfo {
     file_name: String,
     size_bytes: u64,
+    /// `true` for a shush-generated keyfile with a verified checksum; `false`
+    /// for an arbitrary file, where any changed byte locks the vault.
+    generated: bool,
 }
 
 fn inspect_keyfile_blocking(path: &Path) -> Result<KeyfileInfo, CmdError> {
@@ -750,7 +753,9 @@ fn inspect_keyfile_blocking(path: &Path) -> Result<KeyfileInfo, CmdError> {
     // Hash it now so unreadable/empty files are rejected at selection time,
     // not after a slow KDF run. The digest is wiped on drop.
     let _digest = crypto::keyfile::digest_file(path).map_err(keyfile_error)?;
+    let kind = crypto::keyfile::inspect_file(path).map_err(keyfile_error)?;
     Ok(KeyfileInfo {
+        generated: kind == crypto::keyfile::KeyfileKind::Generated,
         file_name: path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -763,6 +768,10 @@ fn keyfile_error(e: CryptoError) -> CmdError {
     use std::io::ErrorKind;
     match e {
         CryptoError::EmptyKeyfile => CmdError::new("KEYFILE_EMPTY", "Keyfile is empty."),
+        CryptoError::KeyfileCorrupt => CmdError::new(
+            "KEYFILE_CORRUPT",
+            "This keyfile is damaged (its checksum does not match). Use an intact copy of the keyfile.",
+        ),
         CryptoError::KeyfileIo(ErrorKind::NotFound) => CmdError::new(
             "KEYFILE_NOT_FOUND",
             "Keyfile not found. Is the USB drive connected?",
@@ -2099,6 +2108,18 @@ mod tests {
         let info = inspect_keyfile_blocking(&kf).unwrap();
         assert_eq!(info.file_name, "vault.key");
         assert_eq!(info.size_bytes, 32);
+        assert!(!info.generated);
+
+        let gen = dir.path().join("gen.key");
+        crypto::keyfile::create_keyfile(&gen).unwrap();
+        assert!(inspect_keyfile_blocking(&gen).unwrap().generated);
+        let mut bytes = std::fs::read(&gen).unwrap();
+        bytes[20] ^= 1;
+        std::fs::write(&gen, bytes).unwrap();
+        assert_eq!(
+            inspect_keyfile_blocking(&gen).unwrap_err().code,
+            "KEYFILE_CORRUPT"
+        );
 
         let empty = dir.path().join("empty.key");
         std::fs::write(&empty, b"").unwrap();
@@ -2131,7 +2152,10 @@ mod tests {
         let v = create_vault_blocking(&vault_file, b"correct horse", &choice, 0x02, POLICY_MIN)
             .unwrap();
         assert_eq!(v.header().suite, CipherSuite::XChaCha20Poly1305);
-        assert_eq!(std::fs::metadata(&key).unwrap().len(), 32);
+        assert_eq!(
+            std::fs::metadata(&key).unwrap().len(),
+            crypto::keyfile::GENERATED_FILE_LEN as u64
+        );
 
         let status = status_for(None, &vault_file, false, false, false);
         assert!(status.exists);

@@ -70,11 +70,16 @@
 </script>
 
 {#if keyfile}
-  <div class="flex h-14 items-center gap-2.5 rounded-[5px] border border-crimson/40 bg-crimson/5 px-3">
+  <div class="flex min-h-14 items-center gap-2.5 rounded-[5px] border border-crimson/40 bg-crimson/5 px-3 py-2">
     <FileKey2 class="size-4 shrink-0 text-ruby" aria-hidden="true" />
     <div class="min-w-0 flex-1 font-mono text-[11px]">
       <p class="truncate text-ruby" title={keyfile.path}>[KEYFILE ATTACHED: {keyfile.info.file_name}]</p>
       <p class="text-zinc-500">{formatBytes(keyfile.info.size_bytes)} · read &amp; hashed (SHA-256)</p>
+      {#if !keyfile.info.generated}
+        <p class="text-caution" role="note">
+          Not a shush keyfile: any change to it (re-save, sync, edit) locks the vault.
+        </p>
+      {/if}
     </div>
     <button
       type="button"
