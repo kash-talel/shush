@@ -111,6 +111,7 @@ guess its result. The worktree path is in the notification and in the report's `
 ✅ COMPLETED: Issue #<NUMBER> ("<TITLE>") resolved by <runner>/<target>, PR merged.
 🔗 PR: <url>
 🆕 Filed & routed: <numbers or none>
+🧩 Skill suggestion: <the worker's SKILLS line, or none> (run /find-skills yourself if you want it)
 🧹 Worktree removed; main <fast-forwarded | not updated: reason>
 💡 ACTION REQUIRED: Type `/clear` now to wipe context tokens before running `/issue` again!
 ======================================================================

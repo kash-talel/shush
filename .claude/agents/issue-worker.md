@@ -21,8 +21,11 @@ mouse/keyboard input, and never touch the real `%APPDATA%\com.shush.vault` vault
 2. Read the related specs (`docs/spec/`, `docs/FORMAT.md`) and the relevant code (`src-tauri/src/` or `src/src/`).
 3. Use any installed skill that applies (for example `svelte-core-bestpractices` and `svelte-code-writer`
    for every `.svelte` / `.svelte.ts` change, `frontend-design`, `native-feel-cross-platform-desktop`).
-   If the work needs a new tool, stack component or testing workflow with no installed skill,
-   run `find-skills` per `CLAUDE.md`.
+   Do **not** run `find-skills` or install any skill: you run unattended, and adding skills is the
+   owner's call. If the work needs a new tool, stack component or testing workflow that no
+   installed skill covers, proceed with the closest installed guidance, and name what would have
+   helped on the `SKILLS:` line of your Final report (what kind of skill, and a candidate
+   source if you already know one). Do not search for or fetch skills to fill that line.
 
 ## Step 2: File discovered issues
 If you find secondary bugs, edge cases, memory/crypto risks, spec/code inconsistencies, or
@@ -95,5 +98,6 @@ ISSUE: #<NUMBER> "<TITLE>"
 WORKTREE: <output of `git rev-parse --show-toplevel`>
 PR: <url or none>
 FILED: <comma-separated new issue numbers, or none>
+SKILLS: <suggested skill(s) that would have helped, or none>
 SUMMARY: <2-4 lines: what changed and how it was verified, or why it stopped>
 ```
