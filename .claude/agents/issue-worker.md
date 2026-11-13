@@ -70,8 +70,11 @@ You run inside an isolated git worktree, not the owner's checkout. Stay in it: n
    `git commit -m "fix(#<NUMBER>): <concise summary>"`. End the message with the attribution
    lines the session gives you, if any.
 2. `git push -u origin fix/issue-<NUMBER>-<short-slug>`
-3. ```powershell
-   gh pr create --title "fix(#<NUMBER>): <concise summary>" --body "Closes #<NUMBER>`n`n### Summary`n<summary>`n`n### Verification`n- [x] cargo test passed`n- [x] npm run check passed"
+3. Write the PR body to a file in your scratchpad directory (never inline: Windows PowerShell 5.1
+   splits a `--body` argument that contains double quotes), starting with `Closes #<NUMBER>`,
+   then `### Summary` and `### Verification` (fmt, clippy, cargo test, npm run check). Then:
+   ```powershell
+   gh pr create --title "fix(#<NUMBER>): <concise summary>" --body-file "<scratchpad>\pr-body.md"
    ```
    **Merge policy `review`:** add `--label needs-review` to that command, and add a
    `### Review focus` section to the body listing what the owner should check by hand (key or
