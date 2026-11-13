@@ -438,3 +438,29 @@ export const setDuressPassword = (password: string, keyfilePath: string | null) 
   invoke<void>("set_duress_password", { password, keyfilePath });
 /** Destroys the decoy vault. */
 export const clearDuressPassword = () => invoke<void>("clear_duress_password");
+
+// ---- browser bridge (issue #52) -------------------------------------------------
+
+export interface BridgePairing {
+  code: string;
+  seconds_left: number;
+}
+export interface BridgeInfo {
+  /** Whether the native-messaging pipe is being served. */
+  serving: boolean;
+  /** Plain-words reason when it is not (e.g. the pipe name is squatted). */
+  warning: string | null;
+  pairings: { id: string }[];
+  /** Saves offered by the extension; passwords never reach the UI. */
+  pending: { origin: string; username: string }[];
+  code: BridgePairing | null;
+}
+export const bridgeState = () => invoke<BridgeInfo>("bridge_state");
+export const bridgeStartPairing = () => invoke<BridgePairing>("bridge_start_pairing");
+export const bridgeCancelPairing = () => invoke<void>("bridge_cancel_pairing");
+export const bridgeRevoke = (id: string) => invoke<void>("bridge_revoke", { id });
+/** Writes the pending save into the vault (new login, or password update). */
+export const bridgeApproveSave = (origin: string, username: string) =>
+  invoke<string>("bridge_approve_save", { origin, username });
+export const bridgeRejectSave = (origin: string, username: string) =>
+  invoke<void>("bridge_reject_save", { origin, username });

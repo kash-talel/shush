@@ -28,6 +28,22 @@ pub struct VaultData {
     /// Absent in vaults written before tombstones existed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tombstones: Vec<Tombstone>,
+    /// Browser-extension pairings (issue #52). Inside the encrypted payload so
+    /// revocations and replay counters survive restarts. Absent in older vaults.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub browser_pairings: Vec<StoredPairing>,
+}
+
+/// A paired browser as stored in the vault (issue #52).
+#[derive(Clone, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(test, derive(Debug))]
+pub struct StoredPairing {
+    /// Public pairing id (32 hex characters).
+    pub id: String,
+    /// Shared HMAC key, standard base64 (32 bytes).
+    pub key: String,
+    /// Highest request counter accepted so far.
+    pub last_counter: u64,
 }
 
 impl VaultData {
@@ -40,6 +56,7 @@ impl VaultData {
             folders: Vec::new(),
             settings: VaultSettings::default(),
             tombstones: Vec::new(),
+            browser_pairings: Vec::new(),
         }
     }
 }

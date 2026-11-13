@@ -54,6 +54,12 @@
     "allow-delete-attachment",
     "allow-duress-status",
     "allow-set-duress-password",
-    "allow-clear-duress-password"
+    "allow-clear-duress-password",
+    "allow-bridge-state",
+    "allow-bridge-start-pairing",
+    "allow-bridge-cancel-pairing",
+    "allow-bridge-revoke",
+    "allow-bridge-approve-save",
+    "allow-bridge-reject-save"
   ]
 }

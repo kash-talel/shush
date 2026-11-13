@@ -34,6 +34,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::origin::{item_matches, Origin};
 use super::pairing::{AuthError, Pairing, PairingOffer};
+use crate::vault::models::StoredPairing;
 use crate::vault::models::VaultItem;
 use crate::vault::VaultData;
 
@@ -94,12 +95,82 @@ pub struct PendingSave {
     pub password: String,
 }
 
+impl PendingSave {
+    /// Item URL for the saved login: the origin without its default port.
+    pub fn url(&self) -> String {
+        for suffix in ["https://", "http://"] {
+            if let Some(rest) = self.origin.strip_prefix(suffix) {
+                let port = if suffix == "https://" { ":443" } else { ":80" };
+                return format!("{suffix}{}", rest.strip_suffix(port).unwrap_or(rest));
+            }
+        }
+        self.origin.clone()
+    }
+
+    /// Item title: the host.
+    pub fn title(&self) -> String {
+        let url = self.url();
+        let rest = url.split_once("://").map_or(url.as_str(), |(_, r)| r);
+        rest.to_string()
+    }
+}
+
+/// Writes an approved save into the vault: a login for the same site and user
+/// gets its password updated (the old one is archived by `update_item`),
+/// anything else becomes a new login. Returns the item id.
+pub fn apply_save(
+    d: &mut VaultData,
+    p: &PendingSave,
+) -> Result<String, crate::vault::items::ItemError> {
+    use crate::vault::items::{ItemDraft, ItemKind};
+    let tab = Origin::parse_tab(&p.origin);
+    let existing = tab.and_then(|tab| {
+        logins(d)
+            .find(|l| l.username == p.username && item_matches(&l.url, &tab))
+            .map(|l| {
+                (
+                    l.base.id.clone(),
+                    ItemDraft {
+                        title: l.base.title.clone(),
+                        username: l.username.clone(),
+                        password: Some(p.password.clone().into()),
+                        url: l.url.clone(),
+                        notes: l.base.notes.clone(),
+                        favorite: l.base.favorite,
+                        tags: l.base.tags.clone(),
+                        folder_id: l.base.folder_id.clone(),
+                        ..ItemDraft::default()
+                    },
+                )
+            })
+    });
+    if let Some((id, draft)) = existing {
+        d.update_item(&id, &draft)?;
+        return Ok(id);
+    }
+    d.create_item(
+        ItemKind::Login,
+        &ItemDraft {
+            title: p.title(),
+            username: p.username.clone(),
+            password: Some(p.password.clone().into()),
+            url: p.url(),
+            ..ItemDraft::default()
+        },
+    )
+}
+
 /// Bridge state owned by the main instance.
 #[derive(Default)]
 pub struct Bridge {
     offer: Option<PairingOffer>,
     pairings: Vec<Pairing>,
     pending: Vec<PendingSave>,
+    /// Pairings live inside the vault; while it is locked none are loaded and
+    /// every request but `hello` answers `LOCKED`. `Default` is unsealed (tests).
+    sealed: bool,
+    /// Pairings or counters changed since the last [`Bridge::take_dirty`].
+    dirty: bool,
 }
 
 /// Error codes sent to the extension.
@@ -114,6 +185,55 @@ fn code(e: AuthError) -> &'static str {
 }
 
 impl Bridge {
+    /// The state the app starts in: locked, no pairings loaded.
+    pub fn sealed() -> Self {
+        Self {
+            sealed: true,
+            ..Self::default()
+        }
+    }
+
+    /// Whether no vault's pairings are loaded (vault locked).
+    pub fn is_sealed(&self) -> bool {
+        self.sealed
+    }
+
+    /// Loads the unlocked vault's pairings. Does nothing if already loaded.
+    pub fn load_pairings(&mut self, stored: &[StoredPairing]) {
+        if !self.sealed {
+            return;
+        }
+        self.pairings = stored.iter().filter_map(Pairing::from_stored).collect();
+        self.sealed = false;
+        self.dirty = false;
+    }
+
+    /// Pairings in their persisted form.
+    pub fn export_pairings(&self) -> Vec<StoredPairing> {
+        self.pairings.iter().map(Pairing::to_stored).collect()
+    }
+
+    /// Whether the persisted pairings are out of date; resets the flag.
+    pub fn take_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.dirty)
+    }
+
+    /// Re-flags the pairings as unsaved (a failed save must be retried).
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    /// The pairing code on screen, if one is live: `(code, seconds left)`.
+    pub fn live_offer(&self, now: Instant) -> Option<(String, u64)> {
+        let o = self.offer.as_ref().filter(|o| o.is_live(now))?;
+        Some((o.formatted_code(), o.seconds_left(now)))
+    }
+
+    /// Cancels the pairing code on screen.
+    pub fn cancel_pairing(&mut self) {
+        self.offer = None;
+    }
+
     /// *Settings → Pair browser*: starts a new pairing and returns the formatted code to show (`XXXX-XXXX`).
     pub fn start_pairing(&mut self, now: Instant) -> Result<String, AuthError> {
         let offer = PairingOffer::new(now)?;
@@ -129,7 +249,9 @@ impl Bridge {
 
     /// Revokes a pairing from the shush side.
     pub fn revoke(&mut self, pair_id: &str) {
+        let before = self.pairings.len();
         self.pairings.retain(|p| p.id() != pair_id);
+        self.dirty |= self.pairings.len() != before;
     }
 
     /// Saves waiting for approval.
@@ -142,9 +264,28 @@ impl Bridge {
         (index < self.pending.len()).then(|| self.pending.remove(index))
     }
 
-    /// Call when the vault locks: queued plaintext passwords are wiped.
+    /// Puts a save back after a failed approval (it stays at the end of the queue).
+    pub fn requeue(&mut self, p: PendingSave) {
+        self.pending.push(p);
+    }
+
+    /// Removes and returns the pending save for this login (approve or reject in the UI).
+    pub fn take_pending_for(&mut self, origin: &str, username: &str) -> Option<PendingSave> {
+        let i = self
+            .pending
+            .iter()
+            .position(|p| p.origin == origin && p.username == username)?;
+        Some(self.pending.remove(i))
+    }
+
+    /// Call when the vault locks: queued plaintext passwords are wiped, the
+    /// pairing keys are dropped from memory and the pairing code is withdrawn.
     pub fn on_vault_locked(&mut self) {
         self.pending.clear();
+        self.pairings.clear();
+        self.offer = None;
+        self.sealed = true;
+        self.dirty = false;
     }
 
     /// Handles one framed request. `vault` is `None` while locked. Always
@@ -166,6 +307,15 @@ impl Bridge {
             Ok(r) => r,
             Err(_) => return answer(env.rid, None, None, Err("BAD_REQUEST")),
         };
+
+        if self.sealed {
+            // No pairing is loaded: only `hello` is answered (unsigned).
+            let result = match req {
+                Request::Hello => self.dispatch(&req, None, vault, now),
+                _ => Err("LOCKED"),
+            };
+            return answer(env.rid, None, None, result);
+        }
 
         // Authenticate if the caller claims a pairing; require it unless the
         // request is `hello` or `pair`.
@@ -213,6 +363,7 @@ impl Bridge {
             .ok_or(AuthError::NotPaired)?;
         let mac = B64.decode(mac).map_err(|_| AuthError::BadMac)?;
         self.pairings[i].verify(counter, body.as_bytes(), &mac)?;
+        self.dirty = true; // the replay counter advanced
         Ok(i)
     }
 
@@ -248,6 +399,7 @@ impl Bridge {
                 let pairing = result.map_err(code)?;
                 let id = pairing.id().to_string();
                 self.pairings.push(pairing);
+                self.dirty = true;
                 Ok(json!({ "pair_id": id }))
             }
             Request::Match { tab_origin } => {
@@ -301,6 +453,7 @@ impl Bridge {
             Request::Revoke => {
                 let i = paired.ok_or("NOT_PAIRED")?;
                 self.pairings.remove(i);
+                self.dirty = true;
                 Ok(json!({}))
             }
         }
@@ -618,6 +771,96 @@ mod tests {
         assert!(b.pairing_ids().is_empty());
         let r = signed(&mut b, &mut ext, json!({"type":"hello"}), None);
         assert_eq!(r["error"], "NOT_PAIRED");
+    }
+
+    #[test]
+    fn pairings_survive_a_restart_with_their_counters() {
+        let mut b = Bridge::default();
+        let mut ext = paired(&mut b);
+        let d = vault();
+        signed(&mut b, &mut ext, json!({"type":"hello"}), Some(&d));
+        assert!(b.take_dirty());
+        assert!(!b.take_dirty());
+        let stored = b.export_pairings();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].last_counter, ext.counter);
+
+        // Through the encrypted payload's JSON, then into a fresh bridge.
+        let mut data = VaultData::new();
+        data.browser_pairings = stored;
+        let json = serde_json::to_string(&data).unwrap();
+        let back: VaultData = serde_json::from_str(&json).unwrap();
+        let mut b2 = Bridge::sealed();
+        b2.load_pairings(&back.browser_pairings);
+        assert_eq!(b2.pairing_ids(), b.pairing_ids());
+        // The old counter is refused (replay); the next one is accepted.
+        let body = json!({"type":"hello"}).to_string();
+        let mac = B64.encode(request_mac(&ext.key, ext.counter, body.as_bytes()));
+        let env = json!({"v":1,"rid":1,"pair_id":ext.pair_id,"counter":ext.counter,"mac":mac,"body":body});
+        assert_eq!(send(&mut b2, env, Some(&d))["error"], "BAD_MAC");
+        assert_eq!(
+            signed(&mut b2, &mut ext, json!({"type":"hello"}), Some(&d))["ok"],
+            true
+        );
+        // An empty vault has no `browser_pairings` key at all (format compat).
+        assert!(!serde_json::to_string(&VaultData::new())
+            .unwrap()
+            .contains("browser_pairings"));
+    }
+
+    #[test]
+    fn sealed_bridge_answers_only_hello_and_lock_drops_keys() {
+        let mut b = Bridge::default();
+        let mut ext = paired(&mut b);
+        let d = vault();
+        b.on_vault_locked();
+        assert!(b.is_sealed() && b.pairing_ids().is_empty());
+        let r = signed(&mut b, &mut ext, json!({"type":"hello"}), None);
+        assert_eq!(r["ok"], true);
+        assert_eq!(r["result"]["locked"], true);
+        let r = signed(
+            &mut b,
+            &mut ext,
+            json!({"type":"match","tab_origin":"https://github.com"}),
+            Some(&d),
+        );
+        assert_eq!(r["error"], "LOCKED");
+        let r = open(
+            &mut b,
+            json!({"type":"pair","ext_nonce":"AA==","proof":"AA=="}),
+        );
+        assert_eq!(r["error"], "LOCKED");
+    }
+
+    #[test]
+    fn revoke_marks_dirty_and_apply_save_creates_or_updates() {
+        let mut b = Bridge::default();
+        let ext = paired(&mut b);
+        b.take_dirty();
+        b.revoke(&ext.pair_id);
+        assert!(b.take_dirty());
+
+        let mut d = vault();
+        let new = PendingSave {
+            origin: "https://new.test:443".into(),
+            username: "me".into(),
+            password: "pw1".into(),
+        };
+        assert_eq!(new.url(), "https://new.test");
+        assert_eq!(new.title(), "new.test");
+        let id = apply_save(&mut d, &new).unwrap();
+        assert_eq!(d.items.len(), 3);
+        // Same site and user again: the password is updated, not duplicated.
+        let again = PendingSave {
+            origin: new.origin.clone(),
+            username: new.username.clone(),
+            password: "pw2".into(),
+        };
+        assert_eq!(apply_save(&mut d, &again).unwrap(), id);
+        assert_eq!(d.items.len(), 3);
+        let l = logins(&d).find(|l| l.base.id == id).unwrap();
+        assert_eq!(l.password, "pw2");
+        assert_eq!(l.password_history.len(), 1);
     }
 
     #[test]
