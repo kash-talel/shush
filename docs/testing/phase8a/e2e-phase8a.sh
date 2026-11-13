@@ -100,8 +100,24 @@ waitfor "$body.includes('Duress password')" 15000
 check "Duress password card is rendered" "$body.includes('Duress password')"
 check "Duress password input is present" "!!document.querySelector('#duress-password')"
 check "Duress confirm input is present" "!!document.querySelector('#duress-confirm')"
+check "current-password input is present (#68)" "!!document.querySelector('#duress-current')"
+check "no sync-folder warning for a local path (#68)" "!$body.includes('cloud-sync folder')"
+
+echo "--- 4a. Wrong current password is rejected (#68)"
+$D fill "#duress-password" "$DURESS_PW" >/dev/null
+$D fill "#duress-confirm" "$DURESS_PW" >/dev/null
+check "SET is disabled until the current password is entered" "[...document.querySelectorAll('button')].find(b => b.textContent.includes('DURESS PASSWORD'))?.disabled === true"
+$D fill "#duress-current" "not-the-master-pw" >/dev/null
+$D click "text:SET DURESS PASSWORD" >/dev/null
+waitfor "$body.includes('CONFIRM: OVERWRITE')" 10000
+$D click "text:CONFIRM: OVERWRITE" >/dev/null
+waitfor "document.querySelector('[role=alert]')?.textContent.includes('WRONG_CREDENTIALS')" 30000
+check "wrong current password -> WRONG_CREDENTIALS" "[...document.querySelectorAll('[role=alert]')].some(a => a.textContent.includes('WRONG_CREDENTIALS'))"
+check "duress not set after a wrong current password" "!$body.includes('A duress password is set.')"
+$D shot shots/p8a-00-wrong-current.png >/dev/null 2>&1 || true
 
 echo "--- 4. Set duress password"
+$D fill "#duress-current" "$REAL_PW" >/dev/null
 $D fill "#duress-password" "$DURESS_PW" >/dev/null
 $D fill "#duress-confirm" "$DURESS_PW" >/dev/null
 $D click "text:SET DURESS PASSWORD" >/dev/null || $D click "text:CHANGE DURESS PASSWORD" >/dev/null
@@ -152,6 +168,18 @@ $D click "text:Backup & import" >/dev/null
 waitfor "$body.includes('Duress password')" 15000
 check "decoy Duress card does NOT show 'A duress password is set'" "!$body.includes('A duress password is set.')"
 check "decoy Duress card does NOT show REMOVE button" "![...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'REMOVE')"
+check "decoy Duress card asks for the current password too" "!!document.querySelector('#duress-current')"
+# From the decoy, the real master password is not "this vault's" password: the overwrite is refused,
+# so the real vault survives (verified in step 10).
+$D fill "#duress-current" "$REAL_PW" >/dev/null
+$D fill "#duress-password" "Another-Decoy-2026" >/dev/null
+$D fill "#duress-confirm" "Another-Decoy-2026" >/dev/null
+$D click "text:SET DURESS PASSWORD" >/dev/null
+waitfor "$body.includes('CONFIRM: OVERWRITE')" 10000
+$D click "text:CONFIRM: OVERWRITE" >/dev/null
+waitfor "document.querySelector('[role=alert]')?.textContent.includes('WRONG_CREDENTIALS')" 30000
+check "decoy: overwrite refused without the decoy's own password" "[...document.querySelectorAll('[role=alert]')].some(a => a.textContent.includes('WRONG_CREDENTIALS'))"
+$D shot shots/p8a-04b-decoy-refused.png >/dev/null 2>&1 || true
 
 echo "--- 10. Lock and unlock with master password -> real items intact"
 lockapp
@@ -190,7 +218,7 @@ $D click "text:Backup & import" >/dev/null
 waitfor "$body.includes('Duress password')" 15000
 # Verify that duressStatus invoke returns false after removal
 duress_status=$($D eval "window.__TAURI_INTERNALS__.invoke('duress_status').then(r => String(r), e => e.code)")
-check "duress_status is false" "[ \"$duress_status\" = '\"false\"' ] || [ \"$duress_status\" = 'false' ]"
+case "$duress_status" in '"false"'|false) ok "duress_status is false" ;; *) bad "duress_status is false (got $duress_status)" ;; esac
 
 rm -f "$TARGET_DIR/scan.pdf"
 

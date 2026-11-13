@@ -1143,7 +1143,7 @@ mod tests {
             ..FAST
         };
         let mut v = create_vault_file(&path, b"real", None, opts).unwrap();
-        v.set_duress(&path, b"pw", b"decoy", None).unwrap();
+        v.set_duress(&path, b"real", b"decoy", None).unwrap();
         let bytes = read_vault_file(&path).unwrap();
         let once = |pw: &[u8]| {
             let s = std::time::Instant::now();
