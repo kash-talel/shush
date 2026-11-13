@@ -28,6 +28,9 @@ the owner decides whether to run `/find-skills` in an interactive session.
   running that package; until then validate with `npm run check` in `src/`.
 - `.claude/skills/frontend-design`: Anthropic's design-direction skill (vendored). Follow it for any UI or
   site redesign: write a token plan, review it against the brief, then build and screenshot.
+- `.claude/skills/animation-performance`: frame-budget rules for CSS/JS motion (vendored from
+  `emilkowalski/skills`, pinned in `skills-lock.json`). Follow it when adding or changing any
+  animation, transition, shadow or filter on the site or in the app (e.g. the Spindle disc/lid).
 - `web-design-guidelines` (user-level): UI / accessibility review.
 
 ## Testing the desktop app
