@@ -104,7 +104,7 @@
 
   <PasswordField id="duress-current" label="Current password of this vault" autocomplete="current-password" placeholder="Required to overwrite the second vault space" bind:value={current} oninput={() => (armed = false)} />
   <PasswordField id="duress-password" label={enabled ? "New duress password" : "Duress password"} autocomplete="new-password" placeholder="8+ characters, not your master password" bind:value={password} oninput={() => (armed = false)} />
-  <PasswordField id="duress-confirm" label="Confirm" autocomplete="new-password" bind:value={confirm} oninput={() => (armed = false)} />
+  <PasswordField id="duress-confirm" label="Confirm" autocomplete="new-password" placeholder="repeat the duress password" bind:value={confirm} oninput={() => (armed = false)} />
   {#if keyfileRequired}
     <div>
       <span class="mb-1.5 block text-xs font-medium text-caution">The duress password uses this vault's keyfile too</span>
