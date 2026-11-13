@@ -3,8 +3,13 @@
 # append it, and save. Existing entries are never reclassified.
 #
 # Usage:  powershell -NoProfile -File .claude/scripts/route-issue.ps1 -Number 42
-# Output: one JSON object on stdout: {"number","title","model","runner","target","reason"}
+# Output: one JSON object on stdout:
+#         {"number","title","model","runner","target","reason","merge","merge_reason"}
 #         target = model to dispatch to: opus | sonnet (Agent tool) or an agy model id.
+#         merge  = auto | review. review: the runner opens the PR labelled needs-review and
+#                  stops; only the owner merges it. Computed from the issue's LIVE labels on
+#                  every call (so an escalated issue flips to review), unless the entry pins a
+#                  "merge" field by hand. If the labels cannot be read, it fails closed to review.
 # Exit:   0 on success, 1 on error.
 
 param(
@@ -54,7 +59,8 @@ function Write-Routing($doc) {
             ', "title": ' + (& $j ([string]$e.title)) +
             ', "model": ' + (& $j ([string]$e.model)) +
             ', "runner": ' + (& $j ([string]$e.runner)) +
-            ', "reason": ' + (& $j ([string]$e.reason)) + '}'
+            ', "reason": ' + (& $j ([string]$e.reason)) +
+            $(if ($e.PSObject.Properties['merge']) { ', "merge": ' + (& $j ([string]$e.merge)) } else { '' }) + '}'
         $lines.Add('    ' + $row + $(if ($i -lt $sorted.Count - 1) { ',' } else { '' }))
     }
     $lines.Add('  ]')
@@ -97,9 +103,24 @@ function Get-Classification($issue) {
     return @{ model = 'claude-sonnet-5.5'; runner = 'claude'; reason = 'code, UI or tests (auto-classified)' }
 }
 
+# Merge policy (2026-11-13). Green checks are not enough where a subtle bug leaks secrets,
+# corrupts a vault or ships a bad build, so those PRs wait for the owner. Everything else
+# auto-merges once fmt/clippy/tests/check pass.
+$ReviewLabels = @('crypto', 'sync', 'file-format', 'memory-hygiene', 'browser-integration',
+    'severity:critical', 'severity:high')
+$ReviewTitle = '^\[(Crypto|Sync|File format|Memory hygiene|Keyfile|Duress|Distribution|Release|Updater|Signing|CI|Pipeline|Security)\]'
+
+function Get-MergePolicy($issue) {
+    $labels = @($issue.labels | ForEach-Object { $_.name })
+    $hits = @($labels | Where-Object { $ReviewLabels -contains $_ })
+    if ($hits.Count -gt 0) { return @{ merge = 'review'; why = 'label ' + ($hits -join ', ') } }
+    if ([string]$issue.title -match $ReviewTitle) { return @{ merge = 'review'; why = 'title ' + $Matches[0] } }
+    return @{ merge = 'auto'; why = 'routine change' }
+}
+
 # The dispatch target for /issue: the Agent tool's model alias for claude issues,
 # the agy CLI model id for agy issues. Computed on output only; never stored.
-function Write-Entry($entry) {
+function Write-Entry($entry, $policy) {
     $target = switch ([string]$entry.model) {
         'claude-opus-5.5'   { 'opus' }
         'claude-sonnet-5.5' { 'sonnet' }
@@ -113,6 +134,8 @@ function Write-Entry($entry) {
         runner = [string]$entry.runner
         target = $target
         reason = [string]$entry.reason
+        merge  = [string]$policy.merge
+        merge_reason = [string]$policy.why
     }
     [pscustomobject]$out | ConvertTo-Json -Compress
 }
@@ -120,17 +143,26 @@ function Write-Entry($entry) {
 $doc = Read-Routing
 $existing = @($doc.issues) | Where-Object { [int]$_.number -eq $Number } | Select-Object -First 1
 
+$raw = & gh issue view $Number --json number,title,labels
+$issue = if ($LASTEXITCODE -eq 0) { $raw | ConvertFrom-Json } else { $null }
+
 if ($existing) {
-    Write-Entry $existing
+    $pinned = if ($existing.PSObject.Properties['merge']) { [string]$existing.merge } else { '' }
+    if ($pinned -eq 'auto' -or $pinned -eq 'review') {
+        $policy = @{ merge = $pinned; why = 'pinned in issue-routing.json' }
+    } elseif ($issue) {
+        $policy = Get-MergePolicy $issue
+    } else {
+        $policy = @{ merge = 'review'; why = 'labels unavailable (fail closed)' }
+    }
+    Write-Entry $existing $policy
     exit 0
 }
 
-$raw = & gh issue view $Number --json number,title,labels
-if ($LASTEXITCODE -ne 0) {
+if (-not $issue) {
     [Console]::Error.WriteLine("route-issue: gh could not load issue #$Number")
     exit 1
 }
-$issue = $raw | ConvertFrom-Json
 $cls = Get-Classification $issue
 
 $entry = [pscustomobject]@{
@@ -157,5 +189,5 @@ $result = Invoke-Exclusive -Name 'routing' -Action {
     return $entry
 }
 
-Write-Entry $result
+Write-Entry $result (Get-MergePolicy $issue)
 exit 0
