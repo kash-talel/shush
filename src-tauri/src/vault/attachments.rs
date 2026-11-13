@@ -531,11 +531,11 @@ mod tests {
         let (_d, path, mut v, item) = setup();
         let a = v.add_attachment(&path, &item, "k", "x", b"data").unwrap();
         assert_eq!(
-            v.set_duress(&path, b"duress", None),
+            v.set_duress(&path, b"pw", b"duress", None),
             Err(VaultError::DuressWithAttachments)
         );
         v.delete_attachment(&path, &item, &a.id).unwrap();
-        v.set_duress(&path, b"duress", None).unwrap();
+        v.set_duress(&path, b"pw", b"duress", None).unwrap();
         assert_eq!(
             v.add_attachment(&path, &item, "k", "x", b"data").err(),
             Some(VaultError::AttachmentsDisabled)

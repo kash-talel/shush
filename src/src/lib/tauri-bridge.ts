@@ -434,8 +434,13 @@ export const deleteAttachment = (itemId: string, attachmentId: string) =>
 /** Whether the unlocked vault has a duress password. A decoy always reports false. */
 export const duressStatus = () => invoke<boolean>("duress_status");
 /** Seals an empty decoy vault under `password`, replacing any previous decoy. */
-export const setDuressPassword = (password: string, keyfilePath: string | null) =>
-  invoke<void>("set_duress_password", { password, keyfilePath });
+export const setDuressPassword = (
+  currentPassword: string,
+  password: string,
+  keyfilePath: string | null,
+) => invoke<void>("set_duress_password", { currentPassword, password, keyfilePath });
+/** Whether the vault file lies in a known cloud-sync folder (version history risk). */
+export const vaultInSyncFolder = () => invoke<boolean>("vault_in_sync_folder");
 /** Destroys the decoy vault. */
 export const clearDuressPassword = () => invoke<void>("clear_duress_password");
 

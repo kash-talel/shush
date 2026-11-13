@@ -1196,15 +1196,47 @@ fn duress_status(app: tauri::AppHandle) -> Result<bool, CmdError> {
         .ok_or_else(locked)
 }
 
+/// Whether the unlocked vault file sits inside a known cloud-sync or backup
+/// folder, whose version history could reveal that two slots change
+/// independently (issue #68).
+#[tauri::command]
+fn vault_in_sync_folder(app: tauri::AppHandle) -> Result<bool, CmdError> {
+    app.state::<VaultState>()
+        .with(|u| path_in_sync_folder(&u.path))
+        .ok_or_else(locked)
+}
+
+fn path_in_sync_folder(path: &Path) -> bool {
+    const MARKERS: [&str; 9] = [
+        "onedrive",
+        "dropbox",
+        "google drive",
+        "googledrive",
+        "icloud",
+        "box sync",
+        "nextcloud",
+        "pcloud",
+        "sync.com",
+    ];
+    path.components().any(|c| {
+        let c = c.as_os_str().to_string_lossy().to_lowercase();
+        MARKERS.iter().any(|m| c.contains(m))
+    })
+}
+
 /// Seals an empty decoy vault into the other slot under `password` (and the
-/// vault's keyfile, if it has one), replacing any previous decoy.
+/// vault's keyfile, if it has one), replacing any previous decoy. The vault's
+/// own current password must be re-entered first: a decoy cannot tell it is
+/// one, so this must not be a one-click way to destroy the real vault.
 #[tauri::command]
 async fn set_duress_password(
     app: tauri::AppHandle,
+    current_password: String,
     password: String,
     keyfile_path: Option<String>,
 ) -> Result<(), CmdError> {
     let password = Zeroizing::new(password);
+    let current_password = Zeroizing::new(current_password);
     blocking(move || {
         let normalized =
             crypto::kdf::normalize_password(password.as_bytes()).map_err(VaultError::from)?;
@@ -1223,8 +1255,12 @@ async fn set_duress_password(
                     return Err(read_only_err());
                 }
                 let path = u.path.clone();
-                Ok(u.vault
-                    .set_duress(&path, password.as_bytes(), digest.as_ref())?)
+                Ok(u.vault.set_duress(
+                    &path,
+                    current_password.as_bytes(),
+                    password.as_bytes(),
+                    digest.as_ref(),
+                )?)
             })
             .unwrap_or_else(|| Err(locked()))
     })
@@ -2370,6 +2406,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             delete_attachment,
             duress_status,
             set_duress_password,
+            vault_in_sync_folder,
             clear_duress_password,
             bridge_state,
             bridge_start_pairing,
@@ -2385,6 +2422,19 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sync_folder_detection() {
+        assert!(path_in_sync_folder(Path::new(
+            r"C:\Users\a\OneDrive\Docs\vault.shush"
+        )));
+        assert!(path_in_sync_folder(Path::new(
+            "/home/a/Dropbox/vault.shush"
+        )));
+        assert!(!path_in_sync_folder(Path::new(
+            r"C:\Users\a\AppData\vault.shush"
+        )));
+    }
 
     /// Production default is too slow for many test cases; this still meets policy.
     const POLICY_MIN: KdfParams = KdfParams {

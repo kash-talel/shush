@@ -62,9 +62,14 @@ SLOT_HEADER = "SHUSH_CANARY_V001" ‖ SAVE_ID (32) ‖ PAYLOAD_NONCE (24, zero-p
 - **Tamper detection** covers the fixed header and the used part of the slot. Fill bytes and the other
   slot cannot be authenticated by this slot's credentials (they are random padding or another vault).
 - **Residual risks.** Someone holding several *older* copies of the file (cloud version history, backups
-  taken between saves) can see which slot changes between them. Setting a duress password from inside
-  a decoy overwrites the other slot, which destroys the real vault; the UI warns about this with the
-  same text in both vaults.
+  taken between saves) can see which slot changes between them (the standard hidden-volume limitation).
+  The Duress card warns when the vault path is inside a known sync folder (OneDrive, Dropbox, Google
+  Drive, iCloud, ...); keep a vault that uses a duress password out of such folders and out of file
+  history. Setting a duress password from inside a decoy overwrites the other slot, which destroys the
+  real vault; the UI warns about this with the same text in both vaults and requires the current
+  password to be re-entered first, so it is never a one-click action. A decoy should be filled with
+  believable entries: slots are at least 1 MiB, but a real vault that outgrew that makes an empty decoy
+  in a large slot a weak signal.
 - **Migration.** v1 / v2 vaults open normally; the first change rewrites them as v3 and the old file
   stays as `vault.shush.bak`. `.shushbackup` files remain single-payload format v2.
 

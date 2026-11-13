@@ -50,6 +50,7 @@ const COMMANDS: &[&str] = &[
     "delete_attachment",
     "duress_status",
     "set_duress_password",
+    "vault_in_sync_folder",
     "clear_duress_password",
     "bridge_state",
     "bridge_start_pairing",

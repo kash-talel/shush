@@ -442,6 +442,7 @@ impl OpenVault {
     pub fn set_duress(
         &mut self,
         path: &Path,
+        current_password: &[u8],
         password: &[u8],
         keyfile: Option<&KeyfileDigest>,
     ) -> Result<(), VaultError> {
@@ -452,6 +453,21 @@ impl OpenVault {
             (true, false) => return Err(VaultError::KeyfileRequired),
             (false, true) => return Err(VaultError::KeyfileNotExpected),
             _ => {}
+        }
+        // Re-authenticate: the vault cannot tell whether it is the real one or
+        // a decoy, so overwriting the other slot must never be a one-click
+        // action (issue #68). The keyfile is shared by both slots.
+        let current = derive_master_key(
+            current_password,
+            keyfile,
+            &self.header.salt,
+            &self.header.kdf,
+        )?;
+        if !VaultKeys::derive(&current)
+            .canary_key()
+            .ct_eq(self.keys.canary_key())
+        {
+            return Err(VaultError::Crypto(CryptoError::WrongCredentials));
         }
         let master = derive_master_key(password, keyfile, &self.header.salt, &self.header.kdf)?;
         let keys = VaultKeys::derive(&master);
@@ -1007,10 +1023,17 @@ mod tests {
         let size_without = std::fs::metadata(&path).unwrap().len();
 
         assert_eq!(
-            real.set_duress(&path, b"real pw", None),
+            real.set_duress(&path, b"real pw", b"real pw", None),
             Err(VaultError::DuressSameAsMaster)
         );
-        real.set_duress(&path, b"duress pw", None).unwrap();
+        assert_eq!(
+            real.set_duress(&path, b"wrong", b"duress pw", None),
+            Err(VaultError::Crypto(CryptoError::WrongCredentials)),
+            "overwriting the other slot needs the current password"
+        );
+        assert!(!real.duress_enabled());
+        real.set_duress(&path, b"real pw", b"duress pw", None)
+            .unwrap();
         assert!(real.duress_enabled());
         assert_eq!(std::fs::metadata(&path).unwrap().len(), size_without);
 
@@ -1076,10 +1099,10 @@ mod tests {
         let path = dir.path().join("vault.shush");
         let mut v = create_vault_file(&path, b"pw", Some(&kf), FAST).unwrap();
         assert_eq!(
-            v.set_duress(&path, b"duress", None),
+            v.set_duress(&path, b"pw", b"duress", None),
             Err(VaultError::KeyfileRequired)
         );
-        v.set_duress(&path, b"duress", Some(&kf)).unwrap();
+        v.set_duress(&path, b"pw", b"duress", Some(&kf)).unwrap();
         let bytes = read_vault_file(&path).unwrap();
         assert!(OpenVault::unlock(&bytes, b"duress", Some(&kf)).is_ok());
     }
@@ -1120,7 +1143,7 @@ mod tests {
             ..FAST
         };
         let mut v = create_vault_file(&path, b"real", None, opts).unwrap();
-        v.set_duress(&path, b"decoy", None).unwrap();
+        v.set_duress(&path, b"pw", b"decoy", None).unwrap();
         let bytes = read_vault_file(&path).unwrap();
         let once = |pw: &[u8]| {
             let s = std::time::Instant::now();
