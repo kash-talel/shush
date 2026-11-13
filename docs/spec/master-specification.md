@@ -273,7 +273,8 @@ export interface VaultSettings {
    - **Security notes**: injected keystrokes are visible to `WH_KEYBOARD_LL` keyloggers, so typing is not a defence against them; and randomized delays do **not** defeat keystroke-timing analytics. Neither claim is made. Extension fill avoids the keystroke channel entirely, and the clipboard is not touched either.
 6. **Active Foreground Window Context Detection**:
    - When the user presses the Spotlight hotkey (`Ctrl + Alt + Space`; `Alt + Shift + S` was dropped because `Alt + Shift` is the Windows input-language switch, #14), `shush` reads the title of the active foreground window (`GetForegroundWindow` + `GetWindowTextW`) before opening the overlay.
-   - Extracts application and domain keywords (e.g. `"Sign in to GitHub - Google Chrome"` $ightarrow$ `"github"`).
+   - Extracts application and domain keywords (e.g. `"Sign in to GitHub - Google Chrome"` $
+ightarrow$ `"github"`).
    - **The title is a search hint only.** Any web page can set its own `<title>`, so a phishing page could pre-select a real credential. The match only pre-fills the search and highlights a result; it never fills or types anything. Copying still needs an explicit `Enter`, and filling into a page happens only via the extension, which verifies the tab origin (item 5).
    - If `RegisterHotKey` fails (another app owns the combo), shush keeps running, reports the hotkey as unavailable, and Spotlight stays reachable from the tray and the main window's "Quick search" button.
 7. **Plausible Deniability & Decoy Vault (Duress PIN)**:
@@ -372,7 +373,7 @@ shush/
 │   │   │   ├── models.rs           # VaultData, LoginItem, SecureNote structs
 │   │   │   ├── backup.rs           # Encrypted .shushbackup export & validation
 │   │   │   ├── importer.rs         # Smart diff/merge & CSV migration engine
-│   │   │   ├── browser_importer.rs # Automated Chrome/Edge/Firefox profile extractor
+│   │   │   ├── (os/browsers.rs)      # Installed-browser detection only (folder exists); no credential store access, see §10.1
 │   │   │   ├── health.rs           # k-Anonymity breach checker & entropy audit
 │   │   │   ├── recovery_kit.rs     # Printable emergency sheet generator
 │   │   │   ├── duress.rs           # Plausible deniability decoy vault router
@@ -527,10 +528,11 @@ When `shush` is launched for the first time after vault creation, the onboarding
      - Microsoft Edge: `%LOCALAPPDATA%\Microsoft\Edge\User Data`
      - Brave Browser: `%LOCALAPPDATA%\BraveSoftware\Brave-Browser\User Data`
      - Mozilla Firefox: `%APPDATA%\Mozilla\Firefox\Profiles`
-2. **Frictionless Credential Ingestion**:
-   - Offers an instant guided migration button: `[IMPORT PASSWORDS FROM CHROME / EDGE / FIREFOX]`.
-   - Parses exported browser credential packages directly into `shush`'s memory.
-   - Dedupes matching domains and populates the vault in seconds, eliminating manual re-typing.
+2. **Guided CSV Export (no profile decryption)**:
+   - `shush` never opens `Login Data`, `Local State` or `key4.db` and never calls DPAPI on another application's data. That is infostealer behaviour (it would be flagged by Defender/EDR) and is blocked anyway by Chrome's App-Bound Encryption (v20, Chrome 127+); Firefox additionally needs NSS and fails under a Primary Password.
+   - For each detected browser, onboarding shows its password-export address (copyable, for the address bar) and short steps; the user saves the `.csv`.
+   - The user imports the CSV with the standard CSV importer, which dedupes matching domains.
+   - After import the user is advised to delete the CSV (it is plaintext) and clear the browser's own password store.
 
 ### 10.2 Companion WebExtension & Native Messaging Host
 For automatic password detection when browsing online:
@@ -616,7 +618,7 @@ When instructing Claude to build `shush`, direct it to execute these sequential 
    - Implement smart importer with visual diff preview and conflict resolution strategies (Merge & Update Newer vs Clean Restore).
    - Implement CSV migration parser for Bitwarden/1Password/Chrome exports.
 7. **Step 7: First-Run Onboarding & Native Messaging Host**
-   - Implement first-run browser password import wizard for Chrome, Edge, and Firefox.
+   - Implement first-run guided CSV export onboarding for Chrome, Edge, Brave and Firefox (detection only, #17).
    - Implement standard Native Messaging Host (`stdin`/`stdout` JSON) to power the companion browser extension for automatic web save and inline auto-fill.
 8. **Step 8: Advanced Security & Local Sync**
    - Implement Plausible Deniability (Decoy Vault via Duress PIN).
