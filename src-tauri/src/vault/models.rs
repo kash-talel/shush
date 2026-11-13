@@ -100,7 +100,7 @@ pub struct LoginItem {
     pub password: String,
     /// Site URL.
     pub url: String,
-    /// Base32 TOTP secret (see issue #24 for richer OTP parameters).
+    /// Base32 TOTP secret, or a full `otpauth://` / `steam://` URI carrying algorithm, digits and period (issue #24).
     pub totp_secret: Option<String>,
     /// Previous / archived passwords.
     pub password_history: Vec<PasswordHistoryEntry>,

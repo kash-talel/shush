@@ -33,7 +33,7 @@ zstd = "0.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # `otpauth`: parse otpauth:// URIs so imported issuers keep algorithm/digits/period (issue #24).
-totp-rs = { version = "5.5", features = ["gen_secret", "otpauth"] }
+totp-rs = { version = "5.5", features = ["gen_secret", "otpauth", "steam"] }
 windows-sys = { version = "0.52", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_DataExchange",
