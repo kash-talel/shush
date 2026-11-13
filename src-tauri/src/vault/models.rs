@@ -189,7 +189,7 @@ pub struct VaultSettings {
     pub auto_lock_on_sleep: bool,
     /// Windows Hello quick unlock.
     pub enable_windows_hello: bool,
-    /// Disable every network feature.
+    /// Disable every network feature. Default true: all network features are opt-in.
     pub air_gapped_mode: bool,
     /// Duress PIN / decoy vault.
     pub duress_pin_enabled: bool,
@@ -202,7 +202,7 @@ impl Default for VaultSettings {
             auto_lock_idle_minutes: 15,
             auto_lock_on_sleep: true,
             enable_windows_hello: false,
-            air_gapped_mode: false,
+            air_gapped_mode: true,
             duress_pin_enabled: false,
         }
     }

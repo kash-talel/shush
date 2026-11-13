@@ -215,7 +215,7 @@ To make `shush` feel effortless and enjoyable for daily use:
 4. **Password Health & Breach Detector**:
    - Evaluates entropy (zxcvbn score).
    - Flags reused or weak passwords.
-   - Optional breach check via the **HaveIBeenPwned API** using **$k$-Anonymity** (only the first 5 characters of the SHA-1 hash of the password are transmitted, preserving complete privacy).
+   - Optional, opt-in (off by default, blocked by Air-Gapped Mode) breach check via the **HaveIBeenPwned API** with `Add-Padding: true` using **$k$-Anonymity** (only the first 5 characters of the SHA-1 hash of the password are transmitted, preserving complete privacy).
 5. **Windows Hello Integration**:
    - First unlock requires the full Master Password.
    - Subsequent unlocks while the app is active in the background can be authorized in milliseconds using a fingerprint or PIN, for at most 8 hours after the password unlock. Lock still wipes the keys; see [`windows-hello.md`](windows-hello.md).

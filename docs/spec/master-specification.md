@@ -242,7 +242,7 @@ export interface VaultSettings {
   auto_lock_on_sleep: boolean;      // default: true
   enable_windows_hello: boolean;    // default: false; design: docs/spec/windows-hello.md
   hello_session_max_hours: number;  // default: 8, range 1–8 (cap, never extended by Hello unlocks)
-  air_gapped_mode: boolean;         // default: false (disables all outbound telemetry/APIs)
+  air_gapped_mode: boolean;         // default: TRUE (offline-first; turning it off is the opt-in to network features, see §Air-Gapped Mode default)
   duress_pin_enabled: boolean;      // default: false (plausible deniability decoy)
 }
 ```
@@ -356,7 +356,7 @@ The visual identity of `shush` merges the clandestine authority of a terminal/ha
    - Live zxcvbn entropy bar (Red = Weak, Yellow = Fair, Emerald = Strong).
 5. **Tactical Password Health & Breach Radar**:
    - Dedicated security audit panel flagging vulnerabilities:
-     - **Compromised Logins**: Verifies password hashes against HaveIBeenPwned using **$k$-Anonymity** (only the first 5 hex characters of `SHA-1(password)` are sent; plaintext password never leaves the machine).
+     - **Compromised Logins**: Verifies password hashes against HaveIBeenPwned using **$k$-Anonymity** (only the first 5 hex characters of `SHA-1(password)` are sent; plaintext password never leaves the machine). **Opt-in and off by default**: it runs only when Air-Gapped Mode is off *and* the user turns on the breach check, which explains what is sent. Requests carry `Add-Padding: true` so response size does not reveal the prefix bucket, and the client sends no cookies, no user agent beyond a fixed generic one, and no referrer.
      - **Reused Passwords**: Visual graph of credentials shared across multiple accounts.
      - **Weak Passwords**: Identifies entries with entropy below 60 bits.
      - **Stale Passwords**: Alerts on credentials untouched for over 180 days.
@@ -656,4 +656,4 @@ When instructing Claude to build `shush`, direct it to execute these sequential 
 8. **Step 8: Advanced Security & Local Sync**
    - Implement Plausible Deniability (Decoy Vault via Duress PIN).
    - Implement on-demand LAN peer synchronization per `lan-sync.md`: time-boxed windows, SPAKE2 one-time-code pairing, Noise with pinned peers, revocation.
-   - Implement Air-Gapped Mode toggle in Settings.
+   - Implement Air-Gapped Mode toggle in Settings (default on; see the Air-Gapped Mode default section in `docs/spec/security-model.md`).
