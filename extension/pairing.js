@@ -3,6 +3,8 @@
  * Conforms to RFC 4648 Base32 pairing code specifications in docs/spec/lan-sync.md §3.
  */
 
+import { startA, concat, hkdf, hmac } from "./spake2.js";
+
 export const CODE_LEN = 8;
 
 /**
@@ -53,4 +55,26 @@ export function formatCode(raw) {
     return norm;
   }
   return `${norm.slice(0, 4)}-${norm.slice(4)}`;
+}
+
+const ID_EXTENSION = new TextEncoder().encode("shush-bridge-v1/extension");
+const ID_SHUSH = new TextEncoder().encode("shush-bridge-v1/shush");
+const PAIR_INFO = new TextEncoder().encode("shush-pair-v2");
+const CONFIRM_INFO = new TextEncoder().encode("shush-pair-v2-confirm");
+
+/**
+ * Extension side of pairing (mirrors `extension_pair` in bridge/pairing.rs).
+ * Returns `{ extMsg, proof, pairKey }` as Uint8Arrays.
+ *
+ * @param {string} code pairing code as typed
+ * @param {Uint8Array} hostMsg the `pairing_nonce` from `hello`
+ */
+export async function pairWithCode(code, hostMsg, scalarBytes) {
+  const pw = new TextEncoder().encode(normalizeCode(code));
+  const a = await startA(pw, ID_EXTENSION, ID_SHUSH, scalarBytes);
+  const k = await a.finish(hostMsg);
+  const transcript = concat(a.msg, hostMsg);
+  const confirmKey = await hkdf(k, transcript, CONFIRM_INFO, 32);
+  const pairKey = await hkdf(k, transcript, PAIR_INFO, 32);
+  return { extMsg: a.msg, proof: await hmac(confirmKey, transcript), pairKey };
 }

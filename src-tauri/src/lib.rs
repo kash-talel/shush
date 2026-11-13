@@ -2169,6 +2169,93 @@ fn bridge_reject_save(app: tauri::AppHandle, origin: String, username: String) {
         .take_pending_for(&origin, &username);
 }
 
+// ---- Browser support registration (issue #53) -------------------------------
+
+/// Whether the native-messaging host is registered with the browsers.
+#[derive(Serialize)]
+struct BrowserSupport {
+    /// All supported browsers are registered.
+    enabled: bool,
+    /// Names of the browsers currently registered.
+    browsers: Vec<&'static str>,
+    /// Whether `shush-host.exe` was found next to the app (it is what browsers launch).
+    host_found: bool,
+}
+
+/// Registry root and manifest folder for the registration. Debug builds can
+/// redirect the registry root (`SHUSH_NMH_REGISTRY_ROOT`) so tests never touch
+/// the real browser keys.
+#[cfg(windows)]
+fn browser_support_paths(app: &tauri::AppHandle) -> Result<(String, PathBuf), CmdError> {
+    let root = os::native_host::HKCU_SOFTWARE.to_string();
+    #[cfg(debug_assertions)]
+    let root = std::env::var("SHUSH_NMH_REGISTRY_ROOT").unwrap_or(root);
+    let dir = vault_home(app)?.0.join("native-messaging");
+    Ok((root, dir))
+}
+
+#[cfg(windows)]
+fn browser_support_info(app: &tauri::AppHandle) -> Result<BrowserSupport, CmdError> {
+    let (root, dir) = browser_support_paths(app)?;
+    let on = os::native_host::is_registered(&root, &dir);
+    Ok(BrowserSupport {
+        enabled: on.len() == os::native_host::ALL.len(),
+        browsers: on.iter().map(|b| b.name()).collect(),
+        host_found: os::native_host::host_exe_beside_app().is_ok_and(|p| p.is_file()),
+    })
+}
+
+#[cfg(not(windows))]
+fn browser_support_info(_: &tauri::AppHandle) -> Result<BrowserSupport, CmdError> {
+    Err(CmdError::new(
+        "UNSUPPORTED",
+        "Browser support is only available on Windows.",
+    ))
+}
+
+#[tauri::command]
+fn browser_support_status(app: tauri::AppHandle) -> Result<BrowserSupport, CmdError> {
+    browser_support_info(&app)
+}
+
+/// Settings toggle: writes or removes the per-user (`HKCU`) host registration.
+#[tauri::command]
+fn set_browser_support(app: tauri::AppHandle, enabled: bool) -> Result<BrowserSupport, CmdError> {
+    #[cfg(windows)]
+    {
+        let (root, dir) = browser_support_paths(&app)?;
+        if enabled {
+            let host = os::native_host::host_exe_beside_app()
+                .ok()
+                .filter(|p| p.is_file())
+                .ok_or_else(|| {
+                    CmdError::new(
+                        "HOST_NOT_FOUND",
+                        "shush-host.exe was not found next to shush. Reinstall shush.",
+                    )
+                })?;
+            os::native_host::register(&root, &dir, &host).map_err(|e| {
+                // Do not leave a half-written registration behind.
+                let _ = os::native_host::unregister(&root, &dir);
+                CmdError::new(
+                    "REGISTRY_FAILED",
+                    format!("Could not register the browser host: {e}"),
+                )
+            })?;
+        } else {
+            os::native_host::unregister(&root, &dir).map_err(|e| {
+                CmdError::new(
+                    "REGISTRY_FAILED",
+                    format!("Could not remove the browser host: {e}"),
+                )
+            })?;
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = enabled;
+    browser_support_info(&app)
+}
+
 /// Tauri builder with every shush command and the vault state registered.
 ///
 /// GUI plugins (e.g. the native file dialog) are attached in `main.rs`, not
@@ -2289,7 +2376,9 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             bridge_cancel_pairing,
             bridge_revoke,
             bridge_approve_save,
-            bridge_reject_save
+            bridge_reject_save,
+            browser_support_status,
+            set_browser_support
         ])
 }
 

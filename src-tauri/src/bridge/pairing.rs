@@ -587,4 +587,35 @@ mod tests {
         let attacker_proof = compute_proof(&*attacker_confirm, &transcript);
         assert_ne!(attacker_proof, proof);
     }
+
+    /// The JavaScript extension (`extension/pairing.js`) must interoperate with
+    /// this implementation. Skipped when Node.js is not installed.
+    #[test]
+    fn javascript_extension_pairs_with_the_host() {
+        use base64::engine::general_purpose::STANDARD as B64;
+        use base64::Engine;
+        use std::process::Command;
+
+        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../extension/pairing-cli.mjs");
+        let now = Instant::now();
+        let mut offer = PairingOffer::new(now).unwrap();
+        // Typed the way a user might: lowercase with a hyphen.
+        let typed = offer.formatted_code().to_lowercase();
+        let out = match Command::new("node")
+            .args([script, &typed, &B64.encode(offer.host_msg())])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return,
+        };
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let d = |k: &str| B64.decode(v[k].as_str().unwrap()).unwrap();
+        let p = offer.redeem(&d("ext_nonce"), &d("proof"), now).unwrap();
+        assert_eq!(p.key_for_tests().to_vec(), d("pair_key"));
+    }
 }

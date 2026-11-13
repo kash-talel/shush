@@ -4,6 +4,7 @@
 pub mod browsers;
 pub mod clipboard;
 pub mod memory;
+pub mod native_host;
 pub mod pipe;
 pub mod recycle;
 pub mod replace;

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>shush</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; width: 300px; padding: 14px; background: #0b0b10; color: #e4e4e7;
+        font: 13px/1.45 system-ui, sans-serif; }
+      h1 { margin: 0 0 8px; font-size: 15px; }
+      p { margin: 0 0 10px; color: #a1a1aa; }
+      #state { color: #e4e4e7; }
+      input { box-sizing: border-box; width: 100%; padding: 8px; margin-bottom: 8px; border-radius: 4px;
+        border: 1px solid #3f3f46; background: #18181b; color: #e4e4e7;
+        font: 16px ui-monospace, Consolas, monospace; letter-spacing: 0.15em; text-transform: uppercase; }
+      button { width: 100%; padding: 8px; margin-bottom: 6px; border-radius: 4px; border: 1px solid #34d399;
+        background: transparent; color: #34d399; font: inherit; font-weight: 600; cursor: pointer; }
+      button.plain { border-color: #3f3f46; color: #e4e4e7; font-weight: 400; text-align: left; }
+      button.danger { border-color: #7f1d1d; color: #f87171; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      [hidden] { display: none !important; }
+      #error { color: #f87171; }
+    </style>
+  </head>
+  <body>
+    <h1>shush</h1>
+    <p id="state" role="status">Checking...</p>
+
+    <section id="pair" hidden>
+      <p>In shush, open Settings and choose Show pairing code. Type it here within two minutes.</p>
+      <input id="code" inputmode="text" autocomplete="off" spellcheck="false" maxlength="9"
+        placeholder="XXXX-XXXX" aria-label="Pairing code" />
+      <button id="pair-go" type="button">Pair</button>
+    </section>
+
+    <section id="logins" hidden>
+      <p id="logins-title">Logins for this site</p>
+      <div id="login-list"></div>
+      <button id="unpair" class="danger" type="button">Unpair this browser</button>
+    </section>
+
+    <p id="error" role="alert" hidden></p>
+    <script src="popup.js" type="module"></script>
+  </body>
+</html>

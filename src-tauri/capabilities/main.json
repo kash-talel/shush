@@ -60,6 +60,8 @@
     "allow-bridge-cancel-pairing",
     "allow-bridge-revoke",
     "allow-bridge-approve-save",
-    "allow-bridge-reject-save"
+    "allow-bridge-reject-save",
+    "allow-browser-support-status",
+    "allow-set-browser-support"
   ]
 }

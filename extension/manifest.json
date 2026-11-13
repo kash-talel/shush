@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "shush",
+  "version": "0.1.0",
+  "description": "Fill logins from your local shush vault. Talks only to the shush desktop app; no network access.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA30uMM4QjUS6BAO8FHVPEZY3qSxnyTDHYOuJ2ko7+d2PLvWq0bdgn1YsxIwXVCNXfshK9ImoWXt5MDP2VlmqEuSNMp5mcY/pzW1LDerYqa3+EQqxxa/X2J5nOMXMPno9BUeernsWTuBcKR5Wwhj7yfjPnP4ZmPXgM+u/Sn7tCbtDiSPxhcn9f8ORf+H+33zRVBajQhMlAmJ842buqcBWjl6lWVqF67JkAjiLx/nx7WlK0M6TRlvf3EDHITw3eR6CaKmaQNsq3w72tV6THcnMUCVcxE9nxghdkqmnvwDd0toZO+w9gAvuHT1bLApOMZDdxo6DZNEnNheTWAWBZ4QgC/wIDAQAB",
+  "minimum_chrome_version": "116",
+  "permissions": ["nativeMessaging", "storage", "activeTab"],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": ["background.js"],
+    "type": "module"
+  },
+  "action": {
+    "default_title": "shush",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
+  },
+  "browser_specific_settings": {
+    "gecko": { "id": "shush@shush.invalid", "strict_min_version": "121.0" }
+  }
+}
