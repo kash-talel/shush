@@ -122,9 +122,12 @@ To prevent an attacker from modifying the unencrypted binary header to force `sh
 
 #### Power-User KDF Tuning
 In **Settings $\rightarrow$ Advanced Cryptography**, power users can customize their Argon2id parameters:
-- **Interactive Preset**: 64 MB RAM, 3 iterations (~150ms unlock time)
-- **Hardened / Paranoid Preset**: 256 MB RAM, 8 iterations (~700ms unlock time)
-- **Live Benchmark Tool**: Measures local CPU timing and automatically calculates the highest memory/iteration parameters for a 1.0-second delay.
+- **Interactive Preset**: 64 MB RAM, 3 iterations, 4 lanes. Timing is hardware dependent and single-threaded (lanes run sequentially): expect roughly 0.3-1 s on a desktop and several seconds on a low-power laptop. Measure, do not quote a fixed figure.
+- **Hardened / Paranoid Preset**: 256 MB RAM, 8 iterations, 4 lanes. Several times slower than Interactive, and may fail to allocate on low-RAM devices.
+- **Live Benchmark Tool**: Measures local CPU timing and suggests memory/iteration parameters for a target delay. Output is hard-capped at 1 GiB memory and a 2 s target, and never goes below the policy floor (m >= 19 MiB, t >= 2, OWASP).
+- **Per-vault parameters**: parameters live in the header, so a vault tuned on a fast desktop can unlock slowly on a weaker machine after it is synced or moved. The UI should warn before creating or accepting parameters far above what the local device benchmarks at.
+- **Bounds**: header parameters are validated before any allocation (m <= 2 GiB, 1 <= t <= 64, 1 <= p <= 16, m >= 8 KiB per lane), and new vaults must meet the policy floor.
+- **Threading**: Argon2 always runs on a blocking worker thread (`spawn_blocking`), never on the UI thread or the async executor.
 
 ---
 

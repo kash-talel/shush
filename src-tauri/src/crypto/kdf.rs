@@ -29,7 +29,8 @@ pub struct KdfParams {
     pub mem_kib: u32,
     /// Number of passes (time cost).
     pub iterations: u32,
-    /// Number of lanes.
+    /// Number of lanes. `argon2` 0.5 runs lanes sequentially on one thread, so
+    /// this changes the key but gives no speedup (issue #21).
     pub parallelism: u32,
 }
 
