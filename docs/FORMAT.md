@@ -68,6 +68,52 @@ SLOT_HEADER = "SHUSH_CANARY_V001" ‖ SAVE_ID (32) ‖ PAYLOAD_NONCE (24, zero-p
 - **Migration.** v1 / v2 vaults open normally; the first change rewrites them as v3 and the old file
   stays as `vault.shush.bak`. `.shushbackup` files remain single-payload format v2.
 
+## Vault lifecycle (issue #26)
+
+Operations that change what protects the vault. "Implemented" means the code does this today;
+"Required" is the normative behaviour for the operation when it is added (tracked in a follow-up issue).
+
+**Version policy (implemented).** A reader accepts exactly the versions it knows (`1..=3`). Any other
+`FORMAT_VERSION` is rejected as `UnsupportedVersion` before any KDF runs: never "best effort", never a
+guessed layout. Unknown flag bits and non-zero nonce padding are rejected the same way. A newer file
+therefore fails closed in an older build instead of being rewritten and damaged.
+
+**Migration v1 / v2 to v3 (implemented).** Opening does not modify the file. The first save rewrites it
+as v3 through the crash-safe write path (Writing, above), which copies the old file to `vault.shush.bak`
+first, so the original generation is kept. Migration never changes the salt, KDF parameters, suite or
+keyfile flag. A future version bump follows the same rule: read old, write new, keep the old as `.bak`.
+
+**Clean Restore (implemented).** Replace-mode import goes through the same save path, so
+`vault.shush.bak` holds the vault as it was before the restore. If the save is refused or fails,
+nothing on disk changes.
+
+**Rekey operations (Required).** These are: change master password, add or remove the keyfile, change
+cipher suite, change KDF parameters, set or clear the duress password. All of them:
+
+1. Require the current credentials again (re-derive; do not trust the unlocked session).
+2. Draw a **new `KDF_SALT`** (a changed password, keyfile or parameter set must never reuse a salt),
+   derive new keys, and re-seal **everything** under them: the canary, the payload, and every
+   attachment blob (the attachment key derives from the MasterKey and the blob AAD binds the salt).
+   Fresh nonces and `SAVE_ID` are drawn as for any save.
+3. Use the crash-safe write path in one step: write `.tmp`, verify, copy the old file to `.bak`, rename.
+   Blobs are re-sealed to `.tmp` names and verified **before** the vault file is renamed, and the
+   old blobs are removed only after the rename succeeds. A crash at any point leaves either the
+   old vault with its old blobs or the new vault with its new blobs recoverable.
+4. Apply to both slots when a duress password exists: the other slot needs its own credentials, which
+   the session does not hold. Therefore a rekey is refused while a duress password is set; the user
+   clears the duress password first (the existing warning about destroying the other slot applies).
+5. Hold the new key material only after the write is verified; on any failure the session keeps the
+   old keys and the file is unchanged.
+
+**Old backups.** `.shushbackup` files and old `vault.shush.bak` copies stay decryptable with the
+credentials they were made under. Changing a password does not protect against someone who already
+holds an older copy and the old password. The UI must say so at the moment of the change and offer to
+delete the stale `.bak`. A `.bak` is overwritten by the next save, so it holds the pre-change vault only
+until then.
+
+**Keyfile add/remove.** Sets or clears `FLAGS` bit 0 and changes the Argon2 `secret` input; it is a
+rekey (new salt, full re-seal) and needs the password plus, when removing, the current keyfile.
+
 ## Single-payload layout (format v2: backups; legacy vaults)
 
 All integers little-endian.
