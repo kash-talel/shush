@@ -57,6 +57,8 @@ export interface VaultSummary {
 export interface KeyfileInfo {
   file_name: string;
   size_bytes: number;
+  /** True for a shush-generated, checksum-verified keyfile. */
+  generated: boolean;
 }
 
 export type KeyfileChoice =

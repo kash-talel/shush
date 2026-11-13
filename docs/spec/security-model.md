@@ -67,7 +67,7 @@ flowchart TD
 
 ### 3.1 The Keyfile Specification
 1. **Generation**:
-   - The user can let `shush` generate a high-entropy keyfile (`vault.key`) containing **256 bits (32 bytes) of CSPRNG cryptographically secure random bytes** or supply an existing arbitrary file (e.g., an image or binary file).
+   - The user can let `shush` generate a high-entropy keyfile (`vault.key`) containing **256 bits (32 bytes) of CSPRNG cryptographically secure random bytes** wrapped in a self-describing, checksummed container (`"SHUSHKEY" || version 0x01 || 32 random bytes || first 4 bytes of SHA-256 of the preceding bytes`, 45 bytes). A file with that magic but a bad checksum is rejected before the KDF runs ("keyfile is damaged"), so damage is distinguishable from a wrong password. Arbitrary files stay supported but the UI warns that any byte change locks the vault. No keyfile fingerprint is stored in the header: it would leak bits of a 256-bit secret and let an attacker confirm keyfile guesses offline. The digest is still SHA-256 over the whole file, so the vault format is unchanged and older raw 32-byte keyfiles keep working or supply an existing arbitrary file (e.g., an image or binary file).
 2. **Digest Hashing**:
    - Before feeding into the KDF, the keyfile is hashed using SHA-256: $\text{KFH} = \text{SHA-256}(\text{KeyfileBytes})$.
    - This ensures arbitrary large files cannot cause buffer memory exhaustion, while maintaining full 256-bit entropy.
