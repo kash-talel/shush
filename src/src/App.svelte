@@ -46,6 +46,10 @@
     },
   );
 
+  // Accent theme: the vault being shown (unlocked, being created, or on the shelf).
+  let unlockedColor = $state<string | null>(null);
+  const themeColor = $derived(summary ? unlockedColor : (targetStatus?.color ?? status?.color ?? null));
+
   async function refresh() {
     status = await vaultStatus();
   }
@@ -86,9 +90,9 @@
   });
 </script>
 
-<div class="flex h-full flex-col">
+<div class="flex h-full flex-col" data-vault-color={themeColor ?? "crimson"}>
   {#if summary && onboarding}
-    <OnboardingScreen ondone={() => (onboarding = false)} />
+    <OnboardingScreen color={unlockedColor ?? "crimson"} ondone={() => (onboarding = false)} />
   {:else if summary}
     <Dashboard {summary} hotkey={info?.spotlight_hotkey ?? null} onlock={doLock} oncopied={(secs) => (clipboardUntil = Date.now() + secs * 1000)} />
   {:else if newTarget && targetStatus}
@@ -98,6 +102,7 @@
       target={newTarget}
       oncancel={() => (newTarget = null)}
       oncreated={(s) => {
+        unlockedColor = newTarget?.color ?? "crimson";
         newTarget = null;
         summary = s;
         onboarding = true;
@@ -109,6 +114,7 @@
       vault={status}
       {info}
       oncreated={(s) => {
+        unlockedColor = status?.color ?? "crimson";
         summary = s;
         onboarding = true;
       }}
@@ -120,6 +126,7 @@
         vault={status}
         {autoLockReason}
         onunlocked={(s) => {
+          unlockedColor = status?.color ?? "crimson";
           summary = s;
           autoLockReason = null;
         }}
