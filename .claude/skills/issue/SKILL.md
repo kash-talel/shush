@@ -36,12 +36,21 @@ First list the issues that already have a PR waiting for the owner:
 (heads look like `fix/issue-<N>-<slug>`). Those issues are parked until the owner merges or closes
 that PR; never start a second run on them.
 
+Issues labelled `blocked` are also parked: they wait on the owner or an outside party (an
+application, a purchase, a decision), so no runner can finish them. The owner removes the label to
+release one.
+
 - If `$ARGUMENTS` contains an issue number (`20` or `#20`), route that issue. If it is parked,
-  print `⏸️ Issue #<N> already has PR #<PR> awaiting your review` and stop.
+  print `⏸️ Issue #<N> already has PR #<PR> awaiting your review` and stop. If it is labelled
+  `blocked`, still route it (the owner asked for it by number), but say so on the 🧭 line.
 - Otherwise run `gh issue list --state open --limit 200 --json number,title,labels`, drop the
-  parked issues, sort by `severity:critical` > `severity:high` > `severity:medium` >
-  `severity:low` > no severity, then lowest number, and route the first one. Every runner is
-  handled, so do not skip any other issue.
+  parked issues and every issue labelled `blocked`, sort by
+  `severity:critical` > `severity:high` > `severity:medium` > `severity:low` > no severity,
+  then lowest number, and route the first one.
+  Every runner is handled, so do not skip any other issue.
+- If a runner reports `STATUS: BLOCKED` because the issue needs owner action, add the label
+  (`gh issue edit <N> --add-label blocked`) and comment what it waits on, so the next `/issue`
+  moves on instead of landing on it again.
 - If there are no open issues left, say so and stop.
 
 If `runner` is not `claude` or `agy`, `target` is empty, or `merge` is not `auto` or `review`,
