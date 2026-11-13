@@ -16,6 +16,10 @@ tool or testing workflow), unless a suitable skill is already installed:
 If installing is blocked (for example by permission rules), say so, give the user the
 install command, and continue with the closest equivalent approach.
 
+Exception: unattended `/issue` workers never run `/find-skills` or install skills. They report
+a suggestion on the `SKILLS:` line of their final report, and the `/issue` banner shows it, so
+the owner decides whether to run `/find-skills` in an interactive session.
+
 ## Installed project skills
 
 - `.claude/skills/svelte-core-bestpractices`, `.claude/skills/svelte-code-writer`: official
