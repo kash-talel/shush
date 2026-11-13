@@ -21,7 +21,7 @@ pub enum TotpError {
     /// Fewer than 80 bits of secret.
     #[error("TOTP secret is too short (needs at least 80 bits)")]
     TooShort,
-    /// Digits outside 6..=8 or period outside 1..=300 s.
+    /// Digits outside 6..=8 (5 for Steam) or period outside 1..=300 s.
     #[error("unsupported TOTP parameters")]
     Unsupported,
     /// System clock is before 1970.
@@ -43,8 +43,13 @@ pub struct TotpCode {
 /// Parses a stored TOTP secret (Base32 or `otpauth://` URI).
 pub fn parse(stored: &str) -> Result<TOTP, TotpError> {
     let stored = stored.trim();
-    let totp = if stored.to_ascii_lowercase().starts_with("otpauth://") {
+    let lower = stored.to_ascii_lowercase();
+    let totp = if lower.starts_with("otpauth://") {
         TOTP::from_url_unchecked(stored).map_err(|_| TotpError::Invalid)?
+    } else if lower.starts_with("steam://") {
+        // Steam Guard shared secret (Base32) in the `steam://` shorthand.
+        let url = Zeroizing::new(format!("otpauth://steam/Steam?secret={}", &stored[8..]));
+        TOTP::from_url_unchecked(url.as_str()).map_err(|_| TotpError::Invalid)?
     } else {
         let cleaned = Zeroizing::new(
             stored
@@ -66,7 +71,13 @@ fn validate(t: &TOTP) -> Result<(), TotpError> {
     if t.secret.len() < MIN_SECRET_BYTES {
         return Err(TotpError::TooShort);
     }
-    if !(6..=8).contains(&t.digits) || !(1..=300).contains(&t.step) {
+    // Steam Guard codes are 5 characters from a custom alphabet.
+    let digits_ok = if t.algorithm == Algorithm::Steam {
+        t.digits == 5
+    } else {
+        (6..=8).contains(&t.digits)
+    };
+    if !digits_ok || !(1..=300).contains(&t.step) {
         return Err(TotpError::Unsupported);
     }
     Ok(())
@@ -136,6 +147,42 @@ mod tests {
         assert_eq!(c.period, 60);
         assert_eq!(c.remaining, 1);
         assert_eq!(c.code.len(), 8);
+    }
+
+    #[test]
+    fn sha256_and_sha512_algorithms_are_honoured() {
+        let secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+        let sha1 = parse(&format!("otpauth://totp/x?secret={secret}")).unwrap();
+        let sha256 = parse(&format!(
+            "otpauth://totp/x?secret={secret}&algorithm=SHA256"
+        ))
+        .unwrap();
+        let sha512 = parse(&format!(
+            "otpauth://totp/x?secret={secret}&algorithm=SHA512"
+        ))
+        .unwrap();
+        assert_eq!(sha256.algorithm, Algorithm::SHA256);
+        assert_eq!(sha512.algorithm, Algorithm::SHA512);
+        let c = [&sha1, &sha256, &sha512].map(|t| code_at(t, 59).code);
+        assert!(c[0] != c[1] && c[1] != c[2] && c[0] != c[2]);
+    }
+
+    #[test]
+    fn steam_guard_uses_five_char_alphabet() {
+        for stored in [
+            "steam://GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+            "otpauth://totp/Steam:bob?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Steam",
+        ] {
+            let t = parse(stored).unwrap();
+            assert_eq!(t.algorithm, Algorithm::Steam);
+            let c = code_at(&t, 59);
+            assert_eq!(c.code.len(), 5);
+            assert_eq!(c.period, 30);
+            assert!(c
+                .code
+                .chars()
+                .all(|ch| "23456789BCDFGHJKMNPQRTVWXY".contains(ch)));
+        }
     }
 
     #[test]
