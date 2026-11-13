@@ -5,12 +5,22 @@ description = "Offline-first, zero-knowledge password manager & 2FA authenticato
 edition = "2021"
 rust-version = "1.80"
 publish = false
+default-run = "shush"
 
 [lib]
 # The crypto/vault core lives in the library so it can be unit-tested without
 # booting the Tauri runtime; `main.rs` is a thin entry point.
 name = "shush_lib"
 crate-type = ["rlib"]
+
+[[bin]]
+name = "shush"
+path = "src/main.rs"
+
+# Native-messaging relay (issue #51): no Tauri or vault code, ships beside shush.exe.
+[[bin]]
+name = "shush-host"
+path = "src/bin/shush-host.rs"
 
 [build-dependencies]
 embed-resource = "3"
