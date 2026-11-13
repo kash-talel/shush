@@ -126,6 +126,8 @@ guess its result. The worktree path is in the notification and in the report's `
 **STOP HERE.** Do not start another issue. Print this banner. For a REVIEW run, replace the
 first line with `🔍 AWAITING YOUR REVIEW: Issue #<NUMBER> ("<TITLE>") by <runner>/<target>, PR open (<merge_reason>).`
 and add, after the PR line, `👀 Review, then merge: gh pr merge <PR> --squash --delete-branch`.
+For a REVIEW run, the try-it line points at the PR branch instead:
+`🧪 Try it: powershell -NoProfile -File .claude/scripts/install-main.ps1 -Ref origin/<branch> -CloseApp -Launch`.
 ```
 ======================================================================
 ✅ COMPLETED: Issue #<NUMBER> ("<TITLE>") resolved by <runner>/<target>, PR merged.
@@ -133,6 +135,7 @@ and add, after the PR line, `👀 Review, then merge: gh pr merge <PR> --squash 
 🆕 Filed & routed: <numbers or none>
 🧩 Skill suggestion: <the worker's SKILLS line, or none> (run /find-skills yourself if you want it)
 🧹 Worktree removed; main <fast-forwarded | not updated: reason>
+🧪 Try it: powershell -NoProfile -File .claude/scripts/install-main.ps1 -CloseApp -Launch
 💡 ACTION REQUIRED: Type `/clear` now to wipe context tokens before running `/issue` again!
 ======================================================================
 ```
