@@ -18,9 +18,23 @@ Over CDP: unlock, open Settings, tick "Allow browsers to talk to shush", then co
 keys and the `native-messaging\` manifests exist beside the scratch vault; untick and confirm both
 are gone. Delete `HKCU\Software\ShushTest\Manual` afterwards.
 
-## Extension against a test page (still to do)
+## Extension in a real Edge against a test page: `e2e-phase7b.sh`
 
-Load `extension/` unpacked in Edge (`--load-extension`, driven over CDP), enable browser support
-with the real registry root, pair with the code from Settings, and fill a local test login form
-on `http://localhost`. Not yet scripted; the extension has so far been checked for syntax and
-for pairing interoperability only.
+Start the debug app on a fresh scratch vault (onboarding screen) with `CDP_PORT` set and
+`SHUSH_NMH_REGISTRY_ROOT` unset, then:
+
+```bash
+CDP_PORT=<app CDP port> bash docs/testing/phase7b/e2e-phase7b.sh <scratch dir>
+```
+
+It loads `extension/` unpacked in a headless Edge with its own profile, serves a login form from
+`page.mjs` on `127.0.0.1:8765`, and drives both the app and Edge over CDP with `edge.mjs` (no
+desktop input). The 15 checks cover registration through the Settings toggle, the pinned extension
+id, the popup reaching shush through the registered `shush-host.exe`, pairing, inline fill on the
+item's origin, no fill on another origin, while locked, or after revoke (the extension then wipes its
+key), and removal of the keys when the toggle is unticked.
+
+Browsers only read the real `HKCU\Software\...\NativeMessagingHosts` keys, so this run writes them.
+It aborts if a `com.shush.vault` key already exists and deletes the keys on exit either way.
+
+Last run: 2026-11-13, Edge 157, 15 passed.

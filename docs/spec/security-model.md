@@ -167,6 +167,15 @@ shush is offline-first, so **every network feature is opt-in and `air_gapped_mod
 - **Build option.** A build without the `network` cargo feature links no socket or HTTP code (see ROADMAP 8c).
 - **Test.** With Air-Gapped Mode on, a harness confirms no socket is opened and no DNS or mDNS packet is sent.
 
+## 4.6 Browser Extension Identity & Pair Key (issue #53)
+
+**Pairing is the trust boundary; the extension id is not.** The host manifests' `allowed_origins` / `allowed_extensions` only stop *other* extensions from starting `shush-host.exe` by accident. A Chromium id is a hash of a public key, so anyone can load an unpacked copy under the same id. Nothing is served until the user pairs the browser with a one-time code shown in shush.
+
+- **Dev key without a private key.** The `key` in `extension/manifest.json` pins id `kmcbplfcpijmfohfojkajnmejadkcipe` for unpacked loads. Its private key was deliberately not kept: it is needed only to sign a self-hosted `.crx`, which Chrome and Edge on unmanaged Windows will not install anyway. The Chrome Web Store, Edge Add-ons and AMO sign the published packages with their own keys. When the extension is published, the store ids are added to the host manifests (#160).
+- **Pair key in `chrome.storage.local`.** This is the browser profile on disk, never `storage.sync`. It is the same choice as other password-manager extensions. It is a bearer credential for the bridge. Malware running as the user can read it and, while the vault is unlocked and shush is running, start `shush-host.exe` itself and request fills. That is no more than the same malware can already do to an unlocked vault (read the app's memory, log the master password; see §2). Nothing is gained at rest: pairings live inside the encrypted vault, and a locked vault answers nothing.
+- **Rejected alternatives.** `chrome.storage.session` keeps the key in memory only, but forces re-pairing after every browser restart. Wrapping the key with a non-extractable WebCrypto key adds nothing, because that key is persisted in the same profile.
+- **Mitigations in place.** Revoke per browser in Settings (the extension wipes its key when shush answers `NOT_PAIRED`), a strictly increasing request counter (no replay), exact-origin fills, and the vault-locked gate. Further hardening is tracked in #159.
+
 ## 5. Summary Recommendation for "shush"
 
 1. **Default Mode**: Master Password (Argon2id) for vault creation and disaster recovery.
