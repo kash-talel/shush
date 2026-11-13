@@ -261,11 +261,16 @@
                 </div>
               {/each}
             </dl>
+            {#if preview.deleted_locally}
+              <p class="font-mono text-[10.5px] text-zinc-500">
+                {preview.deleted_locally} item{preview.deleted_locally === 1 ? "" : "s"} in this backup {preview.deleted_locally === 1 ? "was" : "were"} deleted from this vault; merge keeps {preview.deleted_locally === 1 ? "it" : "them"} deleted.
+              </p>
+            {/if}
             <fieldset class="flex flex-col gap-2 text-xs text-zinc-300">
               <legend class="sr-only">Import mode</legend>
               <label class="flex items-start gap-2">
                 <input type="radio" bind:group={importMode} value="merge" onchange={() => (confirmReplace = false)} class="mt-0.5 accent-crimson" />
-                <span><span class="text-zinc-100">Merge</span>: add new items. For conflicts your current password stays active; the backup's is archived in history.</span>
+                <span><span class="text-zinc-100">Merge</span>: add new items. For conflicts your current password stays active; the backup's is archived in history. Items you deleted stay deleted.</span>
               </label>
               <label class="flex items-start gap-2">
                 <input type="radio" bind:group={importMode} value="replace" class="mt-0.5 accent-crimson" />

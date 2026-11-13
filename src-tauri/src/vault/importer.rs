@@ -5,7 +5,8 @@
 //! fallback that maps common column names.
 //!
 //! Conflict policy (issue #19): CSV files are untrusted plaintext. A row that
-//! matches an existing login (same host + username) never replaces its
+//! matches an existing login (same canonical host, see
+//! `items::canonical_host`, + username) never replaces its
 //! password; a differing password is archived in history as
 //! `archived_conflict`. Identical rows are skipped, so re-importing is a no-op.
 
@@ -15,7 +16,7 @@ use std::path::Path;
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use super::items::{host_of, ItemDraft, ItemKind, SecretInput, MAX_HISTORY};
+use super::items::{canonical_host, host_of, ItemDraft, ItemKind, SecretInput, MAX_HISTORY};
 use super::models::{now_rfc3339, PasswordHistoryEntry, VaultData, VaultItem};
 
 /// Largest CSV accepted (bounded memory, #5).
@@ -259,7 +260,9 @@ pub struct CsvSummary {
 fn same_login(item: &VaultItem, host: &str, username: &str) -> bool {
     match item {
         VaultItem::Login(l) => {
-            !host.is_empty() && host_of(&l.url) == host && l.username.eq_ignore_ascii_case(username)
+            !host.is_empty()
+                && canonical_host(&l.url) == host
+                && l.username.eq_ignore_ascii_case(username)
         }
         VaultItem::SecureNote(_) => false,
     }
@@ -293,7 +296,7 @@ pub fn import(data: &mut VaultData, bytes: &[u8], apply: bool) -> Result<CsvSumm
     let source = format!("Imported from {} (CSV)", format.label());
 
     for row in rows {
-        let host = host_of(&row.url);
+        let host = canonical_host(&row.url);
         let existing = (row.kind == ItemKind::Login)
             .then(|| {
                 data.items

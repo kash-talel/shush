@@ -10,6 +10,10 @@
 //! is active. New items are added; for an item that exists on both sides the
 //! **current item is kept** and a differing imported password is archived in
 //! its history as `archived_conflict`. Nothing is lost and nothing is promoted.
+//! An item this vault has deleted (it has a tombstone) is **not** re-added,
+//! so deleting a compromised credential sticks; a clean restore (replace
+//! mode) is the explicit way to bring it back. The backup's own tombstones
+//! never delete current items: an imported file can add, never destroy.
 
 use std::path::Path;
 
@@ -184,6 +188,8 @@ pub struct ImportPreview {
     pub identical: usize,
     /// Items present on both sides that differ (current kept; see module docs).
     pub conflicts: usize,
+    /// Items deleted from this vault since (tombstoned; not re-added by a merge).
+    pub deleted_locally: usize,
 }
 
 /// How to apply a backup.
@@ -216,6 +222,7 @@ pub fn preview(current: &VaultData, manifest: &Manifest) -> ImportPreview {
             .iter()
             .find(|c| item_id(c) == item_id(incoming))
         {
+            None if current.is_tombstoned(item_id(incoming)) => p.deleted_locally += 1,
             None => p.new_items += 1,
             Some(c) if c == incoming => p.identical += 1,
             Some(_) => p.conflicts += 1,
@@ -233,13 +240,28 @@ pub fn apply(current: &mut VaultData, manifest: &Manifest, mode: ImportMode) -> 
             current.items = manifest.vault_data.items.clone();
             current.folders = manifest.vault_data.folders.clone();
             current.settings = manifest.vault_data.settings.clone();
+            // Keep both sides' deletion history, minus what was just restored.
+            for t in &manifest.vault_data.tombstones {
+                if !current.is_tombstoned(&t.id) {
+                    current.tombstones.push(t.clone());
+                }
+            }
+            let restored = &current.items;
+            current
+                .tombstones
+                .retain(|t| !restored.iter().any(|i| item_id(i) == t.id));
+            current.gc_tombstones();
             current.updated_at = now_rfc3339();
             current.items.len()
         }
         ImportMode::Merge => {
             let source = format!("Imported from backup ({})", manifest.exported_at);
             let mut added = 0;
+            let mut archived = false;
             for incoming in &manifest.vault_data.items {
+                if current.is_tombstoned(item_id(incoming)) {
+                    continue;
+                }
                 let existing = current
                     .items
                     .iter_mut()
@@ -264,6 +286,7 @@ pub fn apply(current: &mut VaultData, manifest: &Manifest, mode: ImportMode) -> 
                                 fresh.push(p.to_string());
                             }
                         }
+                        archived |= !fresh.is_empty();
                         for p in fresh {
                             cur.password_history.push(PasswordHistoryEntry {
                                 password: p,
@@ -279,7 +302,7 @@ pub fn apply(current: &mut VaultData, manifest: &Manifest, mode: ImportMode) -> 
                     (Some(_), _) => {}
                 }
             }
-            if added > 0 {
+            if added > 0 || archived {
                 current.updated_at = now_rfc3339();
             }
             added
@@ -445,6 +468,55 @@ mod tests {
         };
         assert_eq!(l.password_history.len(), 1);
         assert_eq!(preview(current.data(), &manifest).new_items, 0);
+    }
+
+    #[test]
+    fn merge_never_resurrects_deleted_items_nor_applies_backup_deletions() {
+        let mut current = vault_with(&[("Compromised", "leaked"), ("Keep", "k")]);
+        let backup = current.data().clone();
+        let ids: Vec<String> = current
+            .data()
+            .summaries()
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        let (gone, keep) = if current.data().detail(&ids[0]).unwrap().title == "Compromised" {
+            (ids[0].clone(), ids[1].clone())
+        } else {
+            (ids[1].clone(), ids[0].clone())
+        };
+        current.data_mut().delete_item(&gone).unwrap();
+
+        // The backup also carries a tombstone for an item the vault still has:
+        // an imported file must never delete anything.
+        let mut other = backup;
+        other.tombstones.push(crate::vault::models::Tombstone {
+            id: keep.clone(),
+            deleted_at: now_rfc3339(),
+        });
+        let manifest = Manifest {
+            backup_version: 1,
+            exported_at: "2026-11-01T00:00:00Z".into(),
+            app_version: "0".into(),
+            items_count: 2,
+            vault_data: other,
+        };
+        let p = preview(current.data(), &manifest);
+        assert_eq!((p.new_items, p.identical, p.deleted_locally), (0, 1, 1));
+        assert_eq!(apply(current.data_mut(), &manifest, ImportMode::Merge), 0);
+        assert_eq!(current.data().items.len(), 1);
+        assert!(
+            current.data().detail(&gone).is_err(),
+            "deleted item stays deleted"
+        );
+        assert!(current.data().detail(&keep).is_ok());
+        assert!(!current.data().is_tombstoned(&keep));
+
+        // A clean restore is the explicit way back, and clears that tombstone.
+        assert_eq!(apply(current.data_mut(), &manifest, ImportMode::Replace), 2);
+        assert!(current.data().detail(&gone).is_ok());
+        assert!(!current.data().is_tombstoned(&gone));
+        assert!(!current.data().is_tombstoned(&keep));
     }
 
     #[test]

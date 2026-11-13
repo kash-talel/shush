@@ -7,11 +7,11 @@
 //! edit form never needs the existing password in JavaScript.
 
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use super::models::{
-    now_rfc3339, BaseItem, Folder, LoginItem, PasswordHistoryEntry, SecureNoteItem, VaultData,
-    VaultItem,
+    now_rfc3339, rfc3339_from_unix, BaseItem, Folder, LoginItem, PasswordHistoryEntry,
+    SecureNoteItem, Tombstone, VaultData, VaultItem,
 };
 use crate::crypto::fill_random;
 
@@ -23,6 +23,11 @@ const MAX_FOLDER_NAME: usize = 64;
 const MAX_FOLDERS: usize = 200;
 /// Newest entries kept per login (issue #19: history must be bounded).
 pub const MAX_HISTORY: usize = 50;
+/// Days a deletion tombstone is kept (issue #19 GC horizon). A backup or
+/// peer older than this can resurrect the item; the merge docs say so.
+pub const TOMBSTONE_TTL_DAYS: u64 = 365;
+/// Most tombstones kept; the oldest are dropped first (bounded payload).
+pub const MAX_TOMBSTONES: usize = 10_000;
 
 /// Item type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,7 +87,6 @@ impl SecretInput {
 
 impl Drop for SecretInput {
     fn drop(&mut self) {
-        use zeroize::Zeroize;
         self.0.zeroize();
     }
 }
@@ -265,6 +269,32 @@ pub(crate) fn host_of(url: &str) -> String {
     let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
     let host = host.split(':').next().unwrap_or("");
     host.trim_start_matches("www.").to_ascii_lowercase()
+}
+
+/// Identity host used to match an imported login against an existing one
+/// (issue #19): IDNA to punycode (so a Unicode look-alike never equals its
+/// ASCII twin, and `bücher.de` equals `xn--bcher-kva.de`), lower case, one
+/// trailing dot and a leading `www.` removed; scheme, port, path and
+/// credentials ignored. No registrable-domain (eTLD+1) folding: distinct
+/// subdomains can hold distinct accounts, and folding them would archive one
+/// account's password into another's history.
+pub(crate) fn canonical_host(url: &str) -> String {
+    let s = url.trim();
+    if s.is_empty() {
+        return String::new();
+    }
+    let parsed = match url::Url::parse(s) {
+        Ok(u) if s.contains("://") => Some(u),
+        _ => url::Url::parse(&format!("https://{s}")).ok(),
+    };
+    let host = match parsed.as_ref().and_then(|u| u.host()) {
+        Some(url::Host::Domain(d)) => d.to_ascii_lowercase(),
+        Some(url::Host::Ipv4(ip)) => ip.to_string(),
+        Some(url::Host::Ipv6(ip)) => format!("[{ip}]"),
+        None => return host_of(s),
+    };
+    let host = host.strip_suffix('.').unwrap_or(&host);
+    host.strip_prefix("www.").unwrap_or(host).to_string()
 }
 
 fn clean_tags(tags: &[String]) -> Vec<String> {
@@ -483,15 +513,64 @@ impl VaultData {
         Ok(moved)
     }
 
-    /// Removes an item.
+    /// Removes an item and leaves a tombstone, so a later merge of an older
+    /// backup (or a sync peer) cannot bring it back (issue #19).
     pub fn delete_item(&mut self, id: &str) -> Result<(), ItemError> {
         let before = self.items.len();
         self.items.retain(|i| base(i).id != id);
         if self.items.len() == before {
             return Err(ItemError::NotFound);
         }
-        self.updated_at = now_rfc3339();
+        let now = now_rfc3339();
+        self.tombstones.retain(|t| t.id != id);
+        self.tombstones.push(Tombstone {
+            id: id.to_string(),
+            deleted_at: now.clone(),
+        });
+        self.gc_tombstones();
+        self.updated_at = now;
         Ok(())
+    }
+
+    /// Whether `id` was deleted (and its tombstone has not expired).
+    pub fn is_tombstoned(&self, id: &str) -> bool {
+        self.tombstones.iter().any(|t| t.id == id)
+    }
+
+    /// Drops tombstones past the GC horizon, then the oldest beyond
+    /// [`MAX_TOMBSTONES`]. Wall-clock skew only shifts when a marker expires.
+    pub fn gc_tombstones(&mut self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        // Fixed-width RFC 3339 UTC strings sort chronologically.
+        let horizon = rfc3339_from_unix(now.saturating_sub(TOMBSTONE_TTL_DAYS * 86_400));
+        self.tombstones.retain(|t| t.deleted_at >= horizon);
+        if self.tombstones.len() > MAX_TOMBSTONES {
+            self.tombstones
+                .sort_by(|a, b| a.deleted_at.cmp(&b.deleted_at));
+            let excess = self.tombstones.len() - MAX_TOMBSTONES;
+            self.tombstones.drain(..excess);
+        }
+    }
+
+    /// Erases a login's password history (explicit purge, issue #19), e.g.
+    /// after a breach so old passwords stop sitting in the vault. Returns how
+    /// many entries were removed.
+    pub fn purge_history(&mut self, id: &str) -> Result<usize, ItemError> {
+        let VaultItem::Login(l) = self.find_mut(id)? else {
+            return Err(ItemError::Invalid(
+                "Only logins have password history".into(),
+            ));
+        };
+        let n = l.password_history.len();
+        if n > 0 {
+            // `zeroize` wipes each password before the entries are freed.
+            l.password_history.zeroize();
+            l.base.updated_at = now_rfc3339();
+            self.updated_at = now_rfc3339();
+        }
+        Ok(n)
     }
 
     /// Sets the favorite flag.
@@ -857,5 +936,99 @@ mod tests {
         );
         assert_eq!(host_of("github.com/login"), "github.com");
         assert_eq!(host_of(""), "");
+    }
+
+    #[test]
+    fn canonical_host_identity() {
+        let c = canonical_host;
+        assert_eq!(
+            c("https://user:pw@www.Example.com:8443/a?b#c"),
+            "example.com"
+        );
+        assert_eq!(c("http://example.com./x"), "example.com");
+        assert_eq!(c("example.com/login"), "example.com");
+        assert_eq!(c("https://bücher.de"), "xn--bcher-kva.de");
+        assert_eq!(c("xn--bcher-kva.de"), c("BÜCHER.de"));
+        // A Cyrillic look-alike never equals the ASCII host.
+        assert_ne!(c("https://аpple.com"), "apple.com");
+        // Subdomains stay distinct (no eTLD+1 folding).
+        assert_ne!(c("mail.example.com"), c("example.com"));
+        assert_eq!(c("https://[::1]:8080/"), "[::1]");
+        assert_eq!(c("  "), "");
+    }
+
+    #[test]
+    fn delete_leaves_tombstone_and_gc_bounds_them() {
+        let mut v = VaultData::new();
+        let id = v.create_item(ItemKind::Login, &login("a", "p")).unwrap();
+        v.delete_item(&id).unwrap();
+        assert!(v.is_tombstoned(&id));
+        assert_eq!(v.tombstones.len(), 1);
+        // The tombstone holds no item contents.
+        let json = serde_json::to_string(&v.tombstones).unwrap();
+        assert!(!json.contains("alice") && !json.contains("github"));
+
+        // Expired markers are dropped; recent ones kept.
+        v.tombstones.push(Tombstone {
+            id: "old".into(),
+            deleted_at: "2000-01-01T00:00:00Z".into(),
+        });
+        v.gc_tombstones();
+        assert!(!v.is_tombstoned("old"));
+        assert!(v.is_tombstoned(&id));
+
+        // Count cap keeps the newest.
+        let now = now_rfc3339();
+        for n in 0..(MAX_TOMBSTONES + 3) {
+            v.tombstones.push(Tombstone {
+                id: format!("t{n}"),
+                deleted_at: now.clone(),
+            });
+        }
+        v.tombstones.push(Tombstone {
+            id: "future".into(),
+            deleted_at: "2999-01-01T00:00:00Z".into(),
+        });
+        v.gc_tombstones();
+        assert_eq!(v.tombstones.len(), MAX_TOMBSTONES);
+        assert!(v.is_tombstoned("future"));
+
+        // Vaults written before tombstones existed still load.
+        let mut json: serde_json::Value = serde_json::to_value(VaultData::new()).unwrap();
+        json.as_object_mut().unwrap().remove("tombstones");
+        let back: VaultData = serde_json::from_value(json).unwrap();
+        assert!(back.tombstones.is_empty());
+    }
+
+    #[test]
+    fn purge_history_wipes_entries() {
+        let mut v = VaultData::new();
+        let id = v.create_item(ItemKind::Login, &login("a", "p1")).unwrap();
+        for pw in ["p2", "p3"] {
+            v.update_item(
+                &id,
+                &ItemDraft {
+                    password: Some(pw.into()),
+                    ..login("a", "")
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(v.detail(&id).unwrap().history_count, 2);
+        assert_eq!(v.purge_history(&id).unwrap(), 2);
+        assert_eq!(v.detail(&id).unwrap().history_count, 0);
+        assert_eq!(&*v.secret(&id, SecretField::Password).unwrap(), "p3");
+        assert_eq!(v.purge_history(&id).unwrap(), 0);
+        assert_eq!(v.purge_history("missing"), Err(ItemError::NotFound));
+        let n = v
+            .create_item(
+                ItemKind::SecureNote,
+                &ItemDraft {
+                    title: "n".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(v.purge_history(&n).is_err());
     }
 }

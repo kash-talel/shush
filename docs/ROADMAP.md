@@ -167,8 +167,9 @@ Owner order: duress vault → LAN sync → air-gapped mode (lands with the first
   one-time code shown on one device and typed on the other, keying a Noise `XXpsk3` handshake;
   then both pin each other's static key.
 - **Transport.** Noise XX (`snow`) with pinned static keys; peers can be revoked.
-- **Merge.** Needs an authenticated generation counter in the header (#9) and deletion tombstones
-  with bounded history (#19) before any two vaults are merged.
+- **Merge.** Needs an authenticated generation counter in the header (#9) before any two vaults
+  are merged. Tombstones, bounded history and the no-wall-clock rules are in place (#19); the
+  merge orders edits with the hybrid logical clock set in `master-specification.md` §9.2.
 - **Accept when:** a MITM without the code cannot complete pairing (test with a relaying peer);
   revoked peers are refused; deletes propagate and do not resurrect; no mDNS traffic outside the
   pairing window (packet capture).

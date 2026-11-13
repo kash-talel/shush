@@ -164,8 +164,9 @@ other payload secrets.
 
 Inside a session, each side sends its decrypted item set and merges with NDHM
 (`master-specification.md` §9.2), then saves under its own keys with the normal save. This needs
-an authenticated generation counter (#9) and deletion tombstones with bounded history (#19);
-sync is not enabled before both land.
+an authenticated generation counter (#9). Deletion tombstones, bounded history and the
+no-wall-clock merge rules landed with #19 (§9.2 also sets the hybrid-logical-clock ordering sync
+must use); sync is not enabled before #9 lands and the HLC is implemented.
 
 ### 9. Memory
 

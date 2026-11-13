@@ -1552,6 +1552,18 @@ async fn delete_item(app: tauri::AppHandle, id: String) -> Result<(), CmdError> 
     .await
 }
 
+/// Erases a login's password history (issue #19). Returns the updated item.
+#[tauri::command]
+async fn purge_history(app: tauri::AppHandle, id: String) -> Result<ItemDetail, CmdError> {
+    blocking(move || {
+        write(&app, |d| {
+            d.purge_history(&id)?;
+            Ok(d.detail(&id)?)
+        })
+    })
+    .await
+}
+
 // ---- Attachments (roadmap Step 4c) ---------------------------------------------
 
 fn guess_mime(path: &Path) -> &'static str {
@@ -2038,6 +2050,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             create_item,
             update_item,
             delete_item,
+            purge_history,
             set_favorite,
             copy_field,
             reveal_password,

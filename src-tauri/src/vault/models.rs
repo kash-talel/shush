@@ -24,6 +24,10 @@ pub struct VaultData {
     pub folders: Vec<Folder>,
     /// Per-vault settings.
     pub settings: VaultSettings,
+    /// Ids of deleted items (issue #19), so a merge never resurrects them.
+    /// Absent in vaults written before tombstones existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tombstones: Vec<Tombstone>,
 }
 
 impl VaultData {
@@ -35,6 +39,7 @@ impl VaultData {
             items: Vec::new(),
             folders: Vec::new(),
             settings: VaultSettings::default(),
+            tombstones: Vec::new(),
         }
     }
 }
@@ -144,6 +149,19 @@ pub struct PasswordHistoryEntry {
     /// `active_superseded` or `archived_conflict`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+}
+
+/// Marker left by a deleted item (issue #19). Holds no item contents.
+///
+/// `deleted_at` is wall-clock time and is only used to expire the marker
+/// (see `items::TOMBSTONE_TTL_DAYS`); it never decides a merge.
+#[derive(Clone, PartialEq, Serialize, Deserialize, Zeroize)]
+#[cfg_attr(test, derive(Debug))]
+pub struct Tombstone {
+    /// Id of the deleted item.
+    pub id: String,
+    /// RFC 3339 deletion time.
+    pub deleted_at: String,
 }
 
 /// A folder.

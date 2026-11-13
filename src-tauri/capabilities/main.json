@@ -28,6 +28,7 @@
     "allow-create-item",
     "allow-update-item",
     "allow-delete-item",
+    "allow-purge-history",
     "allow-set-favorite",
     "allow-copy-field",
     "allow-reveal-password",
