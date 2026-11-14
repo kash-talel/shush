@@ -14,6 +14,7 @@
 
 ### Bug Fixes
 
+* **release:** build frontend in src/, run tauri from the repo root ([#183](https://github.com/kash-talel/shush/issues/183)) ([49ebc28](https://github.com/kash-talel/shush/commit/49ebc28))
 * **#100:** add reseal action to unlock screen via back button and Esc ([#105](https://github.com/kash-talel/shush/issues/105)) ([214bb28](https://github.com/kash-talel/shush/commit/214bb282066c639c0233415da41c1a8bb0275ffe))
 * **#101:** remove tagline text and vertically center disc on installer sidebar ([#104](https://github.com/kash-talel/shush/issues/104)) ([ed97c52](https://github.com/kash-talel/shush/commit/ed97c52358f9f861b6b95d55bd30b42d98dd80f1))
 * **#10:** assert live key is non-zero and test lock-vs-mutation ordering ([#79](https://github.com/kash-talel/shush/issues/79)) ([9fd9fe9](https://github.com/kash-talel/shush/commit/9fd9fe9b15489b1aea0350a77a4d2786f5e8b9c8))
