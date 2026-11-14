@@ -120,11 +120,18 @@
 
   const editing = () => mode.kind === "create" || mode.kind === "edit";
 
-  function onDiskChanged(discardEdit = false) {
-    diskQueue = diskQueue.then(() => reloadFromDisk(discardEdit));
+  // The watcher announces each change once, so a reload that fails while the
+  // sync client is still busy with the file (sharing violation, the gap in a
+  // delete-then-rename) is retried a few times before an error is shown.
+  const DISK_RETRIES = 3;
+  let diskRetry: ReturnType<typeof setTimeout> | undefined;
+
+  function onDiskChanged(discardEdit = false, attempt = 0) {
+    clearTimeout(diskRetry);
+    diskQueue = diskQueue.then(() => reloadFromDisk(discardEdit, attempt));
   }
 
-  async function reloadFromDisk(discardEdit: boolean) {
+  async function reloadFromDisk(discardEdit: boolean, attempt: number) {
     if (editing() && !discardEdit) {
       diskNotice = "edit";
       return;
@@ -136,7 +143,9 @@
       // The edit stays open: nothing was reloaded.
       const err = toCmdError(e);
       if (err.code === "PASSWORD_REQUIRED") diskNotice = "password";
-      else {
+      else if (attempt < DISK_RETRIES && err.code !== "VAULT_LOCKED") {
+        diskRetry = setTimeout(() => onDiskChanged(discardEdit, attempt + 1), 2000);
+      } else {
         diskNotice = null;
         error = err;
       }
@@ -149,7 +158,12 @@
 
   // A change noticed during an edit is applied once the editor closes.
   $effect(() => {
-    if (diskNotice === "edit" && !editing()) untrack(() => onDiskChanged());
+    if (diskNotice === "edit" && !editing()) {
+      // Cleared now so later mode changes do not queue the same reload again;
+      // the reload sets it back if an editor reopened meanwhile.
+      diskNotice = null;
+      untrack(() => onDiskChanged());
+    }
   });
 
   const folderName = (id: string | null) => folders.find((f) => f.id === id)?.name ?? null;
@@ -217,7 +231,10 @@
   onMount(() => {
     void refresh();
     const off = listen("vault-disk-changed", () => void onDiskChanged());
-    return () => void off.then((f) => f());
+    return () => {
+      clearTimeout(diskRetry);
+      void off.then((f) => f());
+    };
   });
 
   const filters: { id: Filter; label: string; icon: typeof Layers }[] = [

@@ -4,8 +4,8 @@
 //! Polled rather than event-driven so it also works on sync folders and
 //! network paths. Each poll costs one `metadata` call; the file is read and
 //! hashed only when its size or modification time changed, and that read
-//! happens outside the vault state lock so a slow disk never blocks commands
-//! or `lock()`.
+//! happens outside the vault state lock so a slow disk does not hold up
+//! commands or `lock()` (only a `metadata` call runs under the lock).
 
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
