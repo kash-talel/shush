@@ -37,7 +37,7 @@ jobs:
     steps:
       # A GitHub App token (not GITHUB_TOKEN) so the release PR triggers CI.
       - id: app
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ vars.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
@@ -61,7 +61,7 @@ jobs:
       IS_RELEASE: ${{ needs.release-please.outputs.release_created == 'true' }}
       VERSION: ${{ needs.release-please.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.release-please.outputs.tag_name || github.sha }}
           persist-credentials: false
@@ -99,7 +99,7 @@ jobs:
           workspaces: src-tauri
 
       - name: Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -186,7 +186,7 @@ jobs:
           Get-ChildItem release-assets
 
       - name: Upload build output
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: shush-windows-build
           path: |
@@ -215,7 +215,7 @@ jobs:
       TAG: ${{ needs.release-please.outputs.tag_name }}
       VERSION: ${{ needs.release-please.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
           persist-credentials: false
@@ -225,7 +225,7 @@ jobs:
           name: shush-windows-build
 
       - name: Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -273,13 +273,13 @@ jobs:
             release-assets/release.json
 
       - name: Attest SBOM (Rust)
-        uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-path: release-assets/shush_x64-setup.exe
           sbom-path: release-assets/sbom-rust.cdx.json
 
       - name: Attest SBOM (npm)
-        uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-path: release-assets/shush_x64-setup.exe
           sbom-path: release-assets/sbom-npm.cdx.json

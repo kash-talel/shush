@@ -7,3 +7,8 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(ci)"
+    # One weekly PR for all action bumps instead of one PR per action. Release/CI changes need
+    # the ai-review path, so fewer, combined PRs are cheaper to verify.
+    groups:
+      github-actions:
+        patterns: ["*"]
