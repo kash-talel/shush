@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { DatabaseBackup, KeyRound, Layers, LockKeyhole, NotebookText, Plus, Search, Star, TriangleAlert } from "@lucide/svelte";
   import ItemList from "./ItemList.svelte";
@@ -89,8 +89,13 @@
     items = (await run(listItems)) ?? items;
     folders = (await run(listFolders)) ?? folders;
     if (detail) {
-      // Keep the open item in sync (e.g. its folder was deleted).
+      // Keep the open item in sync (e.g. its folder was deleted, or a reload
+      // from disk removed the item).
       const id = detail.id;
+      if (!items.some((i) => i.id === id)) {
+        detail = null;
+        return;
+      }
       const d = await run(() => getItem(id));
       if (d) detail = d;
     }
@@ -107,30 +112,45 @@
   }
 
   // The vault file changed on disk (cloud sync, another machine; issue #113).
-  // With no edit in progress it reloads silently; otherwise a banner offers it.
+  // With no edit in progress it reloads silently; otherwise a banner offers it,
+  // and closing the editor reloads then.
   let diskNotice = $state<"edit" | "password" | null>(null);
+  // Runs disk reloads one at a time, so two quick changes never overlap.
+  let diskQueue: Promise<void> = Promise.resolve();
 
-  async function onDiskChanged() {
-    if (mode.kind === "create" || mode.kind === "edit") {
+  const editing = () => mode.kind === "create" || mode.kind === "edit";
+
+  function onDiskChanged(discardEdit = false) {
+    diskQueue = diskQueue.then(() => reloadFromDisk(discardEdit));
+  }
+
+  async function reloadFromDisk(discardEdit: boolean) {
+    if (editing() && !discardEdit) {
       diskNotice = "edit";
       return;
     }
     try {
-      await reloadVault();
-      diskNotice = null;
-      await refresh();
+      // Keep attachment files the sync client may have delivered early.
+      await reloadVault(undefined, undefined, true);
     } catch (e) {
+      // The edit stays open: nothing was reloaded.
       const err = toCmdError(e);
       if (err.code === "PASSWORD_REQUIRED") diskNotice = "password";
-      else error = err;
+      else {
+        diskNotice = null;
+        error = err;
+      }
+      return;
     }
+    if (discardEdit) mode = { kind: "view" };
+    diskNotice = null;
+    await refresh();
   }
 
-  async function reloadFromBanner() {
-    mode = { kind: "view" };
-    diskNotice = null;
-    await reloadAndRefresh();
-  }
+  // A change noticed during an edit is applied once the editor closes.
+  $effect(() => {
+    if (diskNotice === "edit" && !editing()) untrack(() => onDiskChanged());
+  });
 
   const folderName = (id: string | null) => folders.find((f) => f.id === id)?.name ?? null;
 
@@ -335,7 +355,7 @@
         </span>
         <span class="flex shrink-0 gap-1.5">
           {#if diskNotice === "edit"}
-            <button type="button" onclick={reloadFromBanner} class="key-steel h-6 px-2 text-[11px]">Reload</button>
+            <button type="button" onclick={() => onDiskChanged(true)} class="key-steel h-6 px-2 text-[11px]">Reload</button>
           {/if}
           <button type="button" onclick={() => (diskNotice = null)} class="key-steel h-6 px-2 text-[11px]">Dismiss</button>
         </span>

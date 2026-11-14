@@ -1193,11 +1193,17 @@ async fn unlock(
 ///
 /// Uses the existing derived keys in memory if salt and KDF are unchanged;
 /// otherwise uses `password` if credentials changed on disk.
+///
+/// `keep_orphans` skips deleting unreferenced attachment blobs. The reload
+/// after a sync client replaced the file (issue #113) sets it: the client may
+/// deliver a newer item's attachment before the vault version that uses it,
+/// and deleting it then would sync the deletion back to the other machine.
 #[tauri::command]
 async fn reload_vault(
     app: tauri::AppHandle,
     password: Option<String>,
     keyfile_path: Option<String>,
+    keep_orphans: Option<bool>,
 ) -> Result<VaultSummary, CmdError> {
     blocking(move || {
         let password = password.map(Zeroizing::new);
@@ -1210,7 +1216,7 @@ async fn reload_vault(
             .with_mut(|u| {
                 let pw_bytes = password.as_ref().map(|p| p.as_bytes());
                 u.vault.reload(&u.path, pw_bytes, digest.as_ref())?;
-                if !u.read_only {
+                if !u.read_only && keep_orphans != Some(true) {
                     vault::attachments::gc_orphans(&u.path, u.vault.data());
                 }
                 Ok(summary(&u.path, &u.vault, u.read_only))
@@ -1340,42 +1346,15 @@ const EVENT_AUTO_LOCKED: &str = "vault-auto-locked";
 const EVENT_VAULT_DISK_CHANGED: &str = "vault-disk-changed";
 
 /// Polls the unlocked vault file and tells the UI when another program (a
-/// cloud sync client, another machine's copy) replaced it. A cheap
-/// size+mtime check gates the hash comparison, and each distinct change is
-/// announced once.
+/// cloud sync client, another machine's copy) replaced it. See
+/// [`vault::watch`]; each distinct change is announced once.
 fn spawn_vault_watcher(app: tauri::AppHandle) {
     std::thread::spawn(move || {
-        let mut announced: Option<(u64, Option<std::time::SystemTime>)> = None;
-        let mut last_seen: Option<(PathBuf, u64, Option<std::time::SystemTime>)> = None;
+        let mut watch = vault::watch::DiskWatch::default();
         loop {
             std::thread::sleep(std::time::Duration::from_secs(2));
-            let Some(path) = app.state::<VaultState>().with(|u| u.path.clone()) else {
-                announced = None;
-                last_seen = None;
-                continue;
-            };
-            let sig = std::fs::metadata(&path)
-                .ok()
-                .map(|m| (m.len(), m.modified().ok()));
-            let Some(sig) = sig else { continue };
-            if announced == Some(sig) {
-                continue;
-            }
-            let unchanged = matches!(&last_seen, Some((p, l, m)) if *p == path && (*l, *m) == sig);
-            last_seen = Some((path.clone(), sig.0, sig.1));
-            if unchanged && announced.is_none() {
-                // Same signature as the last poll and nothing was flagged then.
-                continue;
-            }
-            let changed = app
-                .state::<VaultState>()
-                .with(|u| u.path == path && u.vault.changed_on_disk(&u.path))
-                .unwrap_or(false);
-            if changed {
-                announced = Some(sig);
+            if watch.poll(&app.state::<VaultState>()) == vault::watch::Poll::Changed {
                 let _ = app.emit(EVENT_VAULT_DISK_CHANGED, ());
-            } else {
-                announced = None;
             }
         }
     });

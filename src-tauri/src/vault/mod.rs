@@ -21,6 +21,7 @@ pub mod registry;
 pub mod siblings;
 pub mod slots;
 pub mod state;
+pub mod watch;
 
 use std::io::ErrorKind;
 use std::path::Path;
@@ -166,7 +167,13 @@ impl SlotState {
 /// Identifies one written file image: SHA-256 of the whole file, which holds
 /// the random nonces and `SAVE_ID` drawn on every save, so two saves never
 /// share it. Not a secret and not an integrity check (the AEAD is).
-type DiskId = [u8; 32];
+pub type DiskId = [u8; 32];
+
+/// The [`DiskId`] of the file at `path` (`None` if there is none), for
+/// noticing changes made by another program (issue #113). Not a secret.
+pub fn disk_fingerprint(path: &Path) -> Result<Option<DiskId>, VaultError> {
+    disk_id_at(path)
+}
 
 fn disk_id(bytes: &[u8]) -> DiskId {
     use sha2::{Digest, Sha256};
@@ -273,15 +280,11 @@ impl OpenVault {
         })
     }
 
-    /// Whether the file at `path` differs from the one this vault was loaded
-    /// from or last wrote (issue #113). A missing or unreadable file counts
-    /// as changed only when it is missing; read errors report `false` so a
-    /// transient sharing violation does not raise a false alarm.
-    pub fn changed_on_disk(&self, path: &Path) -> bool {
-        match disk_id_at(path) {
-            Ok(id) => id != self.disk_id,
-            Err(_) => false,
-        }
+    /// Whether `fingerprint` (from [`disk_fingerprint`]) is the file image
+    /// this vault was loaded from or last wrote (issue #113). Lets a caller
+    /// hash the file without holding the vault state lock.
+    pub fn matches_disk(&self, fingerprint: Option<&DiskId>) -> bool {
+        fingerprint.copied() == self.disk_id
     }
 
     /// Reloads the vault from disk after a concurrent change (issue #49).
@@ -880,16 +883,23 @@ mod tests {
         let bytes = read_vault_file(&path).unwrap();
         let mut a = OpenVault::unlock(&bytes, b"pw", None).unwrap();
         let mut b = OpenVault::unlock(&bytes, b"pw", None).unwrap();
-        assert!(!a.changed_on_disk(&path));
+        let on_disk = || disk_fingerprint(&path).unwrap();
+        assert!(a.matches_disk(on_disk().as_ref()));
         a.modify::<_, VaultError>(&path, |d| {
             d.items.push(note("x", "y"));
             Ok(())
         })
         .unwrap();
-        assert!(!a.changed_on_disk(&path), "own save is not a change");
-        assert!(b.changed_on_disk(&path));
+        assert!(
+            a.matches_disk(on_disk().as_ref()),
+            "own save is not a change"
+        );
+        assert!(!b.matches_disk(on_disk().as_ref()));
         b.reload(&path, None, None).unwrap();
-        assert!(!b.changed_on_disk(&path));
+        assert!(b.matches_disk(on_disk().as_ref()));
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(on_disk(), None);
+        assert!(!b.matches_disk(None), "a deleted file is a change");
     }
 
     #[test]
