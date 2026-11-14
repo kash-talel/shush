@@ -7,6 +7,9 @@
 //!   (also delivered on Modern Standby), and `GUID_CONSOLE_DISPLAY_STATE` = off,
 //!   which is what lid-close on S0ix laptops reliably produces.
 //!
+//! `WM_ENDSESSION` (wParam != 0, logoff/shutdown) clears shush's clipboard secret
+//! synchronously, since the process may be killed right after (issue #82).
+//!
 //! A second thread polls `GetLastInputInfo` (system-wide input, not just input
 //! to shush) for the idle timeout.
 //!
@@ -45,12 +48,20 @@ impl LockReason {
 
 const WM_WTSSESSION_CHANGE: u32 = 0x02B1;
 const WM_POWERBROADCAST: u32 = 0x0218;
+const WM_ENDSESSION: u32 = 0x0016;
 const PBT_APMSUSPEND: usize = 0x0004;
 const PBT_POWERSETTINGCHANGE: usize = 0x8013;
 const WTS_CONSOLE_DISCONNECT: usize = 0x2;
 const WTS_REMOTE_DISCONNECT: usize = 0x4;
 const WTS_SESSION_LOGOFF: usize = 0x6;
 const WTS_SESSION_LOCK: usize = 0x7;
+
+/// True for `WM_ENDSESSION` with `wParam != 0`: the session really is ending
+/// (logoff / shutdown / restart) and the process may be killed right after the
+/// message returns (issue #82).
+pub fn is_session_ending(msg: u32, wparam: usize) -> bool {
+    msg == WM_ENDSESSION && wparam != 0
+}
 
 /// Maps a window message to a lock trigger. `display_state` is the DWORD
 /// payload of a `GUID_CONSOLE_DISPLAY_STATE` power-setting change (0 = off,
@@ -122,6 +133,12 @@ mod imp {
         } else {
             None
         };
+        if super::is_session_ending(msg, wparam) {
+            // The process can be terminated as soon as this returns, so clear
+            // synchronously, independent of the lock callback. Only touches the
+            // clipboard if it still holds shush's secret.
+            let _ = std::panic::catch_unwind(crate::os::clipboard::clear_if_ours);
+        }
         if let (Some(reason), Some(cb)) = (classify(msg, wparam, display_state), CALLBACK.get()) {
             // Never let a panic unwind across the FFI boundary.
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cb(reason)));
@@ -319,6 +336,13 @@ mod tests {
         ); // other setting
         assert_eq!(classify(WM_POWERBROADCAST, 0x12, None), None); // resume
         assert_eq!(classify(0x0010, 0, None), None); // WM_CLOSE
+    }
+
+    #[test]
+    fn end_session_detected_only_when_really_ending() {
+        assert!(is_session_ending(WM_ENDSESSION, 1));
+        assert!(!is_session_ending(WM_ENDSESSION, 0)); // shutdown cancelled
+        assert!(!is_session_ending(0x0011, 1)); // WM_QUERYENDSESSION
     }
 
     #[test]
