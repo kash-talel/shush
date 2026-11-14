@@ -1,0 +1,9 @@
+version: 2
+updates:
+  # Every `uses:` is pinned to a full commit SHA; Dependabot bumps the SHA and the version comment.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(ci)"

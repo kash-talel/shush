@@ -1,4 +1,9 @@
-name: Deploy site to GitHub Pages
+name: Deploy site and update feed to GitHub Pages
+
+# One Pages artifact carries the website and the signed update feed (/updates/<channel>/).
+# A Pages deploy always ships the whole site, so the feed is rebuilt on every deploy; the weekly
+# cron re-signs freshness.json so the feed never goes stale silently (clients refuse a feed whose
+# freshness.json is older than 14 days).
 
 on:
   push:
@@ -6,27 +11,106 @@ on:
     paths:
       - 'site/**'
       - '.github/workflows/pages.yml'
+      - '.github/feed-yanked.txt'
+      - '.github/scripts/make-feed.ps1'
+      - '.github/scripts/sign-file.ps1'
+  workflow_call:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+permissions: {}
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  feed:
+    name: Build update feed
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Holds the timestamp key only. Never the release key.
+    environment: feed
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Feed prerequisites
+        id: gate
+        shell: bash
+        env:
+          KEY: ${{ secrets.TIMESTAMP_SIGNING_KEY }}
+        run: |
+          # Until the timestamp key exists the site still deploys, just without a feed.
+          if [ -z "$KEY" ]; then
+            echo "TIMESTAMP_SIGNING_KEY not set: skipping the update feed."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Node.js
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/package-lock.json
+
+      - name: Install tauri CLI (signer)
+        if: steps.gate.outputs.enabled == 'true'
+        run: npm ci --prefix src --ignore-scripts
+
+      - name: Build and sign feed
+        if: steps.gate.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TIMESTAMP_SIGNING_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TIMESTAMP_SIGNING_KEY_PASSWORD }}
+        run: |
+          New-Item -ItemType Directory -Force feed-out | Out-Null
+          foreach ($c in 'stable', 'beta') {
+            ./.github/scripts/make-feed.ps1 -Channel $c -Repo '${{ github.repository }}' -OutDir feed-out
+          }
+          Get-ChildItem feed-out -Recurse -File | ForEach-Object FullName
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: update-feed
+          path: feed-out/
+          retention-days: 1
+          if-no-files-found: ignore
+
+  deploy:
+    name: Deploy
+    needs: [feed]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          path: site
+          persist-credentials: false
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - name: Assemble site + feed
+        run: mkdir -p public && cp -r site/. public/
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        continue-on-error: true   # absent when the feed is disabled or has no release yet
+        with:
+          name: update-feed
+          path: public/
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: public
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
