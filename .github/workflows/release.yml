@@ -119,12 +119,15 @@ jobs:
       # the release object and every signature.
       # A pre-release (version with '-', e.g. 0.3.0-beta.1) builds NSIS only: WiX/MSI accepts
       # only a numeric pre-release identifier, so `tauri build` would fail on the MSI bundle.
+      # Runs from src/: the tauri CLI runs beforeBuildCommand (`npm run build`) in its current
+      # directory, and the repo root has no package.json.
       - name: Build installers
         shell: pwsh
+        working-directory: src
         run: |
-          $v = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
-          if ($v.Contains('-')) { npx --prefix src tauri build --bundles nsis }
-          else { npx --prefix src tauri build }
+          $v = (Get-Content ../src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ($v.Contains('-')) { npx tauri build --bundles nsis }
+          else { npx tauri build }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Refuse to ship a binary without ASLR/DEP/CFG/CET and the hardened manifest (#74).
