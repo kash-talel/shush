@@ -500,6 +500,10 @@ mod sys {
         let mut address = 0usize;
         let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { core::mem::zeroed() };
         let mut chunk = [0u8; 8192];
+        // The read buffer lives in this process too, so its stale contents (a copy of
+        // an earlier chunk) are visible when the scan reaches this stack; skip them.
+        let chunk_start = chunk.as_ptr() as usize;
+        let chunk_end = chunk_start + chunk.len();
 
         const READABLE: u32 = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY;
 
@@ -539,6 +543,9 @@ mod sys {
                         for i in 0..=(valid.len() - needle.len()) {
                             let match_addr = cur + i;
                             if match_addr >= needle_start && match_addr < needle_end {
+                                continue;
+                            }
+                            if match_addr < chunk_end && match_addr + needle.len() > chunk_start {
                                 continue;
                             }
                             if &valid[i..i + needle.len()] == needle {
