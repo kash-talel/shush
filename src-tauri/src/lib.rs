@@ -10,6 +10,7 @@
 
 pub mod bridge;
 pub mod crypto;
+pub mod net;
 pub mod os;
 pub mod totp;
 pub mod update;
@@ -2324,6 +2325,50 @@ fn set_browser_support(app: tauri::AppHandle, enabled: bool) -> Result<BrowserSu
     browser_support_info(&app)
 }
 
+/// What Settings -> Network shows (issue #157).
+#[derive(serde::Serialize)]
+struct NetworkStatus {
+    /// True while the network gate is closed (the default).
+    air_gapped: bool,
+    /// False in a build made without the `network` cargo feature.
+    available: bool,
+}
+
+fn network_info(app: &tauri::AppHandle) -> NetworkStatus {
+    NetworkStatus {
+        air_gapped: app.state::<net::NetGate>().is_air_gapped(),
+        available: net::NetGate::compiled_in(),
+    }
+}
+
+#[tauri::command]
+fn network_status(app: tauri::AppHandle) -> NetworkStatus {
+    network_info(&app)
+}
+
+/// Settings toggle for air-gapped mode. Saved before it takes effect.
+#[tauri::command]
+fn set_air_gapped(app: tauri::AppHandle, enabled: bool) -> Result<NetworkStatus, CmdError> {
+    // A build without network support is always air-gapped; never record a
+    // "network on" choice there that a later network build would pick up.
+    if !enabled && !net::NetGate::compiled_in() {
+        return Err(CmdError::new(
+            "NETWORK_NOT_COMPILED_IN",
+            net::NetError::NotCompiledIn.to_string(),
+        ));
+    }
+    let (dir, _) = vault_home(&app)?;
+    app.state::<net::NetGate>()
+        .save_and_set(&dir, enabled)
+        .map_err(|e| {
+            CmdError::new(
+                "NETWORK_SETTING_FAILED",
+                format!("Could not save the network setting: {e}"),
+            )
+        })?;
+    Ok(network_info(&app))
+}
+
 /// Tauri builder with every shush command and the vault state registered.
 ///
 /// GUI plugins (e.g. the native file dialog) are attached in `main.rs`, not
@@ -2336,6 +2381,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
     tauri::Builder::default()
         .manage(VaultState::default())
         .manage(bridge::state::BridgeState::default())
+        .manage(net::NetGate::default())
         .manage(std::sync::Mutex::new(DeleteThrottle::default()))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -2357,6 +2403,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
                 *app.state::<std::sync::Mutex<DeleteThrottle>>()
                     .lock()
                     .unwrap_or_else(|e| e.into_inner()) = DeleteThrottle::load(&dir);
+                app.state::<net::NetGate>().load(&dir);
             }
             // Another application may own the combination; Spotlight then stays
             // reachable from the tray and app_info reports it (issue #14).
@@ -2448,7 +2495,9 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             bridge_approve_save,
             bridge_reject_save,
             browser_support_status,
-            set_browser_support
+            set_browser_support,
+            network_status,
+            set_air_gapped
         ])
 }
 

@@ -61,6 +61,8 @@ const COMMANDS: &[&str] = &[
     "bridge_reject_save",
     "browser_support_status",
     "set_browser_support",
+    "network_status",
+    "set_air_gapped",
 ];
 
 fn main() {

@@ -6,6 +6,7 @@
   import CsvImport from "./CsvImport.svelte";
   import DuressCard from "./DuressCard.svelte";
   import BrowserCard from "./BrowserCard.svelte";
+  import NetworkCard from "./NetworkCard.svelte";
   import EmergencyKitModal from "./EmergencyKitModal.svelte";
   import {
     applyImport,
@@ -309,6 +310,8 @@
     {/if}
 
     <BrowserCard onchanged={onimported} />
+
+    <NetworkCard />
 
     <!-- Emergency Recovery Kit (spec §7.2 item 6, issue #27) -->
     <div class="flex flex-col gap-3 rounded-[7px] border border-hairline bg-surface/60 p-4 shadow-[inset_0_1px_0_rgb(255_255_255/0.03)]">
