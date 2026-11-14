@@ -38,6 +38,15 @@ the owner decides whether to run `/find-skills` in an interactive session.
 Drive the UI over the Chrome DevTools Protocol, never with mouse/keyboard input (the user may be
 working on the same machine). See `docs/testing/README.md` for the per-phase scripts and harness:
 
+**Uninstalling for tests:** When a test (e.g. installer E2E, upgrade flow) requires uninstalling
+the currently installed version of shush on the owner's machine, you may proceed without stopping
+to ask — the owner has approved this. Back up vault files first (as `install-main.ps1` does).
+This applies to every agent, including unattended `/issue` workers and the `pr-reviewer`: closing
+the running shush app for such a test is allowed, and "it would replace the installed app" is not
+a reason to leave a test out. Copying the real vault files to a backup is allowed; opening or
+changing them is not (tests still use a scratch `SHUSH_VAULT_PATH`). When the test is done, leave
+a working shush installed (`install-main.ps1 -CloseApp -Launch` puts `origin/main` back).
+
 - Launch with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1"`.
 - Point the debug build at a scratch vault with `SHUSH_VAULT_PATH=<scratch>\vault.shush`. Never use
   the real `%APPDATA%\com.shush.vault` vault for testing.

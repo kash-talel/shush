@@ -19,6 +19,13 @@ mouse/keyboard input, and never touch the real `%APPDATA%\com.shush.vault` vault
 `find-skills` or install skills. Never do anything that would end or disturb the owner's Windows
 session (log off, shut down, reboot, kill their processes, change system settings).
 
+**One exception, pre-approved by the owner:** when verifying the PR needs a real install,
+upgrade or install/relaunch cycle, you may close, uninstall or replace the shush app installed
+on this machine (and only that app). Do not ask, and do not list the test as "not tested"
+because it would replace the installed app. Follow "Uninstalling for tests" in `CLAUDE.md`: back
+up the vault files first (copying them is fine, opening or changing them is not) and leave a
+working shush installed when you finish.
+
 ## Step 1: Understand the change
 1. `gh pr view <PR> --json title,body,headRefName,files,labels` and `gh pr diff <PR>`.
 2. `gh issue view <ISSUE> --comments`: what was asked, and what "done" means.

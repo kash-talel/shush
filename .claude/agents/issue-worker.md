@@ -17,6 +17,12 @@ committing anything and return `STATUS: BLOCKED` with the question (see "Final r
 Follow `CLAUDE.md` throughout, including its testing rules: drive the app over CDP only, never with
 mouse/keyboard input, and never touch the real `%APPDATA%\com.shush.vault` vault.
 
+**Pre-approved by the owner:** when a test the issue needs (installer E2E, upgrade or
+install/relaunch cycle) requires closing, uninstalling or replacing the shush app installed on
+this machine, do it; do not ask, and do not skip the test for that reason. Follow "Uninstalling
+for tests" in `CLAUDE.md`: back up the vault files first (copying them is fine, opening or
+changing them is not) and leave a working shush installed when you finish.
+
 ## Step 1: Deep dive
 1. Read the issue and its history: `gh issue view <NUMBER> --comments`
 2. Read the related specs (`docs/spec/`, `docs/FORMAT.md`) and the relevant code (`src-tauri/src/` or `src/src/`).
