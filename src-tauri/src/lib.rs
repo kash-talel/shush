@@ -1336,6 +1336,51 @@ fn lock(app: tauri::AppHandle) {
 /// Event sent to the UI when the vault locks without the user clicking Lock.
 const EVENT_AUTO_LOCKED: &str = "vault-auto-locked";
 
+/// Event sent to the UI when the unlocked vault file changed on disk (issue #113).
+const EVENT_VAULT_DISK_CHANGED: &str = "vault-disk-changed";
+
+/// Polls the unlocked vault file and tells the UI when another program (a
+/// cloud sync client, another machine's copy) replaced it. A cheap
+/// size+mtime check gates the hash comparison, and each distinct change is
+/// announced once.
+fn spawn_vault_watcher(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let mut announced: Option<(u64, Option<std::time::SystemTime>)> = None;
+        let mut last_seen: Option<(PathBuf, u64, Option<std::time::SystemTime>)> = None;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let Some(path) = app.state::<VaultState>().with(|u| u.path.clone()) else {
+                announced = None;
+                last_seen = None;
+                continue;
+            };
+            let sig = std::fs::metadata(&path)
+                .ok()
+                .map(|m| (m.len(), m.modified().ok()));
+            let Some(sig) = sig else { continue };
+            if announced == Some(sig) {
+                continue;
+            }
+            let unchanged = matches!(&last_seen, Some((p, l, m)) if *p == path && (*l, *m) == sig);
+            last_seen = Some((path.clone(), sig.0, sig.1));
+            if unchanged && announced.is_none() {
+                // Same signature as the last poll and nothing was flagged then.
+                continue;
+            }
+            let changed = app
+                .state::<VaultState>()
+                .with(|u| u.path == path && u.vault.changed_on_disk(&u.path))
+                .unwrap_or(false);
+            if changed {
+                announced = Some(sig);
+                let _ = app.emit(EVENT_VAULT_DISK_CHANGED, ());
+            } else {
+                announced = None;
+            }
+        }
+    });
+}
+
 /// Automatic lock from a session / power / idle trigger (issue #15).
 fn auto_lock(app: &tauri::AppHandle, reason: os::session::LockReason) {
     let state = app.state::<VaultState>();
@@ -2708,6 +2753,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
                 let _ = os::private_dir::remove(&dir);
             }
             spawn_update_checker(app.handle().clone());
+            spawn_vault_watcher(app.handle().clone());
             // Another application may own the combination; Spotlight then stays
             // reachable from the tray and app_info reports it (issue #14).
             let ok = app.global_shortcut().register(SPOTLIGHT_HOTKEY).is_ok();

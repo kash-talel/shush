@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
   import { DatabaseBackup, KeyRound, Layers, LockKeyhole, NotebookText, Plus, Search, Star, TriangleAlert } from "@lucide/svelte";
   import ItemList from "./ItemList.svelte";
   import ItemDetailView from "./ItemDetail.svelte";
@@ -105,6 +106,32 @@
     }
   }
 
+  // The vault file changed on disk (cloud sync, another machine; issue #113).
+  // With no edit in progress it reloads silently; otherwise a banner offers it.
+  let diskNotice = $state<"edit" | "password" | null>(null);
+
+  async function onDiskChanged() {
+    if (mode.kind === "create" || mode.kind === "edit") {
+      diskNotice = "edit";
+      return;
+    }
+    try {
+      await reloadVault();
+      diskNotice = null;
+      await refresh();
+    } catch (e) {
+      const err = toCmdError(e);
+      if (err.code === "PASSWORD_REQUIRED") diskNotice = "password";
+      else error = err;
+    }
+  }
+
+  async function reloadFromBanner() {
+    mode = { kind: "view" };
+    diskNotice = null;
+    await reloadAndRefresh();
+  }
+
   const folderName = (id: string | null) => folders.find((f) => f.id === id)?.name ?? null;
 
   async function select(id: string) {
@@ -167,7 +194,11 @@
     }
   }
 
-  onMount(refresh);
+  onMount(() => {
+    void refresh();
+    const off = listen("vault-disk-changed", () => void onDiskChanged());
+    return () => void off.then((f) => f());
+  });
 
   const filters: { id: Filter; label: string; icon: typeof Layers }[] = [
     { id: "all", label: "All items", icon: Layers },
@@ -291,6 +322,23 @@
       <div class="flex items-center gap-2 border-b border-caution/30 bg-caution/10 px-4 py-1.5 text-xs text-caution" role="status">
         <LockKeyhole class="size-3.5 shrink-0" aria-hidden="true" />
         <span>Vault is opened in read-only mode (media or file is write-protected). Changes cannot be saved.</span>
+      </div>
+    {/if}
+    {#if diskNotice}
+      <div class="flex items-center justify-between gap-2 border-b border-caution/30 bg-caution/10 px-4 py-1.5 text-xs text-caution" role="status">
+        <span>
+          {#if diskNotice === "edit"}
+            The vault file was updated on disk. Finish or cancel your edit, or reload now (your edit is discarded).
+          {:else}
+            The vault file was replaced with different credentials. Lock and unlock to open the new version.
+          {/if}
+        </span>
+        <span class="flex shrink-0 gap-1.5">
+          {#if diskNotice === "edit"}
+            <button type="button" onclick={reloadFromBanner} class="key-steel h-6 px-2 text-[11px]">Reload</button>
+          {/if}
+          <button type="button" onclick={() => (diskNotice = null)} class="key-steel h-6 px-2 text-[11px]">Dismiss</button>
+        </span>
       </div>
     {/if}
     {#if error}

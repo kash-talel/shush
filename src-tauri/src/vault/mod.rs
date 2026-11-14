@@ -273,6 +273,17 @@ impl OpenVault {
         })
     }
 
+    /// Whether the file at `path` differs from the one this vault was loaded
+    /// from or last wrote (issue #113). A missing or unreadable file counts
+    /// as changed only when it is missing; read errors report `false` so a
+    /// transient sharing violation does not raise a false alarm.
+    pub fn changed_on_disk(&self, path: &Path) -> bool {
+        match disk_id_at(path) {
+            Ok(id) => id != self.disk_id,
+            Err(_) => false,
+        }
+    }
+
     /// Reloads the vault from disk after a concurrent change (issue #49).
     ///
     /// If the on-disk file has the same salt and KDF parameters as the in-memory
@@ -858,6 +869,27 @@ mod tests {
         assert_eq!(final_disk.data().items.len(), 2);
         assert_eq!(item_title(&final_disk.data().items[0]), "from-a");
         assert_eq!(item_title(&final_disk.data().items[1]), "from-b");
+    }
+
+    #[test]
+    fn changed_on_disk_detects_foreign_writes_but_not_own() {
+        // Issue #113
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.shush");
+        create_vault_file(&path, b"pw", None, FAST).unwrap();
+        let bytes = read_vault_file(&path).unwrap();
+        let mut a = OpenVault::unlock(&bytes, b"pw", None).unwrap();
+        let mut b = OpenVault::unlock(&bytes, b"pw", None).unwrap();
+        assert!(!a.changed_on_disk(&path));
+        a.modify::<_, VaultError>(&path, |d| {
+            d.items.push(note("x", "y"));
+            Ok(())
+        })
+        .unwrap();
+        assert!(!a.changed_on_disk(&path), "own save is not a change");
+        assert!(b.changed_on_disk(&path));
+        b.reload(&path, None, None).unwrap();
+        assert!(!b.changed_on_disk(&path));
     }
 
     #[test]
