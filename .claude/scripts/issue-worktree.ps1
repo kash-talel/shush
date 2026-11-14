@@ -8,7 +8,8 @@
 #   -OwnNodeModules      Replace the CURRENT worktree's shared node_modules junction with its own
 #                        `npm ci` install. Needed before any change to src/package*.json.
 #   -Remove -Path <dir>  Stop processes holding files in the worktree, unlink the build dirs,
-#                        release its target slot, remove the worktree and prune.
+#                        release its target slot, remove the worktree and prune. Releases a
+#                        Claude Code agent lock left by a finished agent (see Unlock-AgentWorktree).
 #   -Status              Show the target-slot pool and which worktree holds each slot.
 #   -Prune               Remove leftover agent-*/issue-* worktrees whose work is pushed or merged
 #                        (run by issue-next.ps1 before every /issue).
@@ -203,9 +204,47 @@ if ($OwnNodeModules) {
     exit 0
 }
 
-function Remove-Worktree([string]$wt) {
+# Run a native command whose failure is handled by its exit code. Under 'Stop', Windows
+# PowerShell 5.1 turns any stderr line into a terminating error even with 2>$null, which used to
+# end the retry loop below (and issue-finish.ps1) on the first failed `git worktree remove`.
+function Invoke-Native([scriptblock]$Command) {
+    $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { & $Command 2>$null | Out-Null } finally { $ErrorActionPreference = $old }
+    return $LASTEXITCODE
+}
+
+# The lock reason git records for a worktree, '' if it is locked without one, $null if unlocked.
+# -z because a free-text reason may contain a newline.
+function Get-WorktreeLock([string]$wt) {
+    $raw = (& git -C $main worktree list --porcelain -z) -join "`n"
+    $cur = $null
+    foreach ($field in ($raw -split "`0")) {
+        if ($field -like 'worktree *') { $cur = Get-Full $field.Substring(9) }
+        elseif ($cur -ieq $wt -and $field -match '^locked(?: (?<r>[\s\S]*))?$') { return [string]$Matches['r'] }
+    }
+    return $null
+}
+
+# Claude Code locks an Agent-tool worktree ("claude agent agent-<id> (pid <n>)") for as long as
+# the agent counts as alive, which includes any background task or Monitor it left running after
+# its final report. Only those locks are ever released here; a lock with any other reason (one
+# the owner set by hand) is respected. -Remove callers have already decided the run is over, so
+# they release the lock outright; -Prune only releases it when the locking process is gone.
+function Unlock-AgentWorktree([string]$wt, [bool]$OnlyIfStale) {
+    $reason = Get-WorktreeLock $wt
+    if ($null -eq $reason) { return $true }
+    $one = ($reason -replace '\s+', ' ').Trim()
+    if ($one -notmatch '^claude agent .*\(pid (?<pid>\d+)\)$') { return $false }
+    if ($OnlyIfStale -and (Get-Process -Id ([int]$Matches['pid']) -ErrorAction SilentlyContinue)) { return $false }
+    if ((Invoke-Native { git -C $main worktree unlock $wt }) -ne 0) { return $false }
+    Write-Host "note: released Claude agent lock on $wt ($one)"
+    return $true
+}
+
+function Remove-Worktree([string]$wt, [bool]$StaleLockOnly = $false) {
     if ($wt -ieq $main) { throw 'refusing to remove the main checkout' }
     if (Test-Path -LiteralPath $wt) {
+        if (-not (Unlock-AgentWorktree $wt $StaleLockOnly)) { throw "worktree is locked ($(Get-WorktreeLock $wt)): $wt" }
         $tLink = Join-Path $wt 'src-tauri\target'
         $slot = $null
         if (Test-Link $tLink) { $slot = Get-Full ((Get-Item -LiteralPath $tLink -Force).Target | Select-Object -First 1) }
@@ -213,8 +252,7 @@ function Remove-Worktree([string]$wt) {
         foreach ($rel in $Junctions) { Remove-Link (Join-Path $wt $rel) }
         $removed = $false
         for ($try = 1; $try -le 4 -and -not $removed; $try++) {
-            & git -C $main worktree remove --force $wt 2>$null
-            if ($LASTEXITCODE -eq 0) { $removed = $true; break }
+            if ((Invoke-Native { git -C $main worktree remove --force $wt }) -eq 0) { $removed = $true; break }
             Start-Sleep -Milliseconds (500 * $try)   # AV scanners and exiting processes release handles late
             Stop-WorktreeProcesses $wt $null
         }
@@ -256,7 +294,7 @@ if ($Prune) {
             $safe = ([int]"0$prs") -gt 0
         }
         if ($safe) {
-            try { Remove-Worktree $wt } catch { [Console]::Error.WriteLine("prune: could not remove ${wt}: $_"); $kept++ }
+            try { Remove-Worktree $wt $true } catch { [Console]::Error.WriteLine("prune: could not remove ${wt}: $_"); $kept++ }
         } else { $kept++ }
     }
     Write-Output "prune: done ($kept kept)"
