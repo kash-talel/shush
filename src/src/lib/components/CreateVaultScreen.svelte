@@ -259,7 +259,7 @@
             {#if keyfileNextToVault}
               The keyfile is in the same folder as the vault, which defeats its purpose. Store it on a USB drive.
             {:else}
-              Keep the keyfile on a USB drive, away from the vault. Without it the vault cannot be opened.
+              Keep the keyfile on a USB drive, away from the vault, and keep a second copy on other media. If the keyfile is lost or changed the vault is lost, even with the right password.
             {/if}
           </p>
         {/if}

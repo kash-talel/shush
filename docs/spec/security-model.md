@@ -78,6 +78,11 @@ flowchart TD
 4. **Physical Isolation**:
    - The app explicitly instructs the user: *"Save this keyfile onto an external USB flash drive or separate drive partition. Never store it in the same folder as your vault file."*
    - Even if an attacker installs a software keylogger and captures the master password, they **cannot** decrypt the vault without the physical USB keyfile.
+5. **Keyfile loss and recovery (decision, #143)**:
+   - **Ship now**: an explicit "losing the keyfile means losing the vault" warning wherever a keyfile is attached or created, plus the existing damaged-keyfile (`KEYFILE_CORRUPT`) and arbitrary-file warnings. The create flow tells the user to keep a second copy of the keyfile on separate media. A backup of a generated keyfile is just a byte-identical copy of the 45-byte file; no format change is needed.
+   - **Follow-up (no format change)**: a "verify keyfile backup" action that hashes a chosen file and compares it with the keyfile digest of the unlocked vault session, in memory only. It runs only while the vault is unlocked, so it adds no offline confirmation oracle. Tracked in a follow-up issue.
+   - **Deferred (format change)**: a recovery key slot (a second header slot wrapping the vault key under a one-time recovery code). It must be designed with the rekey operations (#149) and must obey the same constraints: no keyfile fingerprint in the header, and the recovery code gets the same zeroization and IPC memory-hygiene handling as the master password (#115). Tracked in a follow-up issue.
+   - **Rejected**: printable or QR export of the 32 secret bytes. It encourages storing the second factor next to the vault or on paper that is easily photographed, and the "verify" plus copy approach covers the need.
 
 ### 3.2 Windows Hello Session Lifecycle
 
