@@ -96,6 +96,13 @@
     fetching = true;
     try {
       await run(() => downloadUpdate(version));
+      // A refused download may have recorded a newer check result (feed moved, up to date):
+      // show it instead of offering the old version again. The error stays visible.
+      if (error) {
+        const shown = error;
+        await refresh();
+        error = shown;
+      }
     } finally {
       fetching = false;
     }

@@ -2635,8 +2635,21 @@ async fn install_update(app: tauri::AppHandle, version: String) -> Result<(), Cm
         }
         lock_vault(&a);
         os::clipboard::clear_if_ours();
+        if let Err(f) = s.launch() {
+            // The vault stays locked, and the lock screen replaces the Updates card, so the
+            // error would be lost: say why on the lock screen and keep it in the update status
+            // for after unlock.
+            st.record(
+                update::client::UpdateStatus::Failed {
+                    code: f.code,
+                    message: f.message.clone(),
+                },
+                unix_now(),
+            );
+            let _ = a.emit(EVENT_AUTO_LOCKED, "update_failed");
+            return Err(from_update_fail(f));
+        }
         let _ = a.emit(EVENT_AUTO_LOCKED, "update");
-        s.launch().map_err(from_update_fail)?;
         // Let the command answer, then quit so the installer can replace the executable.
         let quit = a.clone();
         std::thread::spawn(move || {

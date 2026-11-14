@@ -212,7 +212,8 @@ export type AutoLockReason =
   | "display_off"
   | "idle"
   | "tray"
-  | "update";
+  | "update"
+  | "update_failed";
 
 export const AUTO_LOCK_EVENT = "vault-auto-locked";
 
@@ -234,6 +235,8 @@ export function describeAutoLock(r: AutoLockReason): string {
       return "it was locked from the tray";
     case "update":
       return "an update is being installed";
+    case "update_failed":
+      return "the update installer could not start (see Settings, Updates)";
   }
 }
 
