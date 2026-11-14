@@ -25,8 +25,9 @@ working shush installed when you finish.
 
 ## Waiting on background work
 `/code-review` and any `run_in_background` command report back to you with a notification.
-- Prefer the foreground: run verify.ps1 and merge-pr.ps1 as normal commands with
-  `timeout: 600000`. They finish in minutes.
+- Prefer the foreground: run verify.ps1 as a normal command with `timeout: 600000`. merge-pr.ps1
+  can wait up to 30 minutes for CI, longer than a foreground command may run, so start it with
+  `run_in_background` and act on its exit code when the notification arrives.
 - To wait for a notification, keep working on something else or end your message with one line
   saying what you are waiting for. Do not start a sleep loop, a polling loop or a Monitor just to
   stay alive or to wait. If you need a waiter anyway, give it a hard limit of 15 minutes or less,

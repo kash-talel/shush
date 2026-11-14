@@ -78,6 +78,11 @@ if ($outcome -eq 'BLOCKED' -or $outcome -eq 'FAILED') {
 }
 
 # --- worktrees ---
+# From here on the work is best effort and every native call is judged by its exit code: 'Continue'
+# so a stderr line (Windows PowerShell 5.1 turns it into a terminating error under 'Stop', even with
+# 2>$null) cannot crash the script before the banner, e.g. `git branch -D` of a branch still checked
+# out in a kept worktree, or `git merge --ff-only` refused by the owner's local changes.
+$ErrorActionPreference = 'Continue'
 $removed = @(); $kept = @()
 foreach ($wt in ($worktrees | Select-Object -Unique)) {
     if (-not (Test-Path -LiteralPath $wt)) { continue }
@@ -88,13 +93,8 @@ foreach ($wt in ($worktrees | Select-Object -Unique)) {
         $pushed = ($dirty.Count -eq 0 -and $unpushed.Count -eq 0)
     }
     if ($outcome -eq 'DONE' -or $outcome -eq 'ESCALATE' -or $pushed) {
-        # 'Continue' so a stderr line from the child is a kept worktree in the banner, not a crash
-        # before it (Windows PowerShell 5.1 turns native stderr into a terminating error under Stop).
-        $ErrorActionPreference = 'Continue'
         & powershell -NoProfile -File (Join-Path $PSScriptRoot 'issue-worktree.ps1') -Remove -Path $wt 2>$null | Out-Null
-        $ok = ($LASTEXITCODE -eq 0)
-        $ErrorActionPreference = 'Stop'
-        if ($ok) { $removed += $wt } else { $kept += $wt }
+        if ($LASTEXITCODE -eq 0) { $removed += $wt } else { $kept += $wt }
     } else { $kept += $wt }
 }
 foreach ($b in @(& git -C $main branch --list "fix/issue-$Number-*" "review/issue-$Number*" --format '%(refname:short)')) {

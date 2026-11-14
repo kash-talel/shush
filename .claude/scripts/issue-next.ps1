@@ -20,7 +20,11 @@ param([int]$Number = 0)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Policy.ps1')
 
+# Best effort, under 'Continue': prune writes a stderr line for each worktree it keeps or process it
+# stops, and Windows PowerShell 5.1 turns native stderr into a terminating error under 'Stop'.
+$ErrorActionPreference = 'Continue'
 & powershell -NoProfile -File (Join-Path $PSScriptRoot 'issue-worktree.ps1') -Prune 2>$null | Out-Null
+$ErrorActionPreference = 'Stop'
 
 function Out-Result($issue, [string]$action, $pr, [string]$note) {
     $o = [ordered]@{ action = $action }
