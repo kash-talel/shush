@@ -12,6 +12,10 @@
 //! - Tombstones are unioned (the higher clock wins per id). An edit newer than
 //!   a tombstone is **parked** as a conflict, never silently resurrected and
 //!   never silently deleted.
+//!
+//! Not yet called by any transport. Known gaps to settle before LAN sync
+//! (#18) uses it are tracked in issue #215 (history purges, full-history churn,
+//! concurrent note edits, per-device id, folders, attachments).
 
 use super::hlc::{newer, Hlc};
 use super::items::{base, base_mut, MAX_HISTORY};
@@ -27,6 +31,9 @@ pub enum ParkReason {
     EditAfterLocalDelete,
     /// The peer deleted an item we edited, later than their deletion.
     EditAfterPeerDelete,
+    /// The peer has a password we did not: it was archived (`archived_conflict`)
+    /// instead of made active, so the user can swap it in from the inbox.
+    PasswordArchived,
 }
 
 /// A held-back peer change (ids only; no secrets).
@@ -110,8 +117,16 @@ pub fn merge_peer(local: &mut VaultData, peer: &VaultData, now_ms: u64) -> Merge
             }
             continue;
         }
+        // Folders are not exchanged yet: a peer folder id we do not have would
+        // leave the item pointing at nothing (and block later edits of it).
+        let peer_folder = base(inc)
+            .folder_id
+            .clone()
+            .filter(|f| local.folders.iter().any(|lf| lf.id == *f));
         let Some(cur) = local.items.iter_mut().find(|c| id_of(c) == id) else {
-            local.items.push(inc.clone());
+            let mut added = inc.clone();
+            base_mut(&mut added).folder_id = peer_folder;
+            local.items.push(added);
             r.added += 1;
             continue;
         };
@@ -131,6 +146,12 @@ pub fn merge_peer(local: &mut VaultData, peer: &VaultData, now_ms: u64) -> Merge
                 }
             }
             r.passwords_archived += fresh.len();
+            if !fresh.is_empty() {
+                r.parked.push(Parked {
+                    id: id.to_string(),
+                    reason: ParkReason::PasswordArchived,
+                });
+            }
             for p in fresh {
                 c.password_history.push(PasswordHistoryEntry {
                     password: p,
@@ -157,7 +178,9 @@ pub fn merge_peer(local: &mut VaultData, peer: &VaultData, now_ms: u64) -> Merge
             let ib = base(inc);
             let b = base_mut(cur);
             b.title = ib.title.clone();
-            b.folder_id = ib.folder_id.clone();
+            if ib.folder_id.is_none() || peer_folder.is_some() {
+                b.folder_id = peer_folder;
+            }
             b.tags = ib.tags.clone();
             b.favorite = ib.favorite;
             b.notes = ib.notes.clone();
@@ -243,6 +266,13 @@ mod tests {
             .iter()
             .any(|h| h.password == "pw-b" && h.status.as_deref() == Some("archived_conflict")));
         assert_eq!((r.updated, r.passwords_archived), (1, 1));
+        assert_eq!(
+            r.parked,
+            vec![Parked {
+                id: id.clone(),
+                reason: ParkReason::PasswordArchived
+            }]
+        );
     }
 
     #[test]
@@ -326,6 +356,26 @@ mod tests {
             merge_peer(&mut a, &b, hlc::now_ms()),
             MergeReport::default()
         );
+    }
+
+    #[test]
+    fn unknown_peer_folder_is_not_adopted() {
+        let (mut a, mut b, id) = pair();
+        let folder = b.create_folder("Peer only").unwrap();
+        tick();
+        let mut d = draft("Moved", "pw-a");
+        d.folder_id = Some(folder.clone());
+        b.update_item(&id, &d).unwrap();
+        let new = b.create_item(ItemKind::Login, &d).unwrap();
+        merge_peer(&mut a, &b, hlc::now_ms());
+        let moved = login(&a, &id);
+        assert_eq!(moved.base.title, "Moved");
+        assert_eq!(moved.base.folder_id, None);
+        assert_eq!(login(&a, &new).base.folder_id, None);
+        // Editing the merged item with its own folder id still works.
+        let mut again = draft("Again", "pw-a");
+        again.folder_id = moved.base.folder_id.clone();
+        a.update_item(&id, &again).unwrap();
     }
 
     #[test]
