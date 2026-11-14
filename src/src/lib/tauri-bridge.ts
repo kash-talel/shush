@@ -498,3 +498,24 @@ export interface NetworkStatus {
 }
 export const networkStatus = () => invoke<NetworkStatus>("network_status");
 export const setAirGapped = (enabled: boolean) => invoke<NetworkStatus>("set_air_gapped", { enabled });
+
+/** Update checks (issue #78, notify-only: nothing is downloaded or installed). */
+export type UpdateMode = "off" | "notify";
+export type UpdateState =
+  | { state: "unchecked" }
+  | { state: "up_to_date"; verified_until: number }
+  | { state: "available"; version: string; security: boolean; below_min_supported: boolean }
+  | { state: "stale" }
+  | { state: "failed"; code: string; message: string };
+export interface UpdateInfo {
+  mode: UpdateMode;
+  /** True while air-gapped: no check can run. */
+  air_gapped: boolean;
+  status: UpdateState;
+  /** Unix seconds of the last check. */
+  checked_at: number | null;
+  installed: string;
+}
+export const updateStatus = () => invoke<UpdateInfo>("update_status");
+export const setUpdateMode = (mode: UpdateMode) => invoke<UpdateInfo>("set_update_mode", { mode });
+export const checkForUpdate = () => invoke<UpdateInfo>("check_for_update");

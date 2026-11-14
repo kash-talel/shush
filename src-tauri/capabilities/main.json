@@ -66,6 +66,9 @@
     "allow-browser-support-status",
     "allow-set-browser-support",
     "allow-network-status",
-    "allow-set-air-gapped"
+    "allow-set-air-gapped",
+    "allow-update-status",
+    "allow-set-update-mode",
+    "allow-check-for-update"
   ]
 }
