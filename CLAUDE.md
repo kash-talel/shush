@@ -5,13 +5,9 @@
 Before starting any new process or feature (a new phase, a new kind of task, a new
 tool or testing workflow), unless a suitable skill is already installed:
 
-1. Run `/find-skills` to search for a skill that fits the workflow (checks `skills.sh` and GitHub).
-2. Vet candidate skills against the 4 gates in `/find-skills`:
-   - **Provenance**: Official sources (`sveltejs`, `tauri-apps`, `anthropics`, `vercel-labs`) or >1k installs / >500 stars. Reject unverified <50 star repos.
-   - **Security Audit**: Zero prompt-injection, no hidden data exfiltration, no `curl | sh`, no secret probing.
-   - **Stack Compatibility**: Must match active stack versions (Svelte 5 runes, Tauri v2, zeroization). Reject obsolete patterns.
-   - **Signal Density**: Actionable rules, concrete examples, and checklists over conversational fluff.
-3. Install the vetted match, then run it and follow it for the work.
+run `/find-skills`, vet candidates against its four gates (provenance, security audit, stack
+compatibility with Svelte 5 runes / Tauri v2, signal density), install the vetted match, and
+follow it for the work.
 
 If installing is blocked (for example by permission rules), say so, give the user the
 install command, and continue with the closest equivalent approach.
@@ -64,22 +60,10 @@ their real app.
 
 ## GitHub Issue Clearing (`/issue`)
 
-When resolving issues via `/issue`:
-- **`/issue`**: Resolves one issue (top severity or specific number), files discovered bugs/features, runs tests, PRs & merges, then stops and prompts for `/clear` to save tokens.
-- **Prioritize by severity**: `severity:critical` > `severity:high` > `severity:medium` > `severity:low`.
-- **File discovered issues**: If bugs, architectural flaws, or high-value feature ideas are spotted during work, file them immediately with `gh issue create`.
-- **Verify rigorously**: Ensure `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --manifest-path src-tauri/Cargo.toml`, and `npm run check` in `src/` all pass cleanly.
-- **Branch & PR Lifecycle**: Always create a feature branch (`fix/issue-<num>-<slug>`), commit, push, create a PR (`gh pr create`), and squash-merge (`gh pr merge --squash --delete-branch --admin`).
-- **Merge policy**: `route-issue.ps1` returns `merge: auto | review`. `review` (crypto, sync, file
-  format, memory hygiene, browser bridge, release/updater/signing/CI, or severity high/critical)
-  means the runner opens the PR labelled `ai-review` and stops; the `pr-reviewer` agent (Opus)
-  then re-runs every check, reviews and fixes the diff, and merges it. It escalates to the owner
-  (label `needs-review`, with a plain-language question) only for a decision that is genuinely
-  theirs. `/issue` skips issues whose PR is labelled `needs-review`.
-- **Context discipline**: Run `/clear` after completing an issue to keep token usage minimal.
-- **Runners**: Claude (Sonnet by default; Opus for critical, or high crypto/sync) writes all code, UI
-  and tests. AGY gets Markdown-only docs/spec issues, opens a PR, and never merges; the dispatcher
-  merges it through `.claude/scripts/agy-gate.ps1`. Rules live in `.claude/scripts/route-issue.ps1`.
-- **Parallel runs**: each worktree gets its own leased cargo target slot (`issue-worktree.ps1 -Status`)
-  and shares main's `src/node_modules` read-only; never `npm install` in a worktree (use `-OwnNodeModules`).
+The procedure lives in `.claude/skills/issue/SKILL.md` and the `issue-worker` / `pr-reviewer`
+agents; routing and review rules live only in `.claude/scripts/Policy.ps1`. For any work outside
+`/issue`: branch, verify with `.claude/scripts/verify.ps1`, open a PR, and merge only through
+`.claude/scripts/merge-pr.ps1` (it waits for CI and stops sensitive diffs with exit 4 for the `pr-reviewer`; pass `-Reviewed`
+only after such a review or when the owner explicitly asked for the merge); never
+`gh pr merge --admin`. Run `/clear` after each `/issue`.
 

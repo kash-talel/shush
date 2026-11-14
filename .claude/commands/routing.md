@@ -1,28 +1,8 @@
 # Issue Routing Summary
 
-Show every open issue with its assigned model and runner.
+Show every open issue with its runner, model and merge policy.
 
-## Steps
-1. Load the open issues:
-   ```powershell
-   gh issue list --state open --limit 200 --json number,title,labels
-   ```
-2. For each open issue that is missing from `.claude/issue-routing.json`, classify and save it:
-   ```powershell
-   powershell -NoProfile -File .claude/scripts/route-issue.ps1 -Number <NUMBER>
-   ```
-   Do not reclassify issues already in the file.
-3. Read `.claude/issue-routing.json` and join it to the open-issue list. Ignore entries for closed issues.
-4. Print one markdown table, sorted by severity (critical, high, medium, low) and then by issue number:
-
-   | # | Title | Model | Runner | Merge |
-   |---|-------|-------|--------|-------|
-
-   - Model is the `model` field and runner is the `runner` field.
-   - Merge is `review` if the issue has any of the labels `crypto`, `sync`, `file-format`,
-     `memory-hygiene`, `browser-integration`, `severity:critical`, `severity:high`, or its title
-     starts with one of the review prefixes listed in the routing file's rules; else `auto`.
-     An entry's own `"merge"` field overrides that.
-   - Shorten titles to about 70 characters.
-   - Under the table, print counts per runner (for example `agy: 14 · claude: 20`).
-   - Do not change any issue or file other than the routing file.
+Run `powershell -NoProfile -File .claude/scripts/route-issue.ps1 -List` and print its output
+verbatim. Routing is computed live from labels and titles (`.claude/scripts/Policy.ps1`); to
+pin an issue, add the label `route:opus`, `route:claude` or `review-required` on GitHub.
+Do not change anything.

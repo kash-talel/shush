@@ -10,6 +10,8 @@
 #   -Remove -Path <dir>  Stop processes holding files in the worktree, unlink the build dirs,
 #                        release its target slot, remove the worktree and prune.
 #   -Status              Show the target-slot pool and which worktree holds each slot.
+#   -Prune               Remove leftover agent-*/issue-* worktrees whose work is pushed or merged
+#                        (run by issue-next.ps1 before every /issue).
 #
 # Build dirs:
 # - src/node_modules  -> junction to the MAIN checkout's, read-only by convention. Only linked
@@ -31,6 +33,7 @@ param(
     [switch]$OwnNodeModules,
     [switch]$Remove,
     [switch]$Status,
+    [switch]$Prune,
     [int]$Number = 0,
     [string]$Path = ''
 )
@@ -131,6 +134,9 @@ function Add-Links([string]$wt, [string]$main) {
     $tDst = Join-Path $wt 'src-tauri\target'
     if (-not (Test-Path -LiteralPath $tDst)) {
         $slot = Get-SlotLease $main $wt
+        # Fresh lease: the slot's scratch vault (issue-env.ps1) belongs to the previous issue.
+        $e2e = Join-Path $slot 'e2e'
+        if (Test-Path -LiteralPath $e2e) { Remove-Item -LiteralPath $e2e -Recurse -Force -ErrorAction SilentlyContinue }
         New-Item -ItemType Junction -Path $tDst -Target $slot | Out-Null
         [Console]::Error.WriteLine("target: $(Split-Path $slot -Leaf)")
     } elseif (Test-Link $tDst) {
@@ -197,9 +203,7 @@ if ($OwnNodeModules) {
     exit 0
 }
 
-if ($Remove) {
-    if (-not $Path) { throw '-Remove needs -Path' }
-    $wt = Get-Full $Path
+function Remove-Worktree([string]$wt) {
     if ($wt -ieq $main) { throw 'refusing to remove the main checkout' }
     if (Test-Path -LiteralPath $wt) {
         $tLink = Join-Path $wt 'src-tauri\target'
@@ -219,6 +223,43 @@ if ($Remove) {
     Clear-SlotLease $main $wt
     & git -C $main worktree prune
     Write-Output "removed: $wt"
+}
+
+if ($Remove) {
+    if (-not $Path) { throw '-Remove needs -Path' }
+    Remove-Worktree (Get-Full $Path)
+    exit 0
+}
+
+# Remove leftover /issue worktrees (agent-* and issue-* under .claude/worktrees) whose work is
+# safe elsewhere: no uncommitted changes, AND either every commit is on a remote branch or HEAD
+# is part of a merged/closed PR. Worktrees touched in the last 2 hours are left alone, since a
+# parallel runner may still be using them.
+if ($Prune) {
+    $root = Get-Full (Join-Path $main '.claude\worktrees')
+    $list = @(& git -C $main worktree list --porcelain | Where-Object { $_ -like 'worktree *' } | ForEach-Object { Get-Full $_.Substring(9) })
+    $kept = 0
+    foreach ($wt in $list) {
+        if (-not $wt.StartsWith("$root\", [StringComparison]::OrdinalIgnoreCase)) { continue }
+        if ((Split-Path $wt -Leaf) -notmatch '^(agent-|issue-)') { continue }
+        if (-not (Test-Path -LiteralPath $wt)) { continue }
+        $gitDir = (& git -C $wt rev-parse --absolute-git-dir 2>$null)
+        $stamp = @('logs\HEAD', 'HEAD') | ForEach-Object { Join-Path "$gitDir".Trim() $_ } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        if ($stamp -and ((Get-Date) - (Get-Item -LiteralPath $stamp).LastWriteTime).TotalHours -lt 2) { $kept++; continue }
+        $dirty = @(& git --no-optional-locks -C $wt status --porcelain --untracked-files=normal 2>$null | Where-Object { $_ -notmatch '^\?\? (src/node_modules|src-tauri/target)' })
+        if ($dirty.Count -gt 0) { $kept++; continue }
+        $unpushed = @(& git -C $wt log HEAD --not --remotes --oneline 2>$null)
+        $safe = $unpushed.Count -eq 0
+        if (-not $safe) {
+            $sha = (& git -C $wt rev-parse HEAD).Trim()
+            $prs = (& gh pr list --state all --search $sha --json state --jq '[.[] | select(.state != "OPEN")] | length' 2>$null)
+            $safe = ([int]"0$prs") -gt 0
+        }
+        if ($safe) {
+            try { Remove-Worktree $wt } catch { [Console]::Error.WriteLine("prune: could not remove ${wt}: $_"); $kept++ }
+        } else { $kept++ }
+    }
+    Write-Output "prune: done ($kept kept)"
     exit 0
 }
 
