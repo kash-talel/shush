@@ -129,10 +129,20 @@ impl NetGate {
 
     /// Saves the choice, then applies it. A failed save leaves the gate unchanged.
     pub fn save_and_set(&self, dir: &Path, on: bool) -> std::io::Result<()> {
+        use std::io::Write;
         std::fs::create_dir_all(dir)?;
         let tmp = dir.join(format!("{SETTINGS_FILE}.tmp"));
-        std::fs::write(&tmp, serde_json::json!({ "air_gapped": on }).to_string())?;
-        std::fs::rename(&tmp, dir.join(SETTINGS_FILE))?;
+        {
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(
+                serde_json::json!({ "air_gapped": on })
+                    .to_string()
+                    .as_bytes(),
+            )?;
+            f.sync_all()?;
+        }
+        // Write-through rename, so a power cut cannot bring back the old choice.
+        crate::os::replace::replace_file(&tmp, &dir.join(SETTINGS_FILE))?;
         self.set_air_gapped(on);
         Ok(())
     }
@@ -197,25 +207,51 @@ mod tests {
     /// No other source file may open sockets: everything goes through the gate.
     #[test]
     fn no_socket_types_outside_the_gate() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest.join("src");
+        let gate = root.join("net.rs");
         let extra = [
             "TcpListener",
             "TcpStream",
+            "TcpSocket",
             "UdpSocket",
             "std::net",
+            "tokio::net",
+            "socket2",
+            "WinSock",
+            "WinHttp",
+            "WinINet",
             "reqwest",
-            "hyper",
+            "hyper::",
+            "ureq",
             "mdns",
         ];
+        // Crates and Windows APIs that open sockets on their own; adding one
+        // must route it through the gate and then update this list.
+        let cargo = std::fs::read_to_string(manifest.join("Cargo.toml")).unwrap();
+        for n in [
+            "reqwest",
+            "hyper",
+            "ureq",
+            "socket2",
+            "mdns",
+            "tauri-plugin-http",
+            "tauri-plugin-updater",
+            "tauri-plugin-websocket",
+            "Win32_Networking",
+        ] {
+            assert!(
+                !cargo.contains(n),
+                "Cargo.toml adds {n}; network code must go through net::NetGate"
+            );
+        }
         let mut stack = vec![root];
         while let Some(d) = stack.pop() {
             for e in std::fs::read_dir(d).unwrap() {
                 let p = e.unwrap().path();
                 if p.is_dir() {
                     stack.push(p);
-                } else if p.extension().is_some_and(|x| x == "rs")
-                    && p.file_name().is_some_and(|n| n != "net.rs")
-                {
+                } else if p.extension().is_some_and(|x| x == "rs") && p != gate {
                     let text = std::fs::read_to_string(&p).unwrap();
                     for n in extra {
                         assert!(

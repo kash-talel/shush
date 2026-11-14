@@ -21,16 +21,19 @@
     refresh();
   });
 
-  async function toggle(on: boolean) {
+  async function toggle(box: HTMLInputElement) {
     busy = true;
     error = null;
     try {
-      status = await setAirGapped(on);
+      status = await setAirGapped(box.checked);
     } catch (e) {
       error = toCmdError(e);
     } finally {
       busy = false;
       await refresh();
+      // A failed save leaves `status` unchanged, so Svelte would not reset the
+      // box the user just clicked: show the gate's real state, not the click.
+      box.checked = status?.air_gapped ?? true;
     }
   }
 </script>
@@ -50,7 +53,7 @@
       class="mt-0.5"
       checked={status?.air_gapped ?? true}
       disabled={busy || status === null || !status.available}
-      onchange={(e) => toggle(e.currentTarget.checked)}
+      onchange={(e) => toggle(e.currentTarget)}
     />
     <span>Air-gapped mode (recommended)</span>
   </label>

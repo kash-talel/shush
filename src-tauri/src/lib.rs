@@ -2349,6 +2349,14 @@ fn network_status(app: tauri::AppHandle) -> NetworkStatus {
 /// Settings toggle for air-gapped mode. Saved before it takes effect.
 #[tauri::command]
 fn set_air_gapped(app: tauri::AppHandle, enabled: bool) -> Result<NetworkStatus, CmdError> {
+    // A build without network support is always air-gapped; never record a
+    // "network on" choice there that a later network build would pick up.
+    if !enabled && !net::NetGate::compiled_in() {
+        return Err(CmdError::new(
+            "NETWORK_NOT_COMPILED_IN",
+            net::NetError::NotCompiledIn.to_string(),
+        ));
+    }
     let (dir, _) = vault_home(&app)?;
     app.state::<net::NetGate>()
         .save_and_set(&dir, enabled)
