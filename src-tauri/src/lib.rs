@@ -12,6 +12,7 @@ pub mod bridge;
 pub mod crypto;
 pub mod os;
 pub mod totp;
+pub mod update;
 pub mod vault;
 
 use std::path::{Path, PathBuf};
