@@ -6,8 +6,10 @@
 # Output: one JSON object on stdout:
 #         {"number","title","model","runner","target","reason","merge","merge_reason"}
 #         target = model to dispatch to: opus | sonnet (Agent tool) or an agy model id.
-#         merge  = auto | review. review: the runner opens the PR labelled needs-review and
-#                  stops; only the owner merges it. Computed from the issue's LIVE labels on
+#         merge  = auto | review. review: the runner opens the PR labelled ai-review and
+#                  stops; the pr-reviewer agent (Opus) verifies and merges it, escalating to the
+#                  owner (label needs-review) only for a decision that is genuinely theirs.
+#                  Computed from the issue's LIVE labels on
 #                  every call (so an escalated issue flips to review), unless the entry pins a
 #                  "merge" field by hand. If the labels cannot be read, it fails closed to review.
 # Exit:   0 on success, 1 on error.

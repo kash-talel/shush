@@ -63,8 +63,10 @@ When resolving issues via `/issue`:
 - **Branch & PR Lifecycle**: Always create a feature branch (`fix/issue-<num>-<slug>`), commit, push, create a PR (`gh pr create`), and squash-merge (`gh pr merge --squash --delete-branch --admin`).
 - **Merge policy**: `route-issue.ps1` returns `merge: auto | review`. `review` (crypto, sync, file
   format, memory hygiene, browser bridge, release/updater/signing/CI, or severity high/critical)
-  means the runner opens the PR labelled `needs-review` and stops; only the owner merges it.
-  `/issue` skips issues whose PR is still awaiting review.
+  means the runner opens the PR labelled `ai-review` and stops; the `pr-reviewer` agent (Opus)
+  then re-runs every check, reviews and fixes the diff, and merges it. It escalates to the owner
+  (label `needs-review`, with a plain-language question) only for a decision that is genuinely
+  theirs. `/issue` skips issues whose PR is labelled `needs-review`.
 - **Context discipline**: Run `/clear` after completing an issue to keep token usage minimal.
 - **Runners**: Claude (Sonnet by default; Opus for critical, or high crypto/sync) writes all code, UI
   and tests. AGY gets Markdown-only docs/spec issues, opens a PR, and never merges; the dispatcher
