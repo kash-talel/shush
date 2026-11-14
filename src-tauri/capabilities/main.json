@@ -69,6 +69,8 @@
     "allow-set-air-gapped",
     "allow-update-status",
     "allow-set-update-mode",
-    "allow-check-for-update"
+    "allow-check-for-update",
+    "allow-download-update",
+    "allow-install-update"
   ]
 }

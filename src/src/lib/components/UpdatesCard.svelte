@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { LoaderCircle, RefreshCw, TriangleAlert } from "@lucide/svelte";
+  import { Download, LoaderCircle, RefreshCw, TriangleAlert } from "@lucide/svelte";
   import {
     checkForUpdate,
+    downloadUpdate,
+    installUpdate,
     NETWORK_CHANGED_EVENT,
     setUpdateMode,
     toCmdError,
@@ -11,11 +13,15 @@
     type UpdateMode,
   } from "../tauri-bridge";
 
-  // Settings -> Updates (issue #78, notify-only). Checks only run while the network is allowed
-  // (air-gapped mode off). Nothing is downloaded or installed; this card only reports.
+  // Settings -> Updates (issue #78). Checks only run while the network is allowed (air-gapped
+  // mode off). Downloading and installing happen only on the user's click (#197): Download
+  // fetches and verifies the installer; Install asks first, locks the vault, then restarts.
   let info = $state<UpdateInfo | null>(null);
   let error = $state<CmdError | null>(null);
   let busy = $state(false);
+  /** Version awaiting the "Update to X?" confirmation, if the prompt is open. */
+  let confirming = $state<string | null>(null);
+  let installing = $state(false);
 
   async function refresh() {
     try {
@@ -60,8 +66,40 @@
     }
   }
 
+  async function install(version: string) {
+    busy = true;
+    error = null;
+    try {
+      await installUpdate(version);
+      // The app quits in a moment and the installer relaunches it, locked.
+      installing = true;
+      confirming = null;
+    } catch (e) {
+      error = toCmdError(e);
+      confirming = null;
+      await refresh();
+    } finally {
+      busy = false;
+    }
+  }
+
   const date = (unix: number) => new Date(unix * 1000).toLocaleDateString();
   const canCheck = $derived(info !== null && info.mode === "notify" && !info.air_gapped && !busy);
+  /** A newer version the user can download (not the one already staged). */
+  const offered = $derived(
+    info?.status.state === "available" && info.status.version !== info.staged ? info.status.version : null,
+  );
+  let fetching = $state(false);
+  const downloading = $derived(info?.downloading === true || fetching);
+
+  async function download(version: string) {
+    fetching = true;
+    try {
+      await run(() => downloadUpdate(version));
+    } finally {
+      fetching = false;
+    }
+  }
 </script>
 
 <div class="flex flex-col gap-3 rounded-[7px] border border-hairline bg-surface/60 p-4 shadow-[inset_0_1px_0_rgb(255_255_255/0.03)]">
@@ -69,8 +107,9 @@
     <RefreshCw class="size-4 text-emerald" aria-hidden="true" /> Updates
   </h3>
   <p class="text-xs leading-5 text-zinc-400">
-    shush can check for new versions and tell you. Nothing is downloaded or installed automatically, and
-    the check sends no identifiers. The feed is signature-checked, so a tampered or replayed one is ignored.
+    shush can check for new versions and tell you. Nothing is downloaded or installed until you click, and
+    the check sends no identifiers. The feed and the installer are signature-checked, so a tampered or
+    replayed one is ignored.
   </p>
 
   <label class="flex items-center gap-2 text-xs text-zinc-300">
@@ -108,7 +147,9 @@
         {#if s.below_min_supported}
           <p class="text-caution">Your version is no longer supported. Please update.</p>
         {/if}
-        <p class="text-zinc-400">Download it from the shush website. It is not installed for you.</p>
+        {#if info.staged !== s.version}
+          <p class="text-zinc-400">Download it here, or from the shush website. Nothing is installed until you confirm.</p>
+        {/if}
       {:else if s.state === "stale"}
         <p class="flex items-start gap-1.5 text-caution">
           <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
@@ -123,16 +164,70 @@
     </div>
   {/if}
 
-  <div>
+  {#if installing}
+    <p class="text-xs text-zinc-300" role="status">Installing. shush will close and reopen locked.</p>
+  {:else if info?.staged && confirming === info.staged}
+    <div class="flex flex-col gap-2 rounded border border-caution/40 p-3" role="alertdialog" aria-label="Confirm update">
+      <p class="text-xs text-zinc-200">Update to {info.staged}? Your vault will lock first.</p>
+      <div class="flex gap-2">
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 rounded border border-hairline bg-white/5 px-3 py-1.5 text-xs text-zinc-50 hover:bg-white/10 disabled:opacity-50"
+          disabled={busy}
+          onclick={() => info?.staged && install(info.staged)}
+        >
+          {#if busy}<LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />{/if}
+          Lock and install
+        </button>
+        <button
+          type="button"
+          class="rounded border border-hairline px-3 py-1.5 text-xs text-zinc-300 hover:bg-white/5 disabled:opacity-50"
+          disabled={busy}
+          onclick={() => (confirming = null)}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  {:else if info?.staged}
+    <p class="text-xs text-zinc-300" role="status">Version {info.staged} is downloaded and verified.</p>
+  {/if}
+
+  <div class="flex flex-wrap gap-2">
     <button
       type="button"
       class="inline-flex items-center gap-1.5 rounded border border-hairline px-3 py-1.5 text-xs text-zinc-200 hover:bg-white/5 disabled:opacity-50"
       disabled={!canCheck}
       onclick={() => run(checkForUpdate)}
     >
-      {#if busy}<LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />{/if}
+      {#if busy && !downloading}<LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />{/if}
       Check now
     </button>
+    {#if offered && !info?.air_gapped && info?.mode === "notify"}
+      {@const version = offered}
+      <button
+        type="button"
+        class="inline-flex items-center gap-1.5 rounded border border-hairline px-3 py-1.5 text-xs text-zinc-200 hover:bg-white/5 disabled:opacity-50"
+        disabled={busy || info?.downloading}
+        onclick={() => download(version)}
+      >
+        {#if downloading}
+          <LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" /> Downloading and verifying
+        {:else}
+          <Download class="size-3.5" aria-hidden="true" /> Download {version}
+        {/if}
+      </button>
+    {/if}
+    {#if info?.staged && confirming === null && !installing}
+      <button
+        type="button"
+        class="inline-flex items-center gap-1.5 rounded border border-emerald/50 px-3 py-1.5 text-xs text-zinc-50 hover:bg-white/5 disabled:opacity-50"
+        disabled={busy}
+        onclick={() => (confirming = info?.staged ?? null)}
+      >
+        Install and restart
+      </button>
+    {/if}
   </div>
 
   {#if error}

@@ -109,7 +109,7 @@ fn reports_available_up_to_date_and_below_min() {
     let exp = NOW + 3600;
     let f = fx.feed("0.2.0", None, exp);
     assert_eq!(
-        check(&f, &fx.anchors(), "0.1.2", NOW),
+        check(&f, &fx.anchors(), "0.1.2", None, NOW),
         UpdateStatus::Available {
             version: "0.2.0".into(),
             security: false,
@@ -117,14 +117,14 @@ fn reports_available_up_to_date_and_below_min() {
         }
     );
     assert_eq!(
-        check(&f, &fx.anchors(), "0.2.0", NOW),
+        check(&f, &fx.anchors(), "0.2.0", None, NOW),
         UpdateStatus::UpToDate {
             verified_until: exp
         }
     );
     let f = fx.feed("0.3.0", Some("0.2.5"), exp);
     assert_eq!(
-        check(&f, &fx.anchors(), "0.2.0", NOW),
+        check(&f, &fx.anchors(), "0.2.0", None, NOW),
         UpdateStatus::Available {
             version: "0.3.0".into(),
             security: true,
@@ -137,7 +137,10 @@ fn reports_available_up_to_date_and_below_min() {
 fn expired_feed_is_stale_never_up_to_date() {
     let fx = Fx::new();
     let f = fx.feed("0.1.2", None, NOW - 1);
-    assert_eq!(check(&f, &fx.anchors(), "0.1.2", NOW), UpdateStatus::Stale);
+    assert_eq!(
+        check(&f, &fx.anchors(), "0.1.2", None, NOW),
+        UpdateStatus::Stale
+    );
 }
 
 #[test]
@@ -145,7 +148,7 @@ fn rollback_and_wrong_keys_fail() {
     let fx = Fx::new();
     let f = fx.feed("0.1.0", None, NOW + 3600);
     assert!(matches!(
-        check(&f, &fx.anchors(), "0.1.2", NOW),
+        check(&f, &fx.anchors(), "0.1.2", None, NOW),
         UpdateStatus::Failed {
             code: "UPDATE_ROLLBACK",
             ..
@@ -153,7 +156,7 @@ fn rollback_and_wrong_keys_fail() {
     ));
     let other = Fx::new();
     assert!(matches!(
-        check(&f, &other.anchors(), "0.1.0", NOW),
+        check(&f, &other.anchors(), "0.1.0", None, NOW),
         UpdateStatus::Failed {
             code: "UPDATE_FEED_UNTRUSTED",
             ..
@@ -166,7 +169,7 @@ fn fetch_failures_and_air_gap_are_failures() {
     let fx = Fx::new();
     let empty = Fake(HashMap::new());
     assert!(matches!(
-        check(&empty, &fx.anchors(), "0.1.2", NOW),
+        check(&empty, &fx.anchors(), "0.1.2", None, NOW),
         UpdateStatus::Failed {
             code: "UPDATE_FETCH_FAILED",
             ..
@@ -174,7 +177,7 @@ fn fetch_failures_and_air_gap_are_failures() {
     ));
     let gate = NetGate::default();
     assert!(matches!(
-        check(&GateFetch(&gate), &fx.anchors(), "0.1.2", NOW),
+        check(&GateFetch(&gate), &fx.anchors(), "0.1.2", None, NOW),
         UpdateStatus::Failed {
             code: "UPDATE_AIR_GAPPED",
             ..
@@ -215,7 +218,7 @@ fn deploy_between_requests_is_retried_once() {
         calls: Default::default(),
     };
     assert_eq!(
-        check(&f, &fx.anchors(), "0.1.2", NOW),
+        check(&f, &fx.anchors(), "0.1.2", None, NOW),
         UpdateStatus::Available {
             version: "0.3.0".into(),
             security: false,
@@ -231,7 +234,7 @@ fn deploy_between_requests_is_retried_once() {
         calls: Default::default(),
     };
     assert!(matches!(
-        check(&f, &fx.anchors(), "0.1.2", NOW),
+        check(&f, &fx.anchors(), "0.1.2", None, NOW),
         UpdateStatus::Failed {
             code: "UPDATE_FEED_MISMATCH",
             ..
@@ -248,7 +251,7 @@ fn live_feed_verifies_with_pinned_keys() {
     let gate = NetGate::default();
     gate.set_air_gapped(false);
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
-    let s = check(&GateFetch(&gate), &pinned_anchors(), "0.0.1", now);
+    let s = check(&GateFetch(&gate), &pinned_anchors(), "0.0.1", None, now);
     assert!(
         matches!(s, UpdateStatus::Available { .. }),
         "live feed did not verify: {s:?}"
@@ -259,7 +262,7 @@ fn live_feed_verifies_with_pinned_keys() {
         timestamp: vec![],
     };
     assert!(matches!(
-        check(&GateFetch(&gate), &none, "0.0.1", now),
+        check(&GateFetch(&gate), &none, "0.0.1", None, now),
         UpdateStatus::Failed {
             code: "UPDATE_FEED_UNTRUSTED",
             ..

@@ -211,7 +211,8 @@ export type AutoLockReason =
   | "suspend"
   | "display_off"
   | "idle"
-  | "tray";
+  | "tray"
+  | "update";
 
 export const AUTO_LOCK_EVENT = "vault-auto-locked";
 
@@ -231,6 +232,8 @@ export function describeAutoLock(r: AutoLockReason): string {
       return "of inactivity";
     case "tray":
       return "it was locked from the tray";
+    case "update":
+      return "an update is being installed";
   }
 }
 
@@ -501,7 +504,7 @@ export const setAirGapped = (enabled: boolean) => invoke<NetworkStatus>("set_air
 /** Window event fired after the air-gapped switch changes, so dependent cards refresh. */
 export const NETWORK_CHANGED_EVENT = "shush:network-changed";
 
-/** Update checks (issue #78, notify-only: nothing is downloaded or installed). */
+/** Update checks (issue #78). Download and install happen only when the user clicks (#197). */
 export type UpdateMode = "off" | "notify";
 export type UpdateState =
   | { state: "unchecked" }
@@ -517,7 +520,15 @@ export interface UpdateInfo {
   /** Unix seconds of the last check. */
   checked_at: number | null;
   installed: string;
+  /** Version of a downloaded and verified installer, ready to install. */
+  staged: string | null;
+  /** True while a download runs. */
+  downloading: boolean;
 }
 export const updateStatus = () => invoke<UpdateInfo>("update_status");
 export const setUpdateMode = (mode: UpdateMode) => invoke<UpdateInfo>("set_update_mode", { mode });
 export const checkForUpdate = () => invoke<UpdateInfo>("check_for_update");
+/** Downloads and verifies `version` (the one the user agreed to). Installs nothing. */
+export const downloadUpdate = (version: string) => invoke<UpdateInfo>("download_update", { version });
+/** Locks the vault, starts the verified installer and quits; shush relaunches locked. */
+export const installUpdate = (version: string) => invoke<void>("install_update", { version });
