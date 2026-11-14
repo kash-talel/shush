@@ -1,0 +1,2 @@
+# One version per line (e.g. 0.2.0). A yanked release is skipped by the update feed, which then
+# points at the previous good release. See docs/RELEASING.md. Lines starting with # are comments.

@@ -1,61 +1,105 @@
 name: Release
 
-# Push a tag `vX.Y.Z` (matching the version in tauri.conf.json, Cargo.toml and src/package.json)
-# to build the Windows installers and publish them as a GitHub release.
-# Run it by hand (workflow_dispatch) for a dry run: same build, installers kept as workflow
-# artifacts, no release.
+# Merging the release-please PR on main creates tag vX.Y.Z and a DRAFT release; this same run
+# then builds (no secrets), waits for approval of the `release` environment, signs, attests,
+# uploads everything to the draft and publishes it (immutable release), then refreshes the
+# update feed on Pages. See docs/RELEASING.md.
+#
+# Run by hand (workflow_dispatch) for a dry run: same build, hardening and smoke checks,
+# artifacts only, nothing published and no secrets used.
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+# No workflow-level concurrency: a release run can wait hours at the `release` approval, and one
+# shared group would hold (and let GitHub cancel) the pending runs of later pushes. Only the jobs
+# that must not overlap are serialised below.
 
 jobs:
-  windows:
-    name: Windows · NSIS + MSI
+  release-please:
+    name: release-please
+    runs-on: ubuntu-latest
+    # Skipped (not failed) until the owner has set up the release App (docs/RELEASING.md).
+    if: github.event_name == 'push' && vars.RELEASE_APP_ID != ''
+    permissions: {}
+    concurrency:
+      group: release-please
+      cancel-in-progress: false
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+      version: ${{ steps.rp.outputs.version }}
+      body: ${{ steps.rp.outputs.body }}
+    steps:
+      # A GitHub App token (not GITHUB_TOKEN) so the release PR triggers CI.
+      - id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      - id: rp
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
+        with:
+          token: ${{ steps.app.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  build:
+    name: Build (Windows, no secrets)
+    needs: [release-please]
+    # Runs for a real release, or for a manual dry run (release-please is skipped then).
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.release-please.outputs.release_created == 'true') }}
     runs-on: windows-latest
     timeout-minutes: 60
     permissions:
-      contents: write
-      id-token: write      # build provenance (sigstore) attestation
-      attestations: write
+      contents: read
     env:
-      IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+      IS_RELEASE: ${{ needs.release-please.outputs.release_created == 'true' }}
+      VERSION: ${{ needs.release-please.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name || github.sha }}
+          persist-credentials: false
 
       - name: Version matches tag
-        if: env.IS_TAG == 'true'
+        if: env.IS_RELEASE == 'true'
         shell: pwsh
         run: |
-          $tag = '${{ github.ref_name }}'.Substring(1)
+          $tag = $env:VERSION
           $conf = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           $pkg = (Get-Content src/package.json -Raw | ConvertFrom-Json).version
           $cargo = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' |
             Select-Object -First 1).Matches[0].Groups[1].Value
-          "tag=$tag tauri.conf.json=$conf package.json=$pkg Cargo.toml=$cargo"
-          if ($conf -ne $tag -or $pkg -ne $tag -or $cargo -ne $tag) {
-            Write-Error "Tag v$tag does not match every version field. Bump them all, then re-tag."
+          # -AsHashtable: a v3 lockfile has an empty-string key (packages[""]) that pwsh 7 refuses otherwise.
+          $lockJson = Get-Content src/package-lock.json -Raw | ConvertFrom-Json -AsHashtable
+          $lock = $lockJson['version']
+          $lockRoot = $lockJson['packages']['']['version']
+          $cargoLock = [regex]::Match((Get-Content src-tauri/Cargo.lock -Raw),
+            '(?m)^name = "shush"\r?\nversion = "([^"]+)"').Groups[1].Value
+          "release=$tag tauri.conf.json=$conf package.json=$pkg package-lock.json=$lock/$lockRoot Cargo.toml=$cargo Cargo.lock=$cargoLock"
+          if ($conf -ne $tag -or $pkg -ne $tag -or $cargo -ne $tag -or $lock -ne $tag -or
+              $lockRoot -ne $tag -or $cargoLock -ne $tag) {
+            Write-Error "Release $tag does not match every version field."
             exit 1
           }
 
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: src-tauri
 
       - name: Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -64,7 +108,6 @@ jobs:
       - name: Frontend · install
         run: npm ci --prefix src
 
-      # A tag can point at a commit CI never saw, so gate the release on the same checks.
       - name: Frontend · type check (svelte-check)
         run: npm run --prefix src check
 
@@ -72,34 +115,17 @@ jobs:
         working-directory: src-tauri
         run: cargo test --lib
 
-      # Builds src-tauri/target/release/bundle/{nsis,msi}. On a tag it also creates a *draft*
-      # release and uploads both installers; the release is published only after the last step.
+      # Builds src-tauri/target/release/bundle/{nsis,msi}. Plain tauri CLI; the publish job owns
+      # the release object and every signature.
+      # A pre-release (version with '-', e.g. 0.3.0-beta.1) builds NSIS only: WiX/MSI accepts
+      # only a numeric pre-release identifier, so `tauri build` would fail on the MSI bundle.
       - name: Build installers
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tauriScript: npx --prefix src tauri
-          tagName: ${{ env.IS_TAG == 'true' && github.ref_name || '' }}
-          releaseName: shush ${{ github.ref_name }}
-          releaseDraft: true
-          prerelease: false
-          releaseBody: |
-            ## Install
-
-            Download **shush_x64-setup.exe** (the versioned `shush_<version>_x64-setup.exe` is the same file) and run it. No admin rights needed: it installs for your user only.
-
-            The installer is not code-signed yet, so Windows SmartScreen may say *"Windows protected your PC"*. Click **More info → Run anyway**. Check the download first:
-
-            ```powershell
-            Get-FileHash .\shush_x64-setup.exe -Algorithm SHA256
-            ```
-
-            and compare it with `SHA256SUMS.txt` below.
-
-            Uninstalling keeps your vault (`%APPDATA%\com.shush.vault`) unless you tick *Delete the application data* **and** confirm. Keep an encrypted `.shushbackup` either way.
-
-            The `.msi` is for managed / Group Policy deployment; most people want the `.exe`.
+        shell: pwsh
+        run: |
+          $v = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ($v.Contains('-')) { npx --prefix src tauri build --bundles nsis }
+          else { npx --prefix src tauri build }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Refuse to ship a binary without ASLR/DEP/CFG/CET and the hardened manifest (#74).
       - name: Hardening check (PE flags + manifest)
@@ -120,49 +146,188 @@ jobs:
           Stop-Process -Id $p.Id -Force
           Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
-      - name: Checksums and stable download name
-        id: assets
+      # CycloneDX SBOMs (Rust + npm), attested later by the publish job.
+      - name: SBOMs
+        shell: pwsh
+        run: |
+          cargo install cargo-cyclonedx --locked --version 0.5.10
+          Push-Location src-tauri
+          cargo cyclonedx --format json
+          Pop-Location
+          npm sbom --prefix src --sbom-format cyclonedx --sbom-type application | Set-Content -Encoding utf8 sbom-npm.cdx.json
+          Get-ChildItem src-tauri -Filter '*.cdx.json' | Select-Object -First 1 | Copy-Item -Destination sbom-rust.cdx.json
+          if (-not (Test-Path sbom-rust.cdx.json) -or -not (Test-Path sbom-npm.cdx.json)) { Write-Error 'SBOM missing'; exit 1 }
+
+      - name: Collect assets
         shell: pwsh
         run: |
           $bundle = 'src-tauri/target/release/bundle'
           $exe = Get-ChildItem "$bundle/nsis/*-setup.exe" | Select-Object -First 1
           $msi = Get-ChildItem "$bundle/msi/*.msi" | Select-Object -First 1
-          if (-not $exe -or -not $msi) { Write-Error 'Installer missing from bundle output'; exit 1 }
+          $pre = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version.Contains('-')
+          if (-not $exe -or (-not $msi -and -not $pre)) { Write-Error 'Installer missing from bundle output'; exit 1 }
           $out = New-Item -ItemType Directory -Force release-assets
           Copy-Item $exe.FullName $out/$($exe.Name)
-          Copy-Item $msi.FullName $out/$($msi.Name)
+          if ($msi) { Copy-Item $msi.FullName $out/$($msi.Name) }
           # Fixed name so the website can link to releases/latest/download/shush_x64-setup.exe.
           Copy-Item $exe.FullName $out/shush_x64-setup.exe
-          Get-ChildItem $out -File | Sort-Object Name | ForEach-Object {
-            '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
-          } | Set-Content -Encoding ascii SHA256SUMS.txt
-          Move-Item SHA256SUMS.txt $out/
-          Get-Content $out/SHA256SUMS.txt
+          Copy-Item sbom-rust.cdx.json, sbom-npm.cdx.json $out/
+          # Attested but not published as a separate asset.
+          New-Item -ItemType Directory -Force attest-only | Out-Null
+          Copy-Item src-tauri/target/release/shush.exe attest-only/shush.exe
+          Get-ChildItem release-assets
 
-      # Signed build provenance (#72 step 3): proves the installers came from this workflow run.
-      # Verify with: gh attestation verify shush_x64-setup.exe -R kash-talel/shush
-      - name: Attest build provenance
-        if: env.IS_TAG == 'true'
-        uses: actions/attest-build-provenance@v2
+      - name: Upload build output
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          subject-path: |
-            release-assets/*.exe
-            release-assets/*.msi
+          name: shush-windows-build
+          path: |
+            release-assets/
+            attest-only/
+          retention-days: ${{ env.IS_RELEASE == 'true' && 7 || 14 }}
+          if-no-files-found: error
 
-      - name: Keep installers (dry run)
-        if: env.IS_TAG != 'true'
-        uses: actions/upload-artifact@v4
+  publish:
+    name: Sign, attest, publish
+    needs: [release-please, build]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
+    # Required reviewer lives here. This job (and only this one) holds the release key.
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.release-please.outputs.tag_name }}
+      VERSION: ${{ needs.release-please.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          name: shush-windows-installers
-          path: release-assets/
-          retention-days: 14
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
 
-      - name: Attach extras and publish release
-        if: env.IS_TAG == 'true'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: shush-windows-build
+
+      - name: Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/package-lock.json
+
+      - name: Install tauri CLI
+        run: npm ci --prefix src --ignore-scripts
+
+      - name: Sign installer, write and sign release.json
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.RELEASE_SIGNING_KEY_PASSWORD }}
         run: |
-          gh release upload $env:TAG release-assets/shush_x64-setup.exe release-assets/SHA256SUMS.txt --clobber
-          gh release edit $env:TAG --draft=false --latest
+          $ErrorActionPreference = 'Stop'
+          $ver = $env:VERSION
+          $channel = if ($ver.Contains('-')) { 'beta' } else { 'stable' }
+          $exeName = "shush_${ver}_x64-setup.exe"
+          $exe = "release-assets/$exeName"
+          if (-not (Test-Path $exe)) { throw "$exeName missing from build output" }
+          # Tauri-updater signature of the installer (base64 minisign text) -> <exe>.sig
+          npx --prefix src tauri signer sign $exe
+          if ($LASTEXITCODE -ne 0) { throw 'installer signing failed' }
+          ./.github/scripts/make-release-json.ps1 -Version $ver -Channel $channel -Installer $exe `
+            -Url "https://github.com/${{ github.repository }}/releases/download/$($env:TAG)/$exeName" `
+            -NotesUrl "https://github.com/${{ github.repository }}/releases/tag/$($env:TAG)" `
+            -Out release-assets/release.json
+          ./.github/scripts/sign-file.ps1 release-assets/release.json
+          # Checksums last, over everything that will be uploaded.
+          Push-Location release-assets
+          Get-ChildItem -File | Where-Object Name -ne 'SHA256SUMS.txt' | Sort-Object Name | ForEach-Object {
+            '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+          } | Set-Content -Encoding ascii SHA256SUMS.txt
+          Pop-Location
+          Get-Content release-assets/SHA256SUMS.txt
+
+      # Build provenance (#72 step 3): proves the files came from this workflow run.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: |
+            attest-only/shush.exe
+            release-assets/*.exe
+            release-assets/*.msi
+            release-assets/release.json
+
+      - name: Attest SBOM (Rust)
+        uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2
+        with:
+          subject-path: release-assets/shush_x64-setup.exe
+          sbom-path: release-assets/sbom-rust.cdx.json
+
+      - name: Attest SBOM (npm)
+        uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2
+        with:
+          subject-path: release-assets/shush_x64-setup.exe
+          sbom-path: release-assets/sbom-npm.cdx.json
+
+      # Everything is uploaded while the release is still a draft, then published once. With
+      # immutable releases enabled (repo setting) it is frozen from that moment.
+      - name: Upload to draft and publish
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Single-quoted here-string: Markdown backticks stay literal.
+          $install = @'
+          ## Install
+
+          Download **shush_x64-setup.exe** (the versioned `shush_<version>_x64-setup.exe` is the same file) and run it. No admin rights needed: it installs for your user only. The `.msi` is for managed / Group Policy deployment; most people want the `.exe`.
+
+          The installer is not yet Authenticode-signed (#165), so Windows SmartScreen may say *Windows protected your PC*: **More info, then Run anyway**. Check the download first with the commands below.
+
+          Uninstalling keeps your vault (`%APPDATA%\com.shush.vault`) unless you tick *Delete the application data* **and** confirm. Keep an encrypted `.shushbackup` either way.
+          '@
+          $verify = @"
+          ## Verify
+
+          ``````powershell
+          gh release verify $($env:TAG) -R ${{ github.repository }}
+          gh release verify-asset $($env:TAG) shush_x64-setup.exe -R ${{ github.repository }}
+          gh attestation verify shush_x64-setup.exe -R ${{ github.repository }}
+          Get-FileHash .\shush_x64-setup.exe -Algorithm SHA256   # compare with SHA256SUMS.txt
+          ``````
+          "@
+          $notes = $install + "`n`n" + $verify
+          # Only ever touch a draft: a published (immutable) release is never edited.
+          if ((gh release view $env:TAG --json isDraft -q .isDraft) -ne 'true') {
+            throw "$($env:TAG) is not a draft; refusing to modify a published release"
+          }
+          # Append Install + Verify to the changelog notes release-please wrote (once, so a
+          # re-run of this job does not duplicate it).
+          $existing = (gh release view $env:TAG --json body -q .body) -join "`n"
+          if ($existing -notmatch '(?m)^## Verify') {
+            Set-Content -Encoding utf8 notes.md ($existing + "`n`n" + $notes)
+            gh release edit $env:TAG --notes-file notes.md
+            if ($LASTEXITCODE -ne 0) { throw 'could not set release notes' }
+          }
+          # --clobber only replaces assets of this draft (a re-run regenerates signatures).
+          gh release upload $env:TAG (Get-ChildItem release-assets -File).FullName --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'asset upload failed' }
+          $pre = if ($env:VERSION.Contains('-')) { '--prerelease' } else { '--latest' }
+          gh release edit $env:TAG --draft=false $pre
+
+  feed:
+    name: Update feed
+    needs: [release-please, publish]
+    if: needs.release-please.outputs.release_created == 'true'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml
+    secrets: inherit

@@ -49,9 +49,8 @@ the old copy and any shortcut to it. The installed app reads the same vault, so 
 The `.exe` installs per user in `%LOCALAPPDATA%\shush`. The `.msi` installs per machine in
 Program Files and asks for admin. Use one or the other, not both.
 
-To cut a release, bump the version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and
-`src/package.json`, then push a `vX.Y.Z` tag; `.github/workflows/release.yml` builds, checksums
-and publishes the installers.
+Releases are cut by merging the release PR that release-please keeps open and approving the
+`release` deployment; no tag is pushed by hand. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Build from source
 
