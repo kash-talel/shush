@@ -15,16 +15,20 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: release
-  cancel-in-progress: false
+# No workflow-level concurrency: a release run can wait hours at the `release` approval, and one
+# shared group would hold (and let GitHub cancel) the pending runs of later pushes. Only the jobs
+# that must not overlap are serialised below.
 
 jobs:
   release-please:
     name: release-please
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    # Skipped (not failed) until the owner has set up the release App (docs/RELEASING.md).
+    if: github.event_name == 'push' && vars.RELEASE_APP_ID != ''
     permissions: {}
+    concurrency:
+      group: release-please
+      cancel-in-progress: false
     outputs:
       release_created: ${{ steps.rp.outputs.release_created }}
       tag_name: ${{ steps.rp.outputs.tag_name }}
@@ -48,13 +52,14 @@ jobs:
     name: Build (Windows, no secrets)
     needs: [release-please]
     # Runs for a real release, or for a manual dry run (release-please is skipped then).
-    if: always() && (github.event_name == 'workflow_dispatch' || needs.release-please.outputs.release_created == 'true')
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.release-please.outputs.release_created == 'true') }}
     runs-on: windows-latest
     timeout-minutes: 60
     permissions:
       contents: read
     env:
       IS_RELEASE: ${{ needs.release-please.outputs.release_created == 'true' }}
+      VERSION: ${{ needs.release-please.outputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -65,14 +70,20 @@ jobs:
         if: env.IS_RELEASE == 'true'
         shell: pwsh
         run: |
-          $tag = '${{ needs.release-please.outputs.version }}'
+          $tag = $env:VERSION
           $conf = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           $pkg = (Get-Content src/package.json -Raw | ConvertFrom-Json).version
           $cargo = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' |
             Select-Object -First 1).Matches[0].Groups[1].Value
-          $lock = (Get-Content src/package-lock.json -Raw | ConvertFrom-Json).version
-          "release=$tag tauri.conf.json=$conf package.json=$pkg package-lock.json=$lock Cargo.toml=$cargo"
-          if ($conf -ne $tag -or $pkg -ne $tag -or $cargo -ne $tag -or $lock -ne $tag) {
+          # -AsHashtable: a v3 lockfile has an empty-string key (packages[""]) that pwsh 7 refuses otherwise.
+          $lockJson = Get-Content src/package-lock.json -Raw | ConvertFrom-Json -AsHashtable
+          $lock = $lockJson['version']
+          $lockRoot = $lockJson['packages']['']['version']
+          $cargoLock = [regex]::Match((Get-Content src-tauri/Cargo.lock -Raw),
+            '(?m)^name = "shush"\r?\nversion = "([^"]+)"').Groups[1].Value
+          "release=$tag tauri.conf.json=$conf package.json=$pkg package-lock.json=$lock/$lockRoot Cargo.toml=$cargo Cargo.lock=$cargoLock"
+          if ($conf -ne $tag -or $pkg -ne $tag -or $cargo -ne $tag -or $lock -ne $tag -or
+              $lockRoot -ne $tag -or $cargoLock -ne $tag) {
             Write-Error "Release $tag does not match every version field."
             exit 1
           }
@@ -110,10 +121,9 @@ jobs:
       # only a numeric pre-release identifier, so `tauri build` would fail on the MSI bundle.
       - name: Build installers
         shell: pwsh
-        env:
-          VERSION: ${{ needs.release-please.outputs.version }}
         run: |
-          if ($env:VERSION -and $env:VERSION.Contains('-')) { npx --prefix src tauri build --bundles nsis }
+          $v = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ($v.Contains('-')) { npx --prefix src tauri build --bundles nsis }
           else { npx --prefix src tauri build }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -154,7 +164,7 @@ jobs:
           $bundle = 'src-tauri/target/release/bundle'
           $exe = Get-ChildItem "$bundle/nsis/*-setup.exe" | Select-Object -First 1
           $msi = Get-ChildItem "$bundle/msi/*.msi" | Select-Object -First 1
-          $pre = '${{ needs.release-please.outputs.version }}'.Contains('-')
+          $pre = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version.Contains('-')
           if (-not $exe -or (-not $msi -and -not $pre)) { Write-Error 'Installer missing from bundle output'; exit 1 }
           $out = New-Item -ItemType Directory -Force release-assets
           Copy-Item $exe.FullName $out/$($exe.Name)
@@ -183,6 +193,9 @@ jobs:
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
     # Required reviewer lives here. This job (and only this one) holds the release key.
     environment: release
     permissions:
@@ -269,7 +282,17 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $notes = @"
+          # Single-quoted here-string: Markdown backticks stay literal.
+          $install = @'
+          ## Install
+
+          Download **shush_x64-setup.exe** (the versioned `shush_<version>_x64-setup.exe` is the same file) and run it. No admin rights needed: it installs for your user only. The `.msi` is for managed / Group Policy deployment; most people want the `.exe`.
+
+          The installer is not yet Authenticode-signed (#165), so Windows SmartScreen may say *Windows protected your PC*: **More info, then Run anyway**. Check the download first with the commands below.
+
+          Uninstalling keeps your vault (`%APPDATA%\com.shush.vault`) unless you tick *Delete the application data* **and** confirm. Keep an encrypted `.shushbackup` either way.
+          '@
+          $verify = @"
           ## Verify
 
           ``````powershell
@@ -278,14 +301,13 @@ jobs:
           gh attestation verify shush_x64-setup.exe -R ${{ github.repository }}
           Get-FileHash .\shush_x64-setup.exe -Algorithm SHA256   # compare with SHA256SUMS.txt
           ``````
-
-          The installer is not yet Authenticode-signed (#165), so Windows SmartScreen may say *Windows protected your PC*: **More info, then Run anyway**.
           "@
+          $notes = $install + "`n`n" + $verify
           # Only ever touch a draft: a published (immutable) release is never edited.
           if ((gh release view $env:TAG --json isDraft -q .isDraft) -ne 'true') {
             throw "$($env:TAG) is not a draft; refusing to modify a published release"
           }
-          # Append the Verify section to the changelog notes release-please wrote (once, so a
+          # Append Install + Verify to the changelog notes release-please wrote (once, so a
           # re-run of this job does not duplicate it).
           $existing = (gh release view $env:TAG --json body -q .body) -join "`n"
           if ($existing -notmatch '(?m)^## Verify') {

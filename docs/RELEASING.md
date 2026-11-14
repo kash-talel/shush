@@ -50,9 +50,12 @@ Served from GitHub Pages (a published immutable release can't hold a file re-sig
 ## Yank and roll forward
 
 Never edit a published release. To pull a bad version: add it (one per line) to
-`.github/feed-yanked.txt` and merge. The feed then points at the previous good release (clients
-that already have something newer ignore it). Then ship `X.Y.Z+1`; for a security fix set
-`security` / `min_supported` by editing `make-release-json.ps1` arguments in `release.yml`.
+`.github/feed-yanked.txt` and merge. The feed then points at the previous good release, which
+stops new installs of the bad one. Clients that already installed the yanked version refuse the
+older release as a rollback (the app's rollback protection) and report an error rather than "up to
+date" until the fix ships, so ship `X.Y.Z+1` quickly and then remove the yank line if you like
+(the feed always serves the newest non-yanked release). For a security fix set `security` /
+`min_supported` by editing `make-release-json.ps1` arguments in `release.yml`.
 
 ## Keys and secrets (each lives in exactly one place)
 
@@ -85,7 +88,7 @@ rotate to release-next, and tell users to reinstall manually from a verified dow
 ## One-time repository setup (needs the owner, cannot be done by a workflow)
 
 - Settings, General, Releases: enable **immutable releases**.
-- Create the GitHub App (contents + pull requests, this repo only) and set `RELEASE_APP_ID` / `RELEASE_APP_PRIVATE_KEY`.
+- Create the GitHub App (contents + pull requests, this repo only) and set `RELEASE_APP_ID` / `RELEASE_APP_PRIVATE_KEY`. Until `RELEASE_APP_ID` exists the release-please job is skipped, so pushes to `main` do not fail.
 - Environments: `release` (required reviewer, deployment rule `v*` tags only is not possible for a branch-run job: restrict to `main`), `feed` (`main` only), `github-pages`.
 - Rulesets: `refs/tags/v*` (only the release App may create; update and delete blocked, admin bypass for emergencies); `main` (require CI and the `PR title (Conventional Commits)` check from `pr-title.yml`).
 - Generate the three keys and store the secrets as in the table above.

@@ -15,7 +15,11 @@ if (Test-Path .github/feed-yanked.txt) {
     Where-Object { $_ -and -not $_.StartsWith('#') }
 }
 $wantPre = $Channel -eq 'beta'
-$rels = gh api "repos/$Repo/releases?per_page=50" | ConvertFrom-Json
+$relsJson = gh api "repos/$Repo/releases?per_page=50"
+# A failed lookup must fail the job, not look like "no release yet" (that would deploy the site
+# without this channel and take the live feed down).
+if ($LASTEXITCODE -ne 0) { throw "Could not list releases of $Repo" }
+$rels = $relsJson | ConvertFrom-Json
 # Releases cut before the feed existed (v0.1.0, v0.1.1) carry no release.json; skip them rather
 # than fail, or the whole Pages deploy (site included) would stop once the timestamp key is set.
 $rel = $rels | Where-Object {
