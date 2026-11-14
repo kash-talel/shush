@@ -11,6 +11,7 @@
 #   BLOCKED   runner said BLOCKED                     -> issue labelled blocked + comment
 #   FAILED    anything else                           -> issue labelled agent-failed + comment
 # FAILED/BLOCKED worktrees are kept unless their work is fully pushed (then the PR holds it).
+# A Claude Code agent lock a finished agent left behind is released by issue-worktree.ps1 -Remove.
 # The owner removes blocked / agent-failed to let /issue pick the issue up again.
 
 param(
@@ -87,8 +88,13 @@ foreach ($wt in ($worktrees | Select-Object -Unique)) {
         $pushed = ($dirty.Count -eq 0 -and $unpushed.Count -eq 0)
     }
     if ($outcome -eq 'DONE' -or $outcome -eq 'ESCALATE' -or $pushed) {
+        # 'Continue' so a stderr line from the child is a kept worktree in the banner, not a crash
+        # before it (Windows PowerShell 5.1 turns native stderr into a terminating error under Stop).
+        $ErrorActionPreference = 'Continue'
         & powershell -NoProfile -File (Join-Path $PSScriptRoot 'issue-worktree.ps1') -Remove -Path $wt 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) { $removed += $wt } else { $kept += $wt }
+        $ok = ($LASTEXITCODE -eq 0)
+        $ErrorActionPreference = 'Stop'
+        if ($ok) { $removed += $wt } else { $kept += $wt }
     } else { $kept += $wt }
 }
 foreach ($b in @(& git -C $main branch --list "fix/issue-$Number-*" "review/issue-$Number*" --format '%(refname:short)')) {

@@ -23,6 +23,18 @@ because it would replace the installed app. Follow "Uninstalling for tests" in `
 up the vault files first (copying them is fine, opening or changing them is not) and leave a
 working shush installed when you finish.
 
+## Waiting on background work
+`/code-review` and any `run_in_background` command report back to you with a notification.
+- Prefer the foreground: run verify.ps1 and merge-pr.ps1 as normal commands with
+  `timeout: 600000`. They finish in minutes.
+- To wait for a notification, keep working on something else or end your message with one line
+  saying what you are waiting for. Do not start a sleep loop, a polling loop or a Monitor just to
+  stay alive or to wait. If you need a waiter anyway, give it a hard limit of 15 minutes or less,
+  and stop it as soon as the result is in.
+- **Before the Final report**, stop every background task and Monitor you started that is still
+  running (load `TaskStop` with `ToolSearch` `select:TaskStop`). A task left running keeps you
+  alive and keeps your worktree locked, which stalls the dispatcher's clean-up.
+
 ## Step 1: Understand the change
 1. `gh pr view <PR> --json title,body,headRefName,files,labels` and `gh pr diff <PR>`.
 2. `powershell -NoProfile -File .claude/scripts/issue-brief.ps1 -Number <ISSUE>`: what was asked
@@ -49,7 +61,7 @@ test, and record it as "not tested, why".
 
 ## Step 3: Review for defects
 Skip this step's `/code-review` when the PR changes only Markdown. Otherwise run
-`/code-review high <PR>` through the Skill tool (it runs in the background; wait for its result).
+`/code-review high <PR>` through the Skill tool (it runs in the background; see "Waiting on background work").
 Then go through this checklist yourself; each item applies when the diff touches it:
 - **Secrets**: zeroized after use, never logged, never in error messages, `Debug` output, IPC JSON strings, or temp files.
 - **Crypto**: no home-made primitives, nonces never reused, constant-time secret comparisons, KDF/cipher parameters match the spec.
