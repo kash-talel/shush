@@ -17,7 +17,8 @@ in-app updater that consumes the feed.
 5. `pages.yml` runs (called from `release.yml`) and refreshes `/updates/stable/`.
 
 Pre-release (beta): add a `Release-As: 0.3.0-beta.1` footer to a commit on `main`. A version with
-a `-` is published as a pre-release and goes to `/updates/beta/`, never to `stable`.
+a `-` is published as a pre-release and goes to `/updates/beta/`, never to `stable`. Pre-releases
+ship the NSIS installer only (no `.msi`): WiX accepts only a numeric pre-release identifier.
 
 ## Dry run
 
@@ -67,6 +68,15 @@ release, release-next (offline only, pinned in the app so rotation needs no boot
 timestamp. The `build` job has no access to any of them. Keep an offline backup of every private
 key. The release **public** key goes in `plugins.updater.pubkey` and in the app's trust anchors (#78).
 
+Key formats differ: `tauri signer generate` writes the `.pub` file as base64 of a whole minisign
+public-key file. `plugins.updater.pubkey` takes that string as is. The app's trust anchors
+(`PinnedKey::from_base64` in `src-tauri/src/update/mod.rs`) take only the raw key, the second line
+of the decoded text (it starts with `RW`):
+
+```powershell
+([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String((Get-Content release.key.pub -Raw).Trim())) -split "`n")[1].Trim()
+```
+
 Rotation: ship a release signed with the current key that pins the next key, then switch
 `RELEASE_SIGNING_KEY` to release-next. Compromise: rotate the timestamp key by shipping an app
 update (release key still good); if the release key leaked, yank everything signed since the leak,
@@ -77,7 +87,7 @@ rotate to release-next, and tell users to reinstall manually from a verified dow
 - Settings, General, Releases: enable **immutable releases**.
 - Create the GitHub App (contents + pull requests, this repo only) and set `RELEASE_APP_ID` / `RELEASE_APP_PRIVATE_KEY`.
 - Environments: `release` (required reviewer, deployment rule `v*` tags only is not possible for a branch-run job: restrict to `main`), `feed` (`main` only), `github-pages`.
-- Rulesets: `refs/tags/v*` (only the release App may create; update and delete blocked, admin bypass for emergencies); `main` (require CI and the PR-title check).
+- Rulesets: `refs/tags/v*` (only the release App may create; update and delete blocked, admin bypass for emergencies); `main` (require CI and the `PR title (Conventional Commits)` check from `pr-title.yml`).
 - Generate the three keys and store the secrets as in the table above.
 
 ## How users verify a download

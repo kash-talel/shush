@@ -106,8 +106,16 @@ jobs:
 
       # Builds src-tauri/target/release/bundle/{nsis,msi}. Plain tauri CLI; the publish job owns
       # the release object and every signature.
+      # A pre-release (version with '-', e.g. 0.3.0-beta.1) builds NSIS only: WiX/MSI accepts
+      # only a numeric pre-release identifier, so `tauri build` would fail on the MSI bundle.
       - name: Build installers
-        run: npx --prefix src tauri build
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.release-please.outputs.version }}
+        run: |
+          if ($env:VERSION -and $env:VERSION.Contains('-')) { npx --prefix src tauri build --bundles nsis }
+          else { npx --prefix src tauri build }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Refuse to ship a binary without ASLR/DEP/CFG/CET and the hardened manifest (#74).
       - name: Hardening check (PE flags + manifest)
@@ -146,10 +154,11 @@ jobs:
           $bundle = 'src-tauri/target/release/bundle'
           $exe = Get-ChildItem "$bundle/nsis/*-setup.exe" | Select-Object -First 1
           $msi = Get-ChildItem "$bundle/msi/*.msi" | Select-Object -First 1
-          if (-not $exe -or -not $msi) { Write-Error 'Installer missing from bundle output'; exit 1 }
+          $pre = '${{ needs.release-please.outputs.version }}'.Contains('-')
+          if (-not $exe -or (-not $msi -and -not $pre)) { Write-Error 'Installer missing from bundle output'; exit 1 }
           $out = New-Item -ItemType Directory -Force release-assets
           Copy-Item $exe.FullName $out/$($exe.Name)
-          Copy-Item $msi.FullName $out/$($msi.Name)
+          if ($msi) { Copy-Item $msi.FullName $out/$($msi.Name) }
           # Fixed name so the website can link to releases/latest/download/shush_x64-setup.exe.
           Copy-Item $exe.FullName $out/shush_x64-setup.exe
           Copy-Item sbom-rust.cdx.json, sbom-npm.cdx.json $out/
@@ -272,11 +281,21 @@ jobs:
 
           The installer is not yet Authenticode-signed (#165), so Windows SmartScreen may say *Windows protected your PC*: **More info, then Run anyway**.
           "@
-          # Append the Verify section to the changelog notes release-please wrote.
-          $existing = gh release view $env:TAG --json body -q .body
-          Set-Content -Encoding utf8 notes.md ($existing + "`n`n" + $notes)
-          gh release edit $env:TAG --notes-file notes.md
-          gh release upload $env:TAG (Get-ChildItem release-assets -File).FullName
+          # Only ever touch a draft: a published (immutable) release is never edited.
+          if ((gh release view $env:TAG --json isDraft -q .isDraft) -ne 'true') {
+            throw "$($env:TAG) is not a draft; refusing to modify a published release"
+          }
+          # Append the Verify section to the changelog notes release-please wrote (once, so a
+          # re-run of this job does not duplicate it).
+          $existing = (gh release view $env:TAG --json body -q .body) -join "`n"
+          if ($existing -notmatch '(?m)^## Verify') {
+            Set-Content -Encoding utf8 notes.md ($existing + "`n`n" + $notes)
+            gh release edit $env:TAG --notes-file notes.md
+            if ($LASTEXITCODE -ne 0) { throw 'could not set release notes' }
+          }
+          # --clobber only replaces assets of this draft (a re-run regenerates signatures).
+          gh release upload $env:TAG (Get-ChildItem release-assets -File).FullName --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'asset upload failed' }
           $pre = if ($env:VERSION.Contains('-')) { '--prerelease' } else { '--latest' }
           gh release edit $env:TAG --draft=false $pre
 

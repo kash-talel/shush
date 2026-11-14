@@ -16,8 +16,11 @@ if (Test-Path .github/feed-yanked.txt) {
 }
 $wantPre = $Channel -eq 'beta'
 $rels = gh api "repos/$Repo/releases?per_page=50" | ConvertFrom-Json
+# Releases cut before the feed existed (v0.1.0, v0.1.1) carry no release.json; skip them rather
+# than fail, or the whole Pages deploy (site included) would stop once the timestamp key is set.
 $rel = $rels | Where-Object {
   -not $_.draft -and $_.tag_name -like 'v*' -and ([bool]$_.prerelease -eq $wantPre) -and
+  (@($_.assets | Where-Object { $_.name -eq 'release.json' }).Count -gt 0) -and
   ($yanked -notcontains $_.tag_name.Substring(1)) -and ($yanked -notcontains $_.tag_name)
 } | Select-Object -First 1
 if (-not $rel) { Write-Host "No $Channel release yet; channel left out of the feed."; return }
