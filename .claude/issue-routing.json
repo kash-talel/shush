@@ -54,6 +54,23 @@
     {"number": 127, "title": "[UI] Dynamic app interface theming by vault color, eliminate red tint bleed, and fix onboarding disc color", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "Reassigned to Claude by user request"},
     {"number": 137, "title": "[Sync] Implement per-item hybrid logical clock and tombstone exchange for LAN sync merge", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
     {"number": 138, "title": "[Import] CSV re-import can re-add a login the user deleted (tombstones only match by id)", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
-    {"number": 143, "title": "[Keyfile] No recovery path when a keyfile is lost or corrupted", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"}
+    {"number": 143, "title": "[Keyfile] No recovery path when a keyfile is lost or corrupted", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 145, "title": "[TOTP] Warn when the system clock is unsynced / skewed", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 149, "title": "[File format] Implement rekey operations (change password, keyfile add/remove, KDF/cipher change)", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 152, "title": "[Browser] Per-item opt-in for subdomain matching", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 153, "title": "[Browser] End-to-end test of the pipe listener and shush-host.exe image check", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 155, "title": "[Browser] Extension-verified auto-type from Quick search (Phase 7b step 8)", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 156, "title": "[Sync] LAN sync pairing and transport: SPAKE2 + Noise XX, pinned peers, time-boxed mDNS (Phase 8b)", "model": "claude-opus-5.5", "runner": "claude", "reason": "Owner override: SPAKE2 + Noise pairing is the most crypto-heavy remaining work"},
+    {"number": 157, "title": "[Network] Air-gapped mode: single network gate, default on, no-network build (Phase 8c)", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)", "merge": "review"},
+    {"number": 159, "title": "[Browser] Harden the bridge against a stolen pair key: browser-ancestry check, bulk-fill throttle, last-used", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 160, "title": "[Browser] Publish the extension (Chrome Web Store, Edge Add-ons, AMO) and pin the store ids in the host manifests", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 163, "title": "[Tests] vault_unlock_and_lock_wipes_master_password_from_memory is flaky in CI", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 165, "title": "[Distribution] Authenticode-sign shush.exe and installers (SignPath Foundation; blocked)", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 168, "title": "[Tooling] install-main.ps1 -CloseApp: silent installer can abort (exit 2) right after the app is force-closed", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 170, "title": "[File format] Recover a damaged vault from vault.shush.bak instead of only offering Delete", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 171, "title": "[Memory] Flaky master-password zeroize test fails intermittently under parallel load", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 175, "title": "[Distribution] Beta update channel never offers newer stable releases", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 184, "title": "Build/dev hooks run in the wrong folder: documented 'npx --prefix src tauri build/dev' fails from the repo root", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"},
+    {"number": 187, "title": "[Distribution] Release CI follow-ups: actions/attest, client-id, no npm cache in key-holding jobs", "model": "claude-sonnet-5.5", "runner": "claude", "reason": "code, UI or tests (auto-classified)"}
   ]
 }
