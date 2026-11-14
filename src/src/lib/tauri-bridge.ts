@@ -150,9 +150,10 @@ export function encodeUnlockPayload(
 
 export const unlock = (password: string, keyfilePath: string | null, vaultId: string | null) =>
   invoke<VaultSummary>("unlock", encodeUnlockPayload(password, keyfilePath, vaultId));
-/** Reloads the active vault from disk without locking (issue #49). */
-export const reloadVault = (password?: string, keyfilePath?: string) =>
-  invoke<VaultSummary>("reload_vault", { password: password ?? null, keyfilePath: keyfilePath ?? null });
+/** Reloads the active vault from disk without locking (issue #49).
+ *  `keepOrphans` keeps unreferenced attachment files (reload after a sync, issue #113). */
+export const reloadVault = (password?: string, keyfilePath?: string, keepOrphans = false) =>
+  invoke<VaultSummary>("reload_vault", { password: password ?? null, keyfilePath: keyfilePath ?? null, keepOrphans });
 
 // ---- Vault list (switch / add / delete) -------------------------------------
 

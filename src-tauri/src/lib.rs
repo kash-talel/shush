@@ -1193,11 +1193,17 @@ async fn unlock(
 ///
 /// Uses the existing derived keys in memory if salt and KDF are unchanged;
 /// otherwise uses `password` if credentials changed on disk.
+///
+/// `keep_orphans` skips deleting unreferenced attachment blobs. The reload
+/// after a sync client replaced the file (issue #113) sets it: the client may
+/// deliver a newer item's attachment before the vault version that uses it,
+/// and deleting it then would sync the deletion back to the other machine.
 #[tauri::command]
 async fn reload_vault(
     app: tauri::AppHandle,
     password: Option<String>,
     keyfile_path: Option<String>,
+    keep_orphans: Option<bool>,
 ) -> Result<VaultSummary, CmdError> {
     blocking(move || {
         let password = password.map(Zeroizing::new);
@@ -1210,7 +1216,7 @@ async fn reload_vault(
             .with_mut(|u| {
                 let pw_bytes = password.as_ref().map(|p| p.as_bytes());
                 u.vault.reload(&u.path, pw_bytes, digest.as_ref())?;
-                if !u.read_only {
+                if !u.read_only && keep_orphans != Some(true) {
                     vault::attachments::gc_orphans(&u.path, u.vault.data());
                 }
                 Ok(summary(&u.path, &u.vault, u.read_only))
@@ -1335,6 +1341,24 @@ fn lock(app: tauri::AppHandle) {
 
 /// Event sent to the UI when the vault locks without the user clicking Lock.
 const EVENT_AUTO_LOCKED: &str = "vault-auto-locked";
+
+/// Event sent to the UI when the unlocked vault file changed on disk (issue #113).
+const EVENT_VAULT_DISK_CHANGED: &str = "vault-disk-changed";
+
+/// Polls the unlocked vault file and tells the UI when another program (a
+/// cloud sync client, another machine's copy) replaced it. See
+/// [`vault::watch`]; each distinct change is announced once.
+fn spawn_vault_watcher(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let mut watch = vault::watch::DiskWatch::default();
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            if watch.poll(&app.state::<VaultState>()) == vault::watch::Poll::Changed {
+                let _ = app.emit(EVENT_VAULT_DISK_CHANGED, ());
+            }
+        }
+    });
+}
 
 /// Automatic lock from a session / power / idle trigger (issue #15).
 fn auto_lock(app: &tauri::AppHandle, reason: os::session::LockReason) {
@@ -2708,6 +2732,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
                 let _ = os::private_dir::remove(&dir);
             }
             spawn_update_checker(app.handle().clone());
+            spawn_vault_watcher(app.handle().clone());
             // Another application may own the combination; Spotlight then stays
             // reachable from the tray and app_info reports it (issue #14).
             let ok = app.global_shortcut().register(SPOTLIGHT_HOTKEY).is_ok();
