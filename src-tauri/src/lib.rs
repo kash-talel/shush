@@ -2389,7 +2389,8 @@ fn update_info(app: &tauri::AppHandle) -> UpdateInfo {
     let (status, checked_at) = st.snapshot();
     UpdateInfo {
         mode: st.mode(),
-        air_gapped: app.state::<net::NetGate>().is_air_gapped(),
+        // Also true in a build without network support: no check can run there either.
+        air_gapped: app.state::<net::NetGate>().check().is_err(),
         status,
         checked_at,
         installed: env!("CARGO_PKG_VERSION"),
@@ -2400,8 +2401,11 @@ fn unix_now() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp()
 }
 
-/// Runs one check through the network gate and records the result. Blocking.
-fn run_update_check(app: &tauri::AppHandle) {
+/// Runs one check through the network gate and records the result. Blocking; checks run one at
+/// a time. Returns whether the check reached a verified answer (false: retry sooner).
+fn run_update_check(app: &tauri::AppHandle) -> bool {
+    let state = app.state::<update::client::UpdateState>();
+    let _running = state.running.lock().unwrap_or_else(|e| e.into_inner());
     let gate = app.state::<net::NetGate>();
     let now = unix_now();
     let status = update::client::check(
@@ -2410,12 +2414,30 @@ fn run_update_check(app: &tauri::AppHandle) {
         env!("CARGO_PKG_VERSION"),
         now,
     );
-    app.state::<update::client::UpdateState>()
-        .record(status, now);
+    // The gate closed mid-check: keep the last real result rather than an air-gap error.
+    if matches!(
+        status,
+        update::client::UpdateStatus::Failed {
+            code: "UPDATE_AIR_GAPPED",
+            ..
+        }
+    ) {
+        return false;
+    }
+    let settled = !matches!(
+        status,
+        update::client::UpdateStatus::Failed {
+            code: "UPDATE_FETCH_FAILED" | "UPDATE_FEED_MISMATCH",
+            ..
+        }
+    );
+    state.record(status, now);
+    settled
 }
 
 /// Background checker: first check shortly after start, then every 24 h plus up to 2 h of
-/// jitter. Does nothing while air-gapped or when updates are off, and re-arms when that changes.
+/// jitter; after a fetch failure (offline at boot, say) it retries in 1 h plus jitter instead.
+/// Does nothing while air-gapped or when updates are off, and re-arms when that changes.
 fn spawn_update_checker(app: tauri::AppHandle) {
     use rand::Rng;
     std::thread::spawn(move || {
@@ -2424,7 +2446,7 @@ fn spawn_update_checker(app: tauri::AppHandle) {
             std::thread::sleep(std::time::Duration::from_secs(60));
             let eligible = app.state::<update::client::UpdateState>().mode()
                 == update::client::UpdateMode::Notify
-                && !app.state::<net::NetGate>().is_air_gapped();
+                && app.state::<net::NetGate>().check().is_ok();
             if !eligible {
                 due = None;
                 continue;
@@ -2433,9 +2455,15 @@ fn spawn_update_checker(app: tauri::AppHandle) {
             match due {
                 None => due = Some(now + std::time::Duration::from_secs(30)),
                 Some(t) if now >= t => {
-                    run_update_check(&app);
+                    let base = if run_update_check(&app) {
+                        24 * 60 * 60
+                    } else {
+                        60 * 60
+                    };
                     let jitter = rand::thread_rng().gen_range(0..2 * 60 * 60);
-                    due = Some(now + std::time::Duration::from_secs(24 * 60 * 60 + jitter));
+                    due = Some(
+                        std::time::Instant::now() + std::time::Duration::from_secs(base + jitter),
+                    );
                 }
                 Some(_) => {}
             }
@@ -2477,10 +2505,15 @@ async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, CmdError>
             "Update checks are off. Turn them on first.",
         ));
     }
+    if let Err(e) = app.state::<net::NetGate>().check() {
+        return Err(CmdError::new("UPDATE_AIR_GAPPED", e.to_string()));
+    }
     let a = app.clone();
-    tauri::async_runtime::spawn_blocking(move || run_update_check(&a))
-        .await
-        .map_err(|_| CmdError::new("UPDATE_CHECK_FAILED", "The update check did not finish."))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        run_update_check(&a);
+    })
+    .await
+    .map_err(|_| CmdError::new("UPDATE_CHECK_FAILED", "The update check did not finish."))?;
     Ok(update_info(&app))
 }
 

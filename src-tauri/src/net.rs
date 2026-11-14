@@ -254,14 +254,26 @@ impl NetGate {
             .to_socket_addrs()
             .map_err(|e| io(&e))?
             .collect();
+        // Every address shares the one deadline, so a network that silently drops (say) IPv6
+        // cannot stretch a request to minutes. The last real error is kept for the user.
         let mut tcp = None;
+        let mut last_err = NetError::Io("could not connect".into());
         for a in &addrs {
-            if let Ok(s) = self.tcp_connect(a, timeout) {
-                tcp = Some(s);
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                last_err = NetError::Io("timed out".into());
                 break;
             }
+            match self.tcp_connect(a, timeout.min(left)) {
+                Ok(s) => {
+                    tcp = Some(s);
+                    break;
+                }
+                Err(e @ (NetError::AirGapped | NetError::NotCompiledIn)) => return Err(e),
+                Err(e) => last_err = e,
+            }
         }
-        let tcp = tcp.ok_or_else(|| NetError::Io("could not connect".into()))?;
+        let tcp = tcp.ok_or(last_err)?;
         tcp.set_read_timeout(Some(timeout)).map_err(|e| io(&e))?;
         tcp.set_write_timeout(Some(timeout)).map_err(|e| io(&e))?;
 
@@ -409,8 +421,15 @@ mod tests {
             .unwrap();
         assert!(!body.is_empty());
         // A name the web roots do not vouch for must fail closed.
-        let bad = g.https_get("self-signed.badssl.com", "/", "shush/test", 1 << 20, t);
-        assert!(bad.is_err());
+        for host in [
+            "self-signed.badssl.com",
+            "wrong.host.badssl.com",
+            "expired.badssl.com",
+            "untrusted-root.badssl.com",
+        ] {
+            let bad = g.https_get(host, "/", "shush/test", 1 << 20, t);
+            assert!(bad.is_err(), "{host} was accepted");
+        }
     }
 
     #[test]

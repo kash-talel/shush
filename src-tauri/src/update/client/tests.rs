@@ -183,6 +183,90 @@ fn fetch_failures_and_air_gap_are_failures() {
     assert_eq!(gate.sockets_opened(), 0);
 }
 
+/// Serves `freshness.json(.minisig)` from `old` for the first `mixed` requests and everything
+/// else from `new`: a feed deploy landing between the requests of one check.
+struct MidDeploy {
+    old: Fake,
+    new: Fake,
+    mixed: usize,
+    calls: std::cell::Cell<usize>,
+}
+
+impl Fetch for MidDeploy {
+    fn get(&self, path: &str, max: usize) -> Result<Vec<u8>, NetError> {
+        let n = self.calls.get();
+        self.calls.set(n + 1);
+        if n < self.mixed && path.contains("freshness") {
+            self.old.get(path, max)
+        } else {
+            self.new.get(path, max)
+        }
+    }
+}
+
+#[test]
+fn deploy_between_requests_is_retried_once() {
+    let fx = Fx::new();
+    let exp = NOW + 3600;
+    let f = MidDeploy {
+        old: fx.feed("0.2.0", None, exp),
+        new: fx.feed("0.3.0", None, exp),
+        mixed: 4,
+        calls: Default::default(),
+    };
+    assert_eq!(
+        check(&f, &fx.anchors(), "0.1.2", NOW),
+        UpdateStatus::Available {
+            version: "0.3.0".into(),
+            security: false,
+            below_min_supported: false
+        }
+    );
+    assert_eq!(f.calls.get(), 8, "exactly one retry");
+    // A pair that never matches is reported as a mismatch, not as a bad signature.
+    let f = MidDeploy {
+        old: fx.feed("0.2.0", None, exp),
+        new: fx.feed("0.3.0", None, exp),
+        mixed: usize::MAX,
+        calls: Default::default(),
+    };
+    assert!(matches!(
+        check(&f, &fx.anchors(), "0.1.2", NOW),
+        UpdateStatus::Failed {
+            code: "UPDATE_FEED_MISMATCH",
+            ..
+        }
+    ));
+}
+
+/// End to end against the deployed stable feed: real gate, real TLS, real pinned keys
+/// (run with `--ignored`; needs internet and a feed newer than 0.0.1).
+#[cfg(feature = "network")]
+#[test]
+#[ignore]
+fn live_feed_verifies_with_pinned_keys() {
+    let gate = NetGate::default();
+    gate.set_air_gapped(false);
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    let s = check(&GateFetch(&gate), &pinned_anchors(), "0.0.1", now);
+    assert!(
+        matches!(s, UpdateStatus::Available { .. }),
+        "live feed did not verify: {s:?}"
+    );
+    // The same signed feed with no pinned keys is refused.
+    let none = TrustAnchors {
+        release: vec![],
+        timestamp: vec![],
+    };
+    assert!(matches!(
+        check(&GateFetch(&gate), &none, "0.0.1", now),
+        UpdateStatus::Failed {
+            code: "UPDATE_FEED_UNTRUSTED",
+            ..
+        }
+    ));
+}
+
 #[test]
 fn beta_installs_follow_beta_channel() {
     assert_eq!(channel_for("0.3.0-beta.1"), "beta");

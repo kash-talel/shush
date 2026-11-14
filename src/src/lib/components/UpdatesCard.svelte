@@ -2,6 +2,7 @@
   import { LoaderCircle, RefreshCw, TriangleAlert } from "@lucide/svelte";
   import {
     checkForUpdate,
+    NETWORK_CHANGED_EVENT,
     setUpdateMode,
     toCmdError,
     updateStatus,
@@ -26,7 +27,26 @@
 
   $effect(() => {
     refresh();
+    // The Network card above can open or close the gate; re-read so this card never shows a
+    // stale "air-gapped" note or a wrongly disabled "Check now".
+    const onNetwork = () => void refresh();
+    window.addEventListener(NETWORK_CHANGED_EVENT, onNetwork);
+    // Background checks record results on their own; pick them up while the card is open.
+    const timer = setInterval(() => {
+      if (!busy) void refresh();
+    }, 30_000);
+    return () => {
+      window.removeEventListener(NETWORK_CHANGED_EVENT, onNetwork);
+      clearInterval(timer);
+    };
   });
+
+  async function changeMode(select: HTMLSelectElement) {
+    await run(() => setUpdateMode(select.value as UpdateMode));
+    // A failed save leaves `info` unchanged, so Svelte would not reset the select: show the
+    // mode that is really in effect, not the click.
+    select.value = info?.mode ?? "notify";
+  }
 
   async function run(action: () => Promise<UpdateInfo>) {
     busy = true;
@@ -59,7 +79,7 @@
       class="rounded border border-hairline bg-surface px-2 py-1 text-xs text-zinc-200"
       value={info?.mode ?? "notify"}
       disabled={busy || info === null}
-      onchange={(e) => run(() => setUpdateMode(e.currentTarget.value as UpdateMode))}
+      onchange={(e) => changeMode(e.currentTarget)}
     >
       <option value="notify">Notify only</option>
       <option value="off">Off</option>

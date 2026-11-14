@@ -153,62 +153,29 @@ pub fn channel_for(installed: &str) -> &'static str {
 }
 
 /// Runs one update check (client algorithm steps 1 to 4). Never downloads an installer.
+///
+/// The four files come from separate requests, so a feed deploy landing between them can pair a
+/// new `release.json` with the old `freshness.json`. That one case is fetched again once before
+/// it is reported.
 pub fn check(
     fetch: &dyn Fetch,
     anchors: &TrustAnchors,
     installed: &str,
     now_unix: i64,
 ) -> UpdateStatus {
-    let channel = channel_for(installed);
-    let get = |name: &str| {
-        fetch.get(
-            &format!("{FEED_PREFIX}/{channel}/{name}"),
-            MAX_MANIFEST_BYTES,
-        )
-    };
-    let files = (|| {
-        Ok::<_, NetError>((
-            get("freshness.json")?,
-            get("freshness.json.minisig")?,
-            get("release.json")?,
-            get("release.json.minisig")?,
-        ))
-    })();
-    let (freshness, freshness_sig, release, release_sig) = match files {
-        Ok(f) => f,
-        Err(NetError::AirGapped) => {
-            return failed("UPDATE_AIR_GAPPED", NetError::AirGapped.to_string())
-        }
-        Err(e) => {
-            return failed(
-                "UPDATE_FETCH_FAILED",
-                format!("Could not reach the update feed. {e}"),
-            )
-        }
-    };
-    let (Ok(freshness_sig), Ok(release_sig)) = (
-        std::str::from_utf8(&freshness_sig),
-        std::str::from_utf8(&release_sig),
-    ) else {
-        return failed("UPDATE_FEED_INVALID", "The update feed is malformed.");
-    };
-    let verdict = verify_feed(
-        anchors,
-        &FeedFiles {
-            release: &release,
-            release_sig,
-            freshness: &freshness,
-            freshness_sig,
-        },
-        &LocalState {
-            channel,
-            target: THIS_TARGET,
-            installed,
-            highest_seen: None,
-            now_unix,
-        },
-    );
-    match verdict {
+    match check_once(fetch, anchors, installed, now_unix) {
+        Ok(Err(UpdateError::FreshnessMismatch)) => {}
+        Ok(r) => return to_status(r, installed),
+        Err(early) => return early,
+    }
+    match check_once(fetch, anchors, installed, now_unix) {
+        Ok(r) => to_status(r, installed),
+        Err(early) => early,
+    }
+}
+
+fn to_status(r: Result<super::VerifiedRelease, UpdateError>, installed: &str) -> UpdateStatus {
+    match r {
         Ok(v) if v.update_available => {
             let below_min_supported = v
                 .release
@@ -227,16 +194,87 @@ pub fn check(
             verified_until: v.fresh_until_unix,
         },
         Err(UpdateError::Stale) => UpdateStatus::Stale,
-        Err(UpdateError::Rollback { .. }) => failed(
+        // Normal for a build newer than the published feed (between a version bump and the
+        // feed refresh); a replayed older feed lands here too. Either way nothing is offered.
+        Err(UpdateError::Rollback { offered, .. }) => failed(
             "UPDATE_ROLLBACK",
-            "The update feed offers an older version than the one you have. It was ignored.",
+            format!(
+                "The update feed's newest version ({offered}) is older than yours ({installed}), \
+                 so nothing is offered."
+            ),
         ),
-        Err(UpdateError::BadSignature(_) | UpdateError::FreshnessMismatch) => failed(
+        Err(UpdateError::BadSignature(_)) => failed(
             "UPDATE_FEED_UNTRUSTED",
             "The update feed failed signature verification and was ignored.",
         ),
+        Err(UpdateError::FreshnessMismatch) => failed(
+            "UPDATE_FEED_MISMATCH",
+            "The update feed's files do not match each other. Try again later.",
+        ),
         Err(_) => failed("UPDATE_FEED_INVALID", "The update feed is malformed."),
     }
+}
+
+/// One fetch-and-verify pass. The outer `Err` is a failure that ends the check before
+/// verification (fetch or decoding); the inner result is the verifier's verdict.
+fn check_once(
+    fetch: &dyn Fetch,
+    anchors: &TrustAnchors,
+    installed: &str,
+    now_unix: i64,
+) -> Result<Result<super::VerifiedRelease, UpdateError>, UpdateStatus> {
+    let channel = channel_for(installed);
+    let get = |name: &str| {
+        fetch.get(
+            &format!("{FEED_PREFIX}/{channel}/{name}"),
+            MAX_MANIFEST_BYTES,
+        )
+    };
+    let files = (|| {
+        Ok::<_, NetError>((
+            get("freshness.json")?,
+            get("freshness.json.minisig")?,
+            get("release.json")?,
+            get("release.json.minisig")?,
+        ))
+    })();
+    let (freshness, freshness_sig, release, release_sig) = match files {
+        Ok(f) => f,
+        Err(NetError::AirGapped) => {
+            return Err(failed("UPDATE_AIR_GAPPED", NetError::AirGapped.to_string()))
+        }
+        Err(e) => {
+            return Err(failed(
+                "UPDATE_FETCH_FAILED",
+                format!("Could not reach the update feed. {e}"),
+            ))
+        }
+    };
+    let (Ok(freshness_sig), Ok(release_sig)) = (
+        std::str::from_utf8(&freshness_sig),
+        std::str::from_utf8(&release_sig),
+    ) else {
+        return Err(failed(
+            "UPDATE_FEED_INVALID",
+            "The update feed is malformed.",
+        ));
+    };
+    Ok(verify_feed(
+        anchors,
+        &FeedFiles {
+            release: &release,
+            release_sig,
+            freshness: &freshness,
+            freshness_sig,
+        },
+        &LocalState {
+            channel,
+            target: THIS_TARGET,
+            installed,
+            highest_seen: None,
+            now_unix,
+        },
+    ))
 }
 
 /// Settings choice plus the last result, shared with the UI and the background checker.
@@ -245,6 +283,9 @@ pub struct UpdateState {
     pub mode: Mutex<UpdateMode>,
     /// Last result and when it was produced (unix seconds).
     pub last: Mutex<(UpdateStatus, Option<i64>)>,
+    /// Held for the whole of a check, so a background check and "Check now" never overlap and
+    /// an older, slower result cannot overwrite a newer one.
+    pub running: Mutex<()>,
 }
 
 impl Default for UpdateState {
@@ -252,6 +293,7 @@ impl Default for UpdateState {
         Self {
             mode: Mutex::new(UpdateMode::Notify),
             last: Mutex::new((UpdateStatus::Unchecked, None)),
+            running: Mutex::new(()),
         }
     }
 }

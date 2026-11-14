@@ -498,6 +498,8 @@ export interface NetworkStatus {
 }
 export const networkStatus = () => invoke<NetworkStatus>("network_status");
 export const setAirGapped = (enabled: boolean) => invoke<NetworkStatus>("set_air_gapped", { enabled });
+/** Window event fired after the air-gapped switch changes, so dependent cards refresh. */
+export const NETWORK_CHANGED_EVENT = "shush:network-changed";
 
 /** Update checks (issue #78, notify-only: nothing is downloaded or installed). */
 export type UpdateMode = "off" | "notify";
