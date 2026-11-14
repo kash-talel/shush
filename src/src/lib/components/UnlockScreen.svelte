@@ -7,6 +7,7 @@
   import VaultShelf from "./VaultShelf.svelte";
   import {
     describeAutoLock,
+    discardVaultSibling,
     formatKdf,
     toCmdError,
     unlock,
@@ -58,6 +59,28 @@
     !busy && !unreadable && password.length > 0 && (!keyfileRequired || keyfile !== null),
   );
   const cut = $derived(Math.max(vault.path.lastIndexOf("\\"), vault.path.lastIndexOf("/")));
+
+  // Files a sync client or crash left next to the vault (issue #80). "Keep" just
+  // dismisses; to compare a copy, add it to the shelf as an existing vault.
+  let dismissed = $state<string[]>([]);
+  let removed = $state<string[]>([]);
+  let siblingError = $state<CmdError | null>(null);
+  const siblings = $derived(
+    [
+      ...vault.conflicted_copies.map((name) => ({ name, kind: "copy" as const })),
+      ...(vault.stale_tmp ? [{ name: vault.stale_tmp, kind: "tmp" as const }] : []),
+    ].filter((s) => !dismissed.includes(s.name) && !removed.includes(s.name)),
+  );
+
+  async function discardSibling(name: string) {
+    siblingError = null;
+    try {
+      await discardVaultSibling(name);
+      removed = [...removed, name];
+    } catch (e) {
+      siblingError = toCmdError(e);
+    }
+  }
 
   async function unseal() {
     unsealed = true;
@@ -162,6 +185,36 @@
         {/if}
         {#if !unsealed && unreadable && error}
           <p class="text-xs text-danger" role="alert"><span class="font-mono">[{error.code}]</span> {error.message}</p>
+        {/if}
+      </div>
+    {/if}
+
+    {#if !unsealed && siblings.length > 0}
+      <div class="mt-4 flex w-full flex-col gap-2 text-left" role="status">
+        {#each siblings as s (s.name)}
+          <div class="flex flex-col gap-1 rounded-[3px] border border-uv/30 bg-uv/10 px-2 py-1.5 text-xs text-uv-soft">
+            <p class="flex items-start gap-2">
+              <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              {#if s.kind === "copy"}
+                <span>
+                  Your sync service left a possible conflicted copy of this vault:
+                  <span class="font-mono break-all">{s.name}</span>. It may hold changes this vault lacks. Nothing was merged.
+                  To compare, add it to the shelf as an existing vault.
+                </span>
+              {:else}
+                <span>
+                  An interrupted save left <span class="font-mono break-all">{s.name}</span> behind. This vault is intact, so it is safe to remove.
+                </span>
+              {/if}
+            </p>
+            <div class="flex gap-2 self-end font-mono text-[10px]">
+              <button type="button" class="underline" onclick={() => (dismissed = [...dismissed, s.name])}>Keep</button>
+              <button type="button" class="text-danger underline" onclick={() => discardSibling(s.name)}>Discard</button>
+            </div>
+          </div>
+        {/each}
+        {#if siblingError}
+          <p class="text-xs text-danger" role="alert"><span class="font-mono">[{siblingError.code}]</span> {siblingError.message}</p>
         {/if}
       </div>
     {/if}

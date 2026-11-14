@@ -41,6 +41,10 @@ export interface VaultStatus {
   error: CmdError | null;
   hide_names: boolean;
   can_delete: boolean;
+  /** Probable cloud-sync conflicted copies next to the vault (file names). */
+  conflicted_copies: string[];
+  /** Stale `.tmp` left by an interrupted save, while the vault itself is intact. */
+  stale_tmp: string | null;
 }
 
 /** Counts only: item contents never cross the IPC boundary here. */
@@ -82,6 +86,8 @@ export function toCmdError(e: unknown): CmdError {
 
 export const appInfo = () => invoke<AppInfo>("app_info");
 export const vaultStatus = () => invoke<VaultStatus>("vault_status");
+export const discardVaultSibling = (file: string) =>
+  invoke<void>("discard_vault_sibling", { file });
 export const inspectKeyfile = (path: string) => invoke<KeyfileInfo>("inspect_keyfile", { path });
 export const createVault = (
   password: string,

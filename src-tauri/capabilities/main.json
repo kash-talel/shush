@@ -9,6 +9,7 @@
     "dialog:allow-save",
     "allow-app-info",
     "allow-vault-status",
+    "allow-discard-vault-sibling",
     "allow-list-vaults",
     "allow-select-vault",
     "allow-check-new-vault",
