@@ -95,10 +95,7 @@ mod imp {
     /// The directory's DACL as SDDL (tests).
     #[cfg(test)]
     pub(super) fn dacl_sddl(dir: &Path) -> io::Result<String> {
-        use windows_sys::Win32::Security::Authorization::{
-            ConvertSecurityDescriptorToStringSecurityDescriptorW, GetNamedSecurityInfoW,
-            SE_FILE_OBJECT,
-        };
+        use windows_sys::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
         use windows_sys::Win32::Security::DACL_SECURITY_INFORMATION;
 
         let path: Vec<u16> = dir.as_os_str().encode_wide().chain([0]).collect();
@@ -119,7 +116,39 @@ mod imp {
         if rc != 0 {
             return Err(io::Error::from_raw_os_error(rc as i32));
         }
-        let sd = Local(sd);
+        descriptor_to_sddl(&Local(sd))
+    }
+
+    /// `sddl` as Windows itself prints it (tests). Windows abbreviates well-known SIDs, so the
+    /// same user can read back as a two-letter alias instead of `S-1-5-21-...`: the built-in
+    /// Administrator account, which GitHub's Windows runners use, comes back as `LA`.
+    #[cfg(test)]
+    pub(super) fn canonical_sddl(sddl: &str) -> io::Result<String> {
+        let wide: Vec<u16> = std::ffi::OsStr::new(sddl)
+            .encode_wide()
+            .chain([0])
+            .collect();
+        let mut sd: *mut c_void = ptr::null_mut();
+        // SAFETY: valid NUL-terminated SDDL; `sd` receives a LocalAlloc'd descriptor.
+        if unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                wide.as_ptr(),
+                SDDL_REVISION_1,
+                &mut sd,
+                ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        descriptor_to_sddl(&Local(sd))
+    }
+
+    #[cfg(test)]
+    fn descriptor_to_sddl(sd: &Local) -> io::Result<String> {
+        use windows_sys::Win32::Security::Authorization::ConvertSecurityDescriptorToStringSecurityDescriptorW;
+        use windows_sys::Win32::Security::DACL_SECURITY_INFORMATION;
+
         let mut s: *mut u16 = ptr::null_mut();
         // SAFETY: `sd` is a valid descriptor; `s` receives a LocalAlloc'd wide string.
         if unsafe {
@@ -184,8 +213,18 @@ mod tests {
         create_fresh(&dir).unwrap();
         let sid = crate::os::pipe::current_user_sid().unwrap();
         let dacl = imp::dacl_sddl(&dir).unwrap();
+        // Compare against what Windows prints for the intended ACL, not against the raw SID:
+        // a well-known account reads back as an alias (`LA` on GitHub's runners).
+        let expected = imp::canonical_sddl(&imp::sddl(&sid)).unwrap();
+        assert_eq!(dacl, expected, "exactly this user and SYSTEM, nothing else");
+        // The user's entry as Windows spells it: `;;;S-1-5-21-...)` or `;;;LA)`.
+        let user = expected
+            .split_once(";;;")
+            .and_then(|(_, rest)| rest.split_once(')'))
+            .map(|(who, _)| format!(";;;{who})"))
+            .unwrap();
         assert!(dacl.starts_with("D:P"), "inheritance not blocked: {dacl}");
-        assert!(dacl.contains(&sid), "{dacl}");
+        assert!(dacl.contains(&user), "{dacl}");
         assert!(dacl.contains(";SY)"), "{dacl}");
         // No broad principals: Users, Authenticated Users, Everyone, Administrators.
         for broad in [";BU)", ";AU)", ";WD)", ";BA)"] {
@@ -196,7 +235,7 @@ mod tests {
         std::fs::write(&f, b"x").unwrap();
         let file_dacl = imp::dacl_sddl(&f).unwrap();
         assert!(
-            file_dacl.contains(&sid) && !file_dacl.contains(";BU)"),
+            file_dacl.contains(&user) && !file_dacl.contains(";BU)"),
             "{file_dacl}"
         );
         assert_eq!(
