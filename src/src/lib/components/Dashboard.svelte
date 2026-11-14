@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
   import { DatabaseBackup, KeyRound, Layers, LockKeyhole, NotebookText, Plus, Search, Star, TriangleAlert } from "@lucide/svelte";
   import ItemList from "./ItemList.svelte";
   import ItemDetailView from "./ItemDetail.svelte";
@@ -88,8 +89,13 @@
     items = (await run(listItems)) ?? items;
     folders = (await run(listFolders)) ?? folders;
     if (detail) {
-      // Keep the open item in sync (e.g. its folder was deleted).
+      // Keep the open item in sync (e.g. its folder was deleted, or a reload
+      // from disk removed the item).
       const id = detail.id;
+      if (!items.some((i) => i.id === id)) {
+        detail = null;
+        return;
+      }
       const d = await run(() => getItem(id));
       if (d) detail = d;
     }
@@ -104,6 +110,61 @@
       error = toCmdError(e);
     }
   }
+
+  // The vault file changed on disk (cloud sync, another machine; issue #113).
+  // With no edit in progress it reloads silently; otherwise a banner offers it,
+  // and closing the editor reloads then.
+  let diskNotice = $state<"edit" | "password" | null>(null);
+  // Runs disk reloads one at a time, so two quick changes never overlap.
+  let diskQueue: Promise<void> = Promise.resolve();
+
+  const editing = () => mode.kind === "create" || mode.kind === "edit";
+
+  // The watcher announces each change once, so a reload that fails while the
+  // sync client is still busy with the file (sharing violation, the gap in a
+  // delete-then-rename) is retried a few times before an error is shown.
+  const DISK_RETRIES = 3;
+  let diskRetry: ReturnType<typeof setTimeout> | undefined;
+
+  function onDiskChanged(discardEdit = false, attempt = 0) {
+    clearTimeout(diskRetry);
+    diskQueue = diskQueue.then(() => reloadFromDisk(discardEdit, attempt));
+  }
+
+  async function reloadFromDisk(discardEdit: boolean, attempt: number) {
+    if (editing() && !discardEdit) {
+      diskNotice = "edit";
+      return;
+    }
+    try {
+      // Keep attachment files the sync client may have delivered early.
+      await reloadVault(undefined, undefined, true);
+    } catch (e) {
+      // The edit stays open: nothing was reloaded.
+      const err = toCmdError(e);
+      if (err.code === "PASSWORD_REQUIRED") diskNotice = "password";
+      else if (attempt < DISK_RETRIES && err.code !== "VAULT_LOCKED") {
+        diskRetry = setTimeout(() => onDiskChanged(discardEdit, attempt + 1), 2000);
+      } else {
+        diskNotice = null;
+        error = err;
+      }
+      return;
+    }
+    if (discardEdit) mode = { kind: "view" };
+    diskNotice = null;
+    await refresh();
+  }
+
+  // A change noticed during an edit is applied once the editor closes.
+  $effect(() => {
+    if (diskNotice === "edit" && !editing()) {
+      // Cleared now so later mode changes do not queue the same reload again;
+      // the reload sets it back if an editor reopened meanwhile.
+      diskNotice = null;
+      untrack(() => onDiskChanged());
+    }
+  });
 
   const folderName = (id: string | null) => folders.find((f) => f.id === id)?.name ?? null;
 
@@ -167,7 +228,14 @@
     }
   }
 
-  onMount(refresh);
+  onMount(() => {
+    void refresh();
+    const off = listen("vault-disk-changed", () => void onDiskChanged());
+    return () => {
+      clearTimeout(diskRetry);
+      void off.then((f) => f());
+    };
+  });
 
   const filters: { id: Filter; label: string; icon: typeof Layers }[] = [
     { id: "all", label: "All items", icon: Layers },
@@ -291,6 +359,23 @@
       <div class="flex items-center gap-2 border-b border-caution/30 bg-caution/10 px-4 py-1.5 text-xs text-caution" role="status">
         <LockKeyhole class="size-3.5 shrink-0" aria-hidden="true" />
         <span>Vault is opened in read-only mode (media or file is write-protected). Changes cannot be saved.</span>
+      </div>
+    {/if}
+    {#if diskNotice}
+      <div class="flex items-center justify-between gap-2 border-b border-caution/30 bg-caution/10 px-4 py-1.5 text-xs text-caution" role="status">
+        <span>
+          {#if diskNotice === "edit"}
+            The vault file was updated on disk. Finish or cancel your edit, or reload now (your edit is discarded).
+          {:else}
+            The vault file was replaced with different credentials. Lock and unlock to open the new version.
+          {/if}
+        </span>
+        <span class="flex shrink-0 gap-1.5">
+          {#if diskNotice === "edit"}
+            <button type="button" onclick={() => onDiskChanged(true)} class="key-steel h-6 px-2 text-[11px]">Reload</button>
+          {/if}
+          <button type="button" onclick={() => (diskNotice = null)} class="key-steel h-6 px-2 text-[11px]">Dismiss</button>
+        </span>
       </div>
     {/if}
     {#if error}
