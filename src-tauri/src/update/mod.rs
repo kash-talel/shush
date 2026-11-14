@@ -12,8 +12,11 @@
 //! Rules enforced by [`verify_feed`]: both signatures check against pinned keys, the freshness file
 //! points at these exact release bytes, it has not expired (else [`UpdateError::Stale`], never
 //! "up to date"), the channel matches, and the version is not a rollback (`>= installed` and
-//! `>= highest_seen`). [`verify_download`] then checks the downloaded bytes against the signed
-//! size and sha256. Callers persist `highest_seen` only after both succeed.
+//! `>= highest_seen`, by semver precedence so build metadata never counts). The freshness window is
+//! at most 14 days and may not start in the future; the artifact must target this platform over
+//! https; the stable channel never offers pre-releases. [`verify_download`] then checks the
+//! downloaded bytes against the signed size and sha256. Callers persist `highest_seen` only after
+//! both succeed.
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -24,6 +27,16 @@ pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 pub const MAX_INSTALLER_BYTES: u64 = 256 * 1024 * 1024;
 /// The only manifest schema this client understands.
 pub const SCHEMA: u32 = 1;
+/// Longest validity a freshness file may claim (`expires_at - issued_at`). CI signs 14-day
+/// windows weekly; anything longer would let one captured file freeze updates for longer.
+pub const MAX_FRESHNESS_SECS: i64 = 14 * 24 * 60 * 60;
+/// How far `issued_at` may sit ahead of the local clock (skew tolerance). A file "issued" further
+/// in the future was minted to outlive the window and is refused.
+pub const MAX_CLOCK_SKEW_SECS: i64 = 5 * 60;
+/// The channel that never offers pre-release versions.
+pub const STABLE_CHANNEL: &str = "stable";
+/// Artifact target this build installs. Other targets in a feed are refused.
+pub const THIS_TARGET: &str = "windows-x86_64-nsis";
 
 /// Why a feed or download was rejected. Every variant means: do not install.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -40,9 +53,12 @@ pub enum UpdateError {
     /// The freshness file expired: we cannot confirm we are up to date.
     #[error("the update feed is stale; cannot confirm you are up to date")]
     Stale,
-    /// The manifests are for another channel.
+    /// The manifests are for another channel, or offer a pre-release on the stable channel.
     #[error("update channel mismatch")]
     ChannelMismatch,
+    /// The installer is built for another platform.
+    #[error("update is for another platform")]
+    TargetMismatch,
     /// The release is older than what is installed or previously seen.
     #[error(
         "release {offered} is a rollback (installed {installed}, highest seen {highest_seen})"
@@ -162,6 +178,8 @@ pub struct FeedFiles<'a> {
 pub struct LocalState<'a> {
     /// Channel this install follows.
     pub channel: &'a str,
+    /// Artifact target this install accepts (normally [`THIS_TARGET`]).
+    pub target: &'a str,
     /// Installed version.
     pub installed: &'a str,
     /// Highest version ever fully verified (persisted by the caller), if any.
@@ -244,30 +262,49 @@ pub fn verify_feed(
         return Err(UpdateError::FreshnessMismatch);
     }
     let fresh_until_unix = parse_time(&fresh.expires_at)?;
-    parse_time(&fresh.issued_at)?;
+    let issued_unix = parse_time(&fresh.issued_at)?;
     parse_time(&release.released_at)?;
+    // Bound the window so one signed file cannot vouch for "up to date" indefinitely.
+    if fresh_until_unix <= issued_unix || fresh_until_unix - issued_unix > MAX_FRESHNESS_SECS {
+        return Err(UpdateError::Malformed("freshness window"));
+    }
+    if issued_unix > local.now_unix.saturating_add(MAX_CLOCK_SKEW_SECS) {
+        return Err(UpdateError::Malformed("freshness issued in the future"));
+    }
     if local.now_unix >= fresh_until_unix {
         return Err(UpdateError::Stale);
     }
 
+    if release.artifact.target != local.target {
+        return Err(UpdateError::TargetMismatch);
+    }
     if release.artifact.size == 0 || release.artifact.size > MAX_INSTALLER_BYTES {
         return Err(UpdateError::Malformed("artifact size"));
     }
+    match url::Url::parse(&release.artifact.url) {
+        Ok(u) if u.scheme() == "https" && u.host_str().is_some_and(|h| !h.is_empty()) => {}
+        _ => return Err(UpdateError::Malformed("artifact url")),
+    }
     let offered = parse_version(&release.version)?;
+    if local.channel == STABLE_CHANNEL && !offered.pre.is_empty() {
+        return Err(UpdateError::ChannelMismatch);
+    }
     let installed = parse_version(local.installed)?;
     let highest = match local.highest_seen {
         Some(h) => parse_version(h)?,
         None => installed.clone(),
     };
+    // Semver precedence ignores build metadata, so `0.1.0+rebuild` is not newer than `0.1.0`.
+    let older = |a: &semver::Version, b: &semver::Version| a.cmp_precedence(b).is_lt();
     // A re-pointed older release is a rollback even if both files are validly signed.
-    if offered < installed || offered < highest {
+    if older(&offered, &installed) || older(&offered, &highest) {
         return Err(UpdateError::Rollback {
             offered: release.version.clone(),
             installed: local.installed.to_owned(),
             highest_seen: local.highest_seen.unwrap_or(local.installed).to_owned(),
         });
     }
-    let update_available = offered > installed;
+    let update_available = offered.cmp_precedence(&installed).is_gt();
     Ok(VerifiedRelease {
         release,
         release_key_index,

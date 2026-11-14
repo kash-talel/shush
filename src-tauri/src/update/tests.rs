@@ -35,8 +35,17 @@ fn rfc(unix: i64) -> String {
 }
 
 fn release_json(version: &str, installer: &[u8]) -> Vec<u8> {
+    release_json_with(
+        version,
+        "windows-x86_64-nsis",
+        "https://example.invalid/x.exe",
+        installer,
+    )
+}
+
+fn release_json_with(version: &str, target: &str, url: &str, installer: &[u8]) -> Vec<u8> {
     format!(
-        r#"{{"schema":1,"channel":"stable","version":"{version}","released_at":"{}","artifact":{{"target":"windows-x86_64-nsis","url":"https://example.invalid/x.exe","sha256":"{}","size":{}}}}}"#,
+        r#"{{"schema":1,"channel":"stable","version":"{version}","released_at":"{}","artifact":{{"target":"{target}","url":"{url}","sha256":"{}","size":{}}}}}"#,
         rfc(NOW - 100),
         sha256_hex(installer),
         installer.len()
@@ -45,13 +54,36 @@ fn release_json(version: &str, installer: &[u8]) -> Vec<u8> {
 }
 
 fn fresh_json(release: &[u8], expires: i64) -> Vec<u8> {
+    fresh_json_issued(release, NOW - 50, expires)
+}
+
+fn fresh_json_issued(release: &[u8], issued: i64, expires: i64) -> Vec<u8> {
     format!(
         r#"{{"schema":1,"channel":"stable","release_sha256":"{}","issued_at":"{}","expires_at":"{}"}}"#,
         sha256_hex(release),
-        rfc(NOW - 50),
+        rfc(issued),
         rfc(expires)
     )
     .into_bytes()
+}
+
+/// Sign and verify arbitrary manifest bytes with the fixture's pinned keys.
+fn run_raw(
+    fx: &Fx,
+    rel: &[u8],
+    fresh: &[u8],
+    st: &LocalState<'_>,
+) -> Result<VerifiedRelease, UpdateError> {
+    verify_feed(
+        &fx.anchors(),
+        &FeedFiles {
+            release: rel,
+            release_sig: &sign(&fx.rel_key, rel),
+            freshness: fresh,
+            freshness_sig: &sign(&fx.ts_key, fresh),
+        },
+        st,
+    )
 }
 
 struct Fx {
@@ -79,6 +111,7 @@ impl Fx {
 fn local<'a>(installed: &'a str, highest: Option<&'a str>) -> LocalState<'a> {
     LocalState {
         channel: "stable",
+        target: THIS_TARGET,
         installed,
         highest_seen: highest,
         now_unix: NOW,
@@ -279,4 +312,134 @@ fn download_must_match_signed_size_and_hash() {
         verify_download(&v.release, b"installer!"),
         Err(UpdateError::ArtifactMismatch)
     );
+}
+
+#[test]
+fn freshness_window_is_bounded() {
+    let fx = Fx::new();
+    let st = local("0.1.1", None);
+    let rel = release_json("0.2.0", b"installer");
+    // Exactly the maximum window is fine.
+    let ok = fresh_json_issued(&rel, NOW - 50, NOW - 50 + MAX_FRESHNESS_SECS);
+    assert!(run_raw(&fx, &rel, &ok, &st).is_ok());
+    // One second longer, or a far-future expiry, is refused.
+    let long = fresh_json_issued(&rel, NOW - 50, NOW - 50 + MAX_FRESHNESS_SECS + 1);
+    assert_eq!(
+        run_raw(&fx, &rel, &long, &st),
+        Err(UpdateError::Malformed("freshness window"))
+    );
+    let forever = fresh_json_issued(&rel, NOW - 50, NOW + 100 * 365 * 86_400);
+    assert_eq!(
+        run_raw(&fx, &rel, &forever, &st),
+        Err(UpdateError::Malformed("freshness window"))
+    );
+    // Expiry not after issue is refused.
+    let inverted = fresh_json_issued(&rel, NOW + 10, NOW + 10);
+    assert_eq!(
+        run_raw(&fx, &rel, &inverted, &st),
+        Err(UpdateError::Malformed("freshness window"))
+    );
+}
+
+#[test]
+fn freshness_issued_in_the_future_is_refused() {
+    let fx = Fx::new();
+    let st = local("0.1.1", None);
+    let rel = release_json("0.2.0", b"installer");
+    // Within clock-skew tolerance: accepted.
+    let skew = fresh_json_issued(&rel, NOW + MAX_CLOCK_SKEW_SECS, NOW + 86_400);
+    assert!(run_raw(&fx, &rel, &skew, &st).is_ok());
+    // Beyond it (minted to outlive the window): refused.
+    let ahead = fresh_json_issued(&rel, NOW + MAX_CLOCK_SKEW_SECS + 1, NOW + 86_400);
+    assert_eq!(
+        run_raw(&fx, &rel, &ahead, &st),
+        Err(UpdateError::Malformed("freshness issued in the future"))
+    );
+}
+
+#[test]
+fn artifact_url_must_be_https() {
+    let fx = Fx::new();
+    let st = local("0.1.1", None);
+    for url in [
+        "http://example.invalid/x.exe",
+        "file:///C:/Windows/x.exe",
+        "ftp://example.invalid/x.exe",
+        "not a url",
+    ] {
+        let rel = release_json_with("0.2.0", THIS_TARGET, url, b"installer");
+        let fresh = fresh_json(&rel, NOW + 1000);
+        assert_eq!(
+            run_raw(&fx, &rel, &fresh, &st),
+            Err(UpdateError::Malformed("artifact url")),
+            "{url}"
+        );
+    }
+}
+
+#[test]
+fn artifact_for_another_target_is_refused() {
+    let fx = Fx::new();
+    let rel = release_json_with(
+        "0.2.0",
+        "linux-aarch64-deb",
+        "https://example.invalid/x.deb",
+        b"installer",
+    );
+    let fresh = fresh_json(&rel, NOW + 1000);
+    assert_eq!(
+        run_raw(&fx, &rel, &fresh, &local("0.1.1", None)),
+        Err(UpdateError::TargetMismatch)
+    );
+}
+
+#[test]
+fn prerelease_refused_on_stable_only() {
+    let fx = Fx::new();
+    let rel = release_json("0.2.0-rc.1", b"installer");
+    let fresh = fresh_json(&rel, NOW + 1000);
+    assert_eq!(
+        run_raw(&fx, &rel, &fresh, &local("0.1.1", None)),
+        Err(UpdateError::ChannelMismatch)
+    );
+    // The planned beta channel may offer pre-releases.
+    let beta_rel = String::from_utf8(rel)
+        .unwrap()
+        .replace("\"stable\"", "\"beta\"")
+        .into_bytes();
+    let beta_fresh = String::from_utf8(fresh_json(&beta_rel, NOW + 1000))
+        .unwrap()
+        .replace("\"stable\"", "\"beta\"")
+        .into_bytes();
+    let mut st = local("0.1.1", None);
+    st.channel = "beta";
+    assert!(
+        run_raw(&fx, &beta_rel, &beta_fresh, &st)
+            .unwrap()
+            .update_available
+    );
+}
+
+#[test]
+fn build_metadata_does_not_count_as_newer() {
+    let fx = Fx::new();
+    let v = run(
+        &fx,
+        &fx.rel_key,
+        "0.1.1+rebuild",
+        NOW + 1000,
+        &local("0.1.1", None),
+    )
+    .unwrap();
+    assert!(!v.update_available);
+    // Nor older: same precedence is not a rollback either way.
+    let v = run(
+        &fx,
+        &fx.rel_key,
+        "0.1.1",
+        NOW + 1000,
+        &local("0.1.1+rebuild", None),
+    )
+    .unwrap();
+    assert!(!v.update_available);
 }
