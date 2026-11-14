@@ -504,6 +504,14 @@ Imported one archived in password_history
 (user may Swap Active & Archived)"]
 ```
 
+#### Sync ordering (issue #137)
+LAN sync orders edits with a per-item hybrid logical clock `hlc = (physical_ms, counter, device_id)`
+(`vault/hlc.rs`), stored as an optional `hlc` field on items and tombstones plus a per-vault `device_id`
+and `last_hlc` in the payload (all absent in older vaults; items without a clock compare as oldest).
+`vault/sync_merge.rs` applies it: a clock more than 24 h ahead of local time is parked, a password never
+auto-promotes (the peer's is archived as `archived_conflict`), tombstones are unioned, and an edit newer
+than a tombstone is parked as a conflict instead of resurrecting or deleting the item.
+
 #### 1. Zero-Data-Loss Guarantee
 - An import **never destroys a password and never promotes one**. When two passwords conflict for the same account (e.g. `github.com` / `user@example.com` has `Password_A` in the vault and `Password_B` in a Firefox export):
   - The vault's current password **stays active**, whatever either side's timestamps say.

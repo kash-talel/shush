@@ -493,6 +493,7 @@ mod tests {
         other.tombstones.push(crate::vault::models::Tombstone {
             id: keep.clone(),
             deleted_at: now_rfc3339(),
+            hlc: None,
         });
         let manifest = Manifest {
             backup_version: 1,
