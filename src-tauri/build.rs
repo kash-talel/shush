@@ -63,6 +63,9 @@ const COMMANDS: &[&str] = &[
     "set_browser_support",
     "network_status",
     "set_air_gapped",
+    "update_status",
+    "set_update_mode",
+    "check_for_update",
 ];
 
 fn main() {

@@ -2369,6 +2369,154 @@ fn set_air_gapped(app: tauri::AppHandle, enabled: bool) -> Result<NetworkStatus,
     Ok(network_info(&app))
 }
 
+/// What Settings -> Updates shows (issue #78, notify-only).
+#[derive(serde::Serialize)]
+struct UpdateInfo {
+    /// The user's choice (`off` or `notify`).
+    mode: update::client::UpdateMode,
+    /// True while the network gate is closed: nothing is checked.
+    air_gapped: bool,
+    /// Last check result.
+    status: update::client::UpdateStatus,
+    /// Unix seconds of the last check, if any.
+    checked_at: Option<i64>,
+    /// Version of this build.
+    installed: &'static str,
+}
+
+fn update_info(app: &tauri::AppHandle) -> UpdateInfo {
+    let st = app.state::<update::client::UpdateState>();
+    let (status, checked_at) = st.snapshot();
+    UpdateInfo {
+        mode: st.mode(),
+        // Also true in a build without network support: no check can run there either.
+        air_gapped: app.state::<net::NetGate>().check().is_err(),
+        status,
+        checked_at,
+        installed: env!("CARGO_PKG_VERSION"),
+    }
+}
+
+fn unix_now() -> i64 {
+    time::OffsetDateTime::now_utc().unix_timestamp()
+}
+
+/// Runs one check through the network gate and records the result. Blocking; checks run one at
+/// a time. Returns whether the check reached a verified answer (false: retry sooner).
+fn run_update_check(app: &tauri::AppHandle) -> bool {
+    let state = app.state::<update::client::UpdateState>();
+    let _running = state.running.lock().unwrap_or_else(|e| e.into_inner());
+    let gate = app.state::<net::NetGate>();
+    let now = unix_now();
+    let status = update::client::check(
+        &update::client::GateFetch(&gate),
+        &update::client::pinned_anchors(),
+        env!("CARGO_PKG_VERSION"),
+        now,
+    );
+    // The gate closed mid-check: keep the last real result rather than an air-gap error.
+    if matches!(
+        status,
+        update::client::UpdateStatus::Failed {
+            code: "UPDATE_AIR_GAPPED",
+            ..
+        }
+    ) {
+        return false;
+    }
+    let settled = !matches!(
+        status,
+        update::client::UpdateStatus::Failed {
+            code: "UPDATE_FETCH_FAILED" | "UPDATE_FEED_MISMATCH",
+            ..
+        }
+    );
+    state.record(status, now);
+    settled
+}
+
+/// Background checker: first check shortly after start, then every 24 h plus up to 2 h of
+/// jitter; after a fetch failure (offline at boot, say) it retries in 1 h plus jitter instead.
+/// Does nothing while air-gapped or when updates are off, and re-arms when that changes.
+fn spawn_update_checker(app: tauri::AppHandle) {
+    use rand::Rng;
+    std::thread::spawn(move || {
+        let mut due: Option<std::time::Instant> = None;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            let eligible = app.state::<update::client::UpdateState>().mode()
+                == update::client::UpdateMode::Notify
+                && app.state::<net::NetGate>().check().is_ok();
+            if !eligible {
+                due = None;
+                continue;
+            }
+            let now = std::time::Instant::now();
+            match due {
+                None => due = Some(now + std::time::Duration::from_secs(30)),
+                Some(t) if now >= t => {
+                    let base = if run_update_check(&app) {
+                        24 * 60 * 60
+                    } else {
+                        60 * 60
+                    };
+                    let jitter = rand::thread_rng().gen_range(0..2 * 60 * 60);
+                    due = Some(
+                        std::time::Instant::now() + std::time::Duration::from_secs(base + jitter),
+                    );
+                }
+                Some(_) => {}
+            }
+        }
+    });
+}
+
+#[tauri::command]
+fn update_status(app: tauri::AppHandle) -> UpdateInfo {
+    update_info(&app)
+}
+
+/// Settings choice for update checks. Saved before it takes effect.
+#[tauri::command]
+fn set_update_mode(
+    app: tauri::AppHandle,
+    mode: update::client::UpdateMode,
+) -> Result<UpdateInfo, CmdError> {
+    let (dir, _) = vault_home(&app)?;
+    mode.save(&dir).map_err(|e| {
+        CmdError::new(
+            "UPDATE_SETTING_FAILED",
+            format!("Could not save the update setting: {e}"),
+        )
+    })?;
+    *app.state::<update::client::UpdateState>()
+        .mode
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = mode;
+    Ok(update_info(&app))
+}
+
+/// "Check now": one gated check, run off the UI thread. Refused while updates are off.
+#[tauri::command]
+async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, CmdError> {
+    if app.state::<update::client::UpdateState>().mode() == update::client::UpdateMode::Off {
+        return Err(CmdError::new(
+            "UPDATE_OFF",
+            "Update checks are off. Turn them on first.",
+        ));
+    }
+    if let Err(e) = app.state::<net::NetGate>().check() {
+        return Err(CmdError::new("UPDATE_AIR_GAPPED", e.to_string()));
+    }
+    let a = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        run_update_check(&a);
+    })
+    .await
+    .map_err(|_| CmdError::new("UPDATE_CHECK_FAILED", "The update check did not finish."))?;
+    Ok(update_info(&app))
+}
+
 /// Tauri builder with every shush command and the vault state registered.
 ///
 /// GUI plugins (e.g. the native file dialog) are attached in `main.rs`, not
@@ -2382,6 +2530,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
         .manage(VaultState::default())
         .manage(bridge::state::BridgeState::default())
         .manage(net::NetGate::default())
+        .manage(update::client::UpdateState::default())
         .manage(std::sync::Mutex::new(DeleteThrottle::default()))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -2404,7 +2553,12 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner()) = DeleteThrottle::load(&dir);
                 app.state::<net::NetGate>().load(&dir);
+                *app.state::<update::client::UpdateState>()
+                    .mode
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = update::client::UpdateMode::load(&dir);
             }
+            spawn_update_checker(app.handle().clone());
             // Another application may own the combination; Spotlight then stays
             // reachable from the tray and app_info reports it (issue #14).
             let ok = app.global_shortcut().register(SPOTLIGHT_HOTKEY).is_ok();
@@ -2497,7 +2651,10 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             browser_support_status,
             set_browser_support,
             network_status,
-            set_air_gapped
+            set_air_gapped,
+            update_status,
+            set_update_mode,
+            check_for_update
         ])
 }
 

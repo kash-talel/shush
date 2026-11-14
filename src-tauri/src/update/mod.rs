@@ -1,8 +1,8 @@
 //! Update trust verification (issue #78): the offline core of the signed-feed client.
 //!
 //! This module only *decides* whether a feed and a downloaded installer may be trusted. It does no
-//! network I/O and installs nothing; fetching goes through the network gate (#25) and installing
-//! through the Tauri updater plugin, both wired up in later phases once the feed exists (#103).
+//! network I/O and installs nothing. Fetching (notify-only) lives in [`client`] and goes through
+//! the network gate (#157); download and install come in a later phase.
 //!
 //! The scheme is a minimal TUF:
 //! - `release.json` binds *version -> sha256 + size* and is signed by a **release key**.
@@ -20,6 +20,8 @@
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+
+pub mod client;
 
 /// Hard cap on a manifest's size; both files are tiny, so anything bigger is hostile.
 pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;

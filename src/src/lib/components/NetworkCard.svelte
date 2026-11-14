@@ -1,6 +1,13 @@
 <script lang="ts">
   import { TriangleAlert, WifiOff } from "@lucide/svelte";
-  import { networkStatus, setAirGapped, toCmdError, type CmdError, type NetworkStatus } from "../tauri-bridge";
+  import {
+    NETWORK_CHANGED_EVENT,
+    networkStatus,
+    setAirGapped,
+    toCmdError,
+    type CmdError,
+    type NetworkStatus,
+  } from "../tauri-bridge";
 
   // Settings -> Network (issue #157). Air-gapped is the default: shush opens no
   // network socket until this is turned off. Native messaging to the browser
@@ -34,6 +41,8 @@
       // A failed save leaves `status` unchanged, so Svelte would not reset the
       // box the user just clicked: show the gate's real state, not the click.
       box.checked = status?.air_gapped ?? true;
+      // Other cards that depend on the gate (e.g. Updates) re-read their state.
+      window.dispatchEvent(new CustomEvent(NETWORK_CHANGED_EVENT));
     }
   }
 </script>
@@ -65,7 +74,10 @@
   {:else if status}
     <p class="flex items-start gap-1.5 text-xs text-caution" role="status">
       <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-      <span>Air-gapped mode is off. Network features may connect when you use them.</span>
+      <span>
+        Air-gapped mode is off. Network features may connect when you use them, and shush checks for updates
+        about once a day unless you turn that off under Updates.
+      </span>
     </p>
   {/if}
 
