@@ -48,23 +48,33 @@ working shush installed when you finish.
    `git fetch origin <headRefName>`, then `git checkout --detach origin/<headRefName>`, then
    `powershell -NoProfile -File .claude/scripts/issue-worktree.ps1 -Link`.
 
+## Keep your context small
+Every call re-reads everything already in your context, so a long log or a whole file read early
+is paid for on every later step. Read files by line range around the diff, not whole. Search
+with Grep before reading. Never re-read a file you already have. Send long command output to a
+scratchpad file and read only the lines you need.
+
 ## Step 2: Verify it yourself
 Do not trust the PR's `### Verification` section.
-`powershell -NoProfile -File .claude/scripts/verify.ps1` must end `verify: all passed`
-(`-Test <name>` re-checks one test). If a single test fails, rerun just it up to 2 more times;
+`powershell -NoProfile -File .claude/scripts/verify.ps1` must end `verify: all passed`. Run the
+full suite **twice at most**: once on the PR head here, and once before you push fixes. During
+fix rounds re-check only what you touched with `-Test <name>`. CI runs the full suite again before
+merge-pr.ps1 merges. If a single test fails, rerun just it up to 2 more times;
 treat it as flaky only if it passes on rerun, is unrelated to the diff, and an open issue
 already tracks it (`gh issue list --search "<test name>"`).
 
-Then exercise the behaviour the issue is about, as directly as is safe: a targeted test, a CDP
-run of the debug build against a scratch vault (start that command with
-`. .claude/scripts/issue-env.ps1;`), or a small harness. Where the real trigger cannot be
-reproduced safely, check the code path by reading it and, if possible, by calling it from a
-test, and record it as "not tested, why".
+Then exercise the behaviour the issue is about, cheapest way first: a targeted test or a small
+harness. Use a CDP run of the debug build against a scratch vault (start that command with
+`. .claude/scripts/issue-env.ps1;`) only when the change is in the UI or in app-level behaviour
+that no test can reach. Where the real trigger cannot be reproduced safely, check the code path
+by reading it and, if possible, by calling it from a test, and record it as "not tested, why".
 
 ## Step 3: Review for defects
 Skip this step's `/code-review` when the PR changes only Markdown. Otherwise run
 `/code-review high <PR>` through the Skill tool (it runs in the background; see "Waiting on background work").
-Then go through this checklist yourself; each item applies when the diff touches it:
+This is the one full review of the PR. Do not repeat it line by line yourself: confirm or reject
+each of its findings against the code, then check what it does not cover with this checklist
+(each item applies when the diff touches it):
 - **Secrets**: zeroized after use, never logged, never in error messages, `Debug` output, IPC JSON strings, or temp files.
 - **Crypto**: no home-made primitives, nonces never reused, constant-time secret comparisons, KDF/cipher parameters match the spec.
 - **File format and data safety**: old vaults still open; writes stay atomic (temp + rename); nothing can lose or corrupt the vault or lock the owner out.
@@ -75,11 +85,14 @@ Then go through this checklist yourself; each item applies when the diff touches
 - **Scope**: the diff does what the issue asks and nothing unrelated.
 
 ## Step 4: Fix, then decide
+Before your first fix, note the PR head: `git rev-parse HEAD` (call it `<start>`).
 For each concrete defect, fix it yourself when the right fix is clear and needs no product or
-security trade-off: `git add <files>` (never `-A`), commit `fix(#<ISSUE>): review: <what>`, rerun
-verify.ps1. At most 2 fix rounds. If your fixes changed code (not just tests or docs) on a
-sensitive path, run `/code-review medium <PR>` once more and fix what it confirms: you are not
-the last check on your own code. File out-of-scope findings as new issues
+security trade-off: `git add <files>` (never `-A`), commit `fix(#<ISSUE>): review: <what>`, and
+re-check with `verify.ps1 -Test <name>`. At most 2 fix rounds. If your fixes changed code (not
+just tests, docs or comments) on a sensitive path, check them once: you are not the last check
+on your own code. Run `/code-review low <PR> - review ONLY my review fixes, git diff <start>..HEAD,
+not the rest of the PR` and fix what it confirms. The full PR was already reviewed; do not
+review it again. File out-of-scope findings as new issues
 (`gh issue create ... --body-file`) instead of fixing them here.
 
 Verdict, exactly one:
@@ -98,8 +111,10 @@ fixed, and a `### Not tested` list with the reason for each item.
   `powershell -NoProfile -File .claude/scripts/merge-pr.ps1 -Pr <PR> -Reviewed`
   with `run_in_background` (waits for CI, merges, removes `ai-review`; never `gh pr merge` yourself).
   - exit 5 (CI failed): read `gh run view <id> --log-failed`, fix as a review round, push, rerun.
-  - exit 6 (main moved): `git fetch origin main; git rebase origin/main` (never drop another
-    runner's work), verify again, `git push --force-with-lease origin HEAD:<headRefName>`, rerun.
+  - exit 6 (main moved): `git fetch origin main; git merge --no-edit origin/main` (resolve
+    conflicts keeping both sides' intent; never drop another runner's work), verify again,
+    `git push origin HEAD:<headRefName>`, rerun. Merge, do not rebase: the PR is squashed on
+    merge anyway, and a rebase needs a force-push, which this session's permissions refuse.
   At most 3 such rounds, then verdict FAILED. Make sure the issue is closed after the merge.
 - **ESCALATE**: push fix commits, then `gh pr edit <PR> --remove-label ai-review --add-label needs-review`.
   The comment ends with `### Your decision`, written for a non-programmer: one or two sentences

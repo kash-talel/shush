@@ -56,7 +56,7 @@ Routing is computed from labels; label sensitive work accurately.
 ## Step 3: Implement and verify
 You are in an isolated git worktree. Never `git checkout main`, never touch the main checkout.
 1. Branch. If `git ls-remote --heads origin "fix/issue-<NUMBER>-*"` shows a branch (an earlier
-   run pushed work), continue it: `git fetch origin <it>; git checkout -B <it> origin/<it>; git rebase origin/main`.
+   run pushed work), continue it: `git fetch origin <it> main; git checkout -B <it> origin/<it>; git merge --no-edit origin/main`.
    Otherwise: `git fetch origin main; git checkout -B fix/issue-<NUMBER>-<short-slug> origin/main`.
 2. **Before any cargo or npm command**: `powershell -NoProfile -File .claude/scripts/issue-worktree.ps1 -Link`.
    It gives this worktree its own cargo target slot and main's `src/node_modules` read-only:
@@ -87,8 +87,9 @@ You are in an isolated git worktree. Never `git checkout main`, never touch the 
    - exit 5 → CI failed on GitHub. Read `gh run view <id> --log-failed` (pipe through
      `Select-String -Pattern 'error|FAILED|panicked' -Context 0,5` to keep it short), fix,
      verify, commit, push, run merge-pr again.
-   - exit 6 → main moved: `git fetch origin main; git rebase origin/main` (keep both sides' intent,
-     never drop another runner's work), verify again, `git push --force-with-lease origin HEAD`, run merge-pr again.
+   - exit 6 → main moved: `git fetch origin main; git merge --no-edit origin/main` (keep both sides'
+     intent, never drop another runner's work), verify again, `git push origin HEAD`, run merge-pr again.
+     Merge, do not rebase: the PR is squashed anyway, and a force-push is refused here.
    At most 3 rounds of 5/6 in total, then `STATUS: FAILED` naming the failing check or conflicting files.
 Do not switch branches or clean up the worktree; the dispatcher does that.
 
