@@ -489,3 +489,12 @@ export const browserSupportStatus = () => invoke<BrowserSupport>("browser_suppor
 /** Writes or removes the per-user (HKCU) native-messaging registration. */
 export const setBrowserSupport = (enabled: boolean) =>
   invoke<BrowserSupport>("set_browser_support", { enabled });
+
+/** Air-gapped mode (issue #157). While `air_gapped`, nothing may open a network socket. */
+export interface NetworkStatus {
+  air_gapped: boolean;
+  /** False in a build made without the `network` cargo feature. */
+  available: boolean;
+}
+export const networkStatus = () => invoke<NetworkStatus>("network_status");
+export const setAirGapped = (enabled: boolean) => invoke<NetworkStatus>("set_air_gapped", { enabled });

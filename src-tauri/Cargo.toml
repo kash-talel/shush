@@ -22,6 +22,13 @@ path = "src/main.rs"
 name = "shush-host"
 path = "src/bin/shush-host.rs"
 
+[features]
+# Network support (issue #157). Every socket opener lives in `net.rs` behind this
+# feature; build with `--no-default-features` for a binary with no socket code.
+# Even with it on, shush starts air-gapped and the user must opt in.
+default = ["network"]
+network = []
+
 [build-dependencies]
 embed-resource = "3"
 tauri-build = { version = "2", features = [] }

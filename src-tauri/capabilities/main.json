@@ -64,6 +64,8 @@
     "allow-bridge-approve-save",
     "allow-bridge-reject-save",
     "allow-browser-support-status",
-    "allow-set-browser-support"
+    "allow-set-browser-support",
+    "allow-network-status",
+    "allow-set-air-gapped"
   ]
 }
