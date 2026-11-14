@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.0](https://github.com/kash-talel/shush/compare/v0.1.2...v0.2.0) (2026-11-14)
+
+
+### Features
+
+* **#78:** notify-only update client behind the network gate ([#195](https://github.com/kash-talel/shush/issues/195)) ([2e116d8](https://github.com/kash-talel/shush/commit/2e116d85d0d7eba9b60be89d1a494c143c73b955))
+
+
+### Bug Fixes
+
+* **#157:** air-gapped mode with a single network gate ([#190](https://github.com/kash-talel/shush/issues/190)) ([ae8c32a](https://github.com/kash-talel/shush/commit/ae8c32a659d49cd78fd0cb462f9b04d15ba156ba))
+* **#197:** verified update download and passive install with lock-before-install ([#205](https://github.com/kash-talel/shush/issues/205)) ([65fabb4](https://github.com/kash-talel/shush/commit/65fabb46f9e32f03c03b756c65d2c7ce82ce0e18))
+* **test:** memory scanner ignores its own read buffer (flaky CI) ([#203](https://github.com/kash-talel/shush/issues/203)) ([03eda58](https://github.com/kash-talel/shush/commit/03eda587e02f2e971a8104a3c3842cd3ef957352))
+
 ## [0.1.2](https://github.com/kash-talel/shush/compare/v0.1.1...v0.1.2) (2026-11-14)
 
 
