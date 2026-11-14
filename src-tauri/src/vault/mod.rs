@@ -18,6 +18,7 @@ pub mod items;
 pub mod lock;
 pub mod models;
 pub mod registry;
+pub mod siblings;
 pub mod slots;
 pub mod state;
 

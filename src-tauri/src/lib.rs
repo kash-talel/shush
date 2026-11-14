@@ -290,6 +290,10 @@ struct VaultStatus {
     hide_names: bool,
     /// Whether the vault can be deleted (header or .bak decrypts).
     can_delete: bool,
+    /// Probable cloud-sync conflicted copies next to the vault (issue #80).
+    conflicted_copies: Vec<String>,
+    /// A stale `.tmp` from an interrupted save (name), while the vault is intact.
+    stale_tmp: Option<String>,
 }
 
 fn status_for(
@@ -319,6 +323,8 @@ fn status_for(
         error: None,
         hide_names,
         can_delete: false,
+        conflicted_copies: Vec::new(),
+        stale_tmp: None,
     };
     if entry.is_some() && !status.exists {
         status.error = Some(CmdError::new(
@@ -362,19 +368,44 @@ fn vault_status(app: tauri::AppHandle) -> Result<VaultStatus, CmdError> {
     let state = app.state::<VaultState>();
     let unlocked = state.is_unlocked();
     let read_only = state.with(|u| u.read_only).unwrap_or(false);
-    let (entry, path, hide_names) = edit_registry(&app, |reg, def| {
+    let (entry, path, hide_names, known) = edit_registry(&app, |reg, def| {
+        let known: Vec<PathBuf> = reg.vaults.iter().map(|v| v.path.clone()).collect();
         Ok(match reg.selected_entry() {
-            Some(e) => (Some(e.clone()), e.path.clone(), reg.hide_names),
-            None => (None, def.to_path_buf(), reg.hide_names),
+            Some(e) => (Some(e.clone()), e.path.clone(), reg.hide_names, known),
+            None => (None, def.to_path_buf(), reg.hide_names, known),
         })
     })?;
-    Ok(status_for(
-        entry.as_ref(),
-        &path,
-        unlocked,
-        read_only,
-        hide_names,
-    ))
+    let mut status = status_for(entry.as_ref(), &path, unlocked, read_only, hide_names);
+    if !unlocked {
+        let found = vault::siblings::scan(&path, &known);
+        status.conflicted_copies = found.conflicted_copies;
+        status.stale_tmp = found.stale_tmp;
+    }
+    Ok(status)
+}
+
+/// Deletes a conflicted copy or stale `.tmp` that `vault_status` reported next
+/// to the selected vault. Any other name is refused (issue #80).
+#[tauri::command]
+fn discard_vault_sibling(app: tauri::AppHandle, file: String) -> Result<(), CmdError> {
+    let (path, known) = edit_registry(&app, |reg, def| {
+        let known: Vec<PathBuf> = reg.vaults.iter().map(|v| v.path.clone()).collect();
+        let path = reg
+            .selected_entry()
+            .map_or_else(|| def.to_path_buf(), |e| e.path.clone());
+        Ok((path, known))
+    })?;
+    match vault::siblings::discard(&path, &known, &file) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(CmdError::new(
+            "SIBLING_NOT_FOUND",
+            "That file is no longer next to the vault.",
+        )),
+        Err(e) => Err(CmdError::new(
+            "SIBLING_REMOVE_FAILED",
+            format!("Could not remove the file: {e}"),
+        )),
+    }
 }
 
 // ---- Vault list: switch, add, create elsewhere, delete ----------------------
@@ -2362,6 +2393,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
         .invoke_handler(tauri::generate_handler![
             app_info,
             vault_status,
+            discard_vault_sibling,
             list_vaults,
             select_vault,
             check_new_vault,
