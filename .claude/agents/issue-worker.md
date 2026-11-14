@@ -1,6 +1,6 @@
 ---
 name: issue-worker
-description: Resolves exactly one shush GitHub issue end to end (deep dive, file discovered issues, branch, implement, test, PR, then squash-merge, or stop at a needs-review PR when the merge policy is review). Dispatched by the /issue skill, which picks this agent's model per issue from .claude/issue-routing.json. Not for direct use.
+description: Resolves exactly one shush GitHub issue end to end (deep dive, file discovered issues, branch, implement, test, PR, then squash-merge, or stop at an ai-review PR when the merge policy is review). Dispatched by the /issue skill, which picks this agent's model per issue from .claude/issue-routing.json. Not for direct use.
 ---
 
 # Shush issue worker
@@ -76,10 +76,12 @@ You run inside an isolated git worktree, not the owner's checkout. Stay in it: n
    ```powershell
    gh pr create --title "fix(#<NUMBER>): <concise summary>" --body-file "<scratchpad>\pr-body.md"
    ```
-   **Merge policy `review`:** add `--label needs-review` to that command, and add a
-   `### Review focus` section to the body listing what the owner should check by hand (key or
+   **Merge policy `review`:** add `--label ai-review` to that command, and add a
+   `### Review focus` section to the body listing what the reviewer should check (key or
    secret handling, file-format compatibility, merge/conflict semantics, failure paths), with
-   file:line pointers. Then STOP: do not merge, do not close the issue, do not delete the branch.
+   file:line pointers, plus anything you could not test and why. Then STOP: do not merge, do not
+   close the issue, do not delete the branch. The dispatcher hands the PR to the `pr-reviewer`
+   agent, which verifies it independently and merges it.
    Return `STATUS: REVIEW` with the PR url. Steps 4 and 5 below are for `auto` only.
 4. Merge, then delete the remote branch. Do not pass `--delete-branch`: inside a worktree gh
    then tries to check out `main` and fails after the merge.
