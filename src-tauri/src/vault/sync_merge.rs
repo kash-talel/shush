@@ -20,6 +20,7 @@
 use super::hlc::{newer, Hlc};
 use super::items::{base, base_mut, MAX_HISTORY};
 use super::models::{now_rfc3339, PasswordHistoryEntry, VaultData, VaultItem};
+use zeroize::Zeroize;
 
 /// Why a peer change was held back for the Conflict Inbox instead of applied.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -161,7 +162,10 @@ pub fn merge_peer(local: &mut VaultData, peer: &VaultData, now_ms: u64) -> Merge
                 });
             }
             let excess = c.password_history.len().saturating_sub(MAX_HISTORY);
-            c.password_history.drain(..excess);
+            // Wipe evicted passwords before they are freed.
+            for mut e in c.password_history.drain(..excess) {
+                e.zeroize();
+            }
             if peer_newer {
                 // Non-secret fields only; password and TOTP secret stay ours.
                 c.username = i.username.clone();

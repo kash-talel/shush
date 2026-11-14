@@ -596,6 +596,7 @@ impl VaultData {
 
     /// Sets the favorite flag.
     pub fn set_favorite(&mut self, id: &str, favorite: bool) -> Result<(), ItemError> {
+        self.find(id)?;
         let clock = self.next_hlc();
         let b = base_mut(self.find_mut(id)?);
         b.favorite = favorite;
