@@ -529,6 +529,7 @@ mod tests {
                 created_at: String::new(),
                 updated_at: String::new(),
                 last_used_at: None,
+                hlc: None,
             },
             username: user.into(),
             password: pw.into(),

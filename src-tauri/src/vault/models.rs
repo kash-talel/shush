@@ -4,6 +4,7 @@
 //! tree on drop. `Debug` is only derived in tests so secrets can never end up
 //! in logs.
 
+use super::hlc::Hlc;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -32,6 +33,14 @@ pub struct VaultData {
     /// revocations and replay counters survive restarts. Absent in older vaults.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub browser_pairings: Vec<StoredPairing>,
+    /// Stable id of this vault on this device, the final tie-break of every
+    /// [`Hlc`] it issues (issue #137). Empty in vaults written before sync;
+    /// filled lazily by [`VaultData::next_hlc`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub device_id: String,
+    /// Last clock value this vault issued or observed, so new ones only grow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_hlc: Option<Hlc>,
 }
 
 /// A paired browser as stored in the vault (issue #52).
@@ -57,6 +66,8 @@ impl VaultData {
             settings: VaultSettings::default(),
             tombstones: Vec::new(),
             browser_pairings: Vec::new(),
+            device_id: String::new(),
+            last_hlc: None,
         }
     }
 }
@@ -102,6 +113,10 @@ pub struct BaseItem {
     pub updated_at: String,
     /// RFC 3339 last-used time.
     pub last_used_at: Option<String>,
+    /// Hybrid logical clock of the last edit (issue #137). Absent in items
+    /// written before LAN sync existed; those compare as oldest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hlc: Option<Hlc>,
 }
 
 /// A stored login.
@@ -179,6 +194,9 @@ pub struct Tombstone {
     pub id: String,
     /// RFC 3339 deletion time.
     pub deleted_at: String,
+    /// Clock of the deletion (issue #137); lets sync order it against edits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hlc: Option<Hlc>,
 }
 
 /// A folder.
@@ -280,6 +298,7 @@ mod tests {
                 created_at: "2026-11-07T00:00:00Z".into(),
                 updated_at: "2026-11-07T00:00:00Z".into(),
                 last_used_at: None,
+                hlc: None,
             },
             username: "octo".into(),
             password: "hunter2".into(),

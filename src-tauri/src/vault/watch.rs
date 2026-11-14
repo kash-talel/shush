@@ -117,6 +117,7 @@ mod tests {
                     created_at: models::now_rfc3339(),
                     updated_at: models::now_rfc3339(),
                     last_used_at: None,
+                    hlc: None,
                 },
                 content: "x".into(),
             }));

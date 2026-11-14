@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
+use super::hlc::{self, Hlc};
 use super::models::{
     now_rfc3339, rfc3339_from_unix, BaseItem, Folder, LoginItem, PasswordHistoryEntry,
     SecureNoteItem, Tombstone, VaultData, VaultItem,
@@ -307,14 +308,14 @@ fn clean_tags(tags: &[String]) -> Vec<String> {
     out
 }
 
-fn base(item: &VaultItem) -> &BaseItem {
+pub(super) fn base(item: &VaultItem) -> &BaseItem {
     match item {
         VaultItem::Login(l) => &l.base,
         VaultItem::SecureNote(n) => &n.base,
     }
 }
 
-fn base_mut(item: &mut VaultItem) -> &mut BaseItem {
+pub(super) fn base_mut(item: &mut VaultItem) -> &mut BaseItem {
     match item {
         VaultItem::Login(l) => &mut l.base,
         VaultItem::SecureNote(n) => &mut n.base,
@@ -365,6 +366,7 @@ impl VaultData {
             created_at: now.clone(),
             updated_at: now.clone(),
             last_used_at: None,
+            hlc: Some(self.next_hlc()),
         };
         let id = base.id.clone();
         self.items.push(match kind {
@@ -394,9 +396,11 @@ impl VaultData {
         validate(k, d)?;
         self.check_folder(d.folder_id.as_deref())?;
         let now = now_rfc3339();
+        let clock = self.next_hlc();
         let item = self.find_mut(id)?;
         {
             let b = base_mut(item);
+            b.hlc = Some(clock);
             b.title = d.title.trim().to_string();
             b.tags = clean_tags(&d.tags);
             b.favorite = d.favorite;
@@ -522,14 +526,26 @@ impl VaultData {
             return Err(ItemError::NotFound);
         }
         let now = now_rfc3339();
+        let clock = self.next_hlc();
         self.tombstones.retain(|t| t.id != id);
         self.tombstones.push(Tombstone {
             id: id.to_string(),
             deleted_at: now.clone(),
+            hlc: Some(clock),
         });
         self.gc_tombstones();
         self.updated_at = now;
         Ok(())
+    }
+
+    /// Issues the next hybrid logical clock value for a local change.
+    pub fn next_hlc(&mut self) -> Hlc {
+        if self.device_id.is_empty() {
+            self.device_id = new_id();
+        }
+        let h = Hlc::next(self.last_hlc.as_ref(), hlc::now_ms(), &self.device_id);
+        self.last_hlc = Some(h.clone());
+        h
     }
 
     /// Whether `id` was deleted (and its tombstone has not expired).
@@ -565,6 +581,11 @@ impl VaultData {
         };
         let n = l.password_history.len();
         if n > 0 {
+            let clock = self.next_hlc();
+            let VaultItem::Login(l) = self.find_mut(id)? else {
+                unreachable!("checked above")
+            };
+            l.base.hlc = Some(clock);
             // `zeroize` wipes each password before the entries are freed.
             l.password_history.zeroize();
             l.base.updated_at = now_rfc3339();
@@ -575,7 +596,11 @@ impl VaultData {
 
     /// Sets the favorite flag.
     pub fn set_favorite(&mut self, id: &str, favorite: bool) -> Result<(), ItemError> {
-        base_mut(self.find_mut(id)?).favorite = favorite;
+        self.find(id)?;
+        let clock = self.next_hlc();
+        let b = base_mut(self.find_mut(id)?);
+        b.favorite = favorite;
+        b.hlc = Some(clock);
         Ok(())
     }
 
@@ -972,6 +997,7 @@ mod tests {
         v.tombstones.push(Tombstone {
             id: "old".into(),
             deleted_at: "2000-01-01T00:00:00Z".into(),
+            hlc: None,
         });
         v.gc_tombstones();
         assert!(!v.is_tombstoned("old"));
@@ -983,11 +1009,13 @@ mod tests {
             v.tombstones.push(Tombstone {
                 id: format!("t{n}"),
                 deleted_at: now.clone(),
+                hlc: None,
             });
         }
         v.tombstones.push(Tombstone {
             id: "future".into(),
             deleted_at: "2999-01-01T00:00:00Z".into(),
+            hlc: None,
         });
         v.gc_tombstones();
         assert_eq!(v.tombstones.len(), MAX_TOMBSTONES);

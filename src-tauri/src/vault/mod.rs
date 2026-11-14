@@ -13,6 +13,7 @@
 pub mod attachments;
 pub mod backup;
 pub mod container;
+pub mod hlc;
 pub mod importer;
 pub mod items;
 pub mod lock;
@@ -21,6 +22,7 @@ pub mod registry;
 pub mod siblings;
 pub mod slots;
 pub mod state;
+pub mod sync_merge;
 pub mod watch;
 
 use std::io::ErrorKind;
@@ -708,6 +710,7 @@ mod tests {
                 created_at: models::now_rfc3339(),
                 updated_at: models::now_rfc3339(),
                 last_used_at: None,
+                hlc: None,
             },
             content: body.into(),
         })
