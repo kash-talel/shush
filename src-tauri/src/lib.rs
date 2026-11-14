@@ -2382,6 +2382,10 @@ struct UpdateInfo {
     checked_at: Option<i64>,
     /// Version of this build.
     installed: &'static str,
+    /// Version of a verified installer ready for "Install and restart" (#197).
+    staged: Option<String>,
+    /// True while a download runs.
+    downloading: bool,
 }
 
 fn update_info(app: &tauri::AppHandle) -> UpdateInfo {
@@ -2394,6 +2398,8 @@ fn update_info(app: &tauri::AppHandle) -> UpdateInfo {
         status,
         checked_at,
         installed: env!("CARGO_PKG_VERSION"),
+        staged: st.staged_version(),
+        downloading: st.is_downloading(),
     }
 }
 
@@ -2408,10 +2414,14 @@ fn run_update_check(app: &tauri::AppHandle) -> bool {
     let _running = state.running.lock().unwrap_or_else(|e| e.into_inner());
     let gate = app.state::<net::NetGate>();
     let now = unix_now();
+    let highest_seen = vault_home(app)
+        .ok()
+        .and_then(|(dir, _)| update::install::load_highest_seen(&dir));
     let status = update::client::check(
         &update::client::GateFetch(&gate),
         &update::client::pinned_anchors(),
         env!("CARGO_PKG_VERSION"),
+        highest_seen.as_deref(),
         now,
     );
     // The gate closed mid-check: keep the last real result rather than an air-gap error.
@@ -2517,6 +2527,141 @@ async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, CmdError>
     Ok(update_info(&app))
 }
 
+/// Private per-user folder for downloaded installers (#197): `%LOCALAPPDATA%\<id>\updates`,
+/// never `%TEMP%` and never the roaming profile. Debug builds with `SHUSH_VAULT_PATH` keep it
+/// beside the scratch vault.
+fn update_dir(app: &tauri::AppHandle) -> Result<PathBuf, CmdError> {
+    #[cfg(debug_assertions)]
+    if std::env::var_os("SHUSH_VAULT_PATH").is_some() {
+        return Ok(vault_home(app)?.0.join("updates"));
+    }
+    app.path()
+        .app_local_data_dir()
+        .map(|d| d.join("updates"))
+        .map_err(|e| CmdError::new("APP_DATA_UNAVAILABLE", e.to_string()))
+}
+
+fn from_update_fail(f: update::install::Fail) -> CmdError {
+    CmdError::new(f.code, f.message)
+}
+
+/// "Download": re-verifies the feed, downloads the installer through the gate into the private
+/// folder and verifies size, SHA-256 and signature (#197). `version` is the release the user
+/// agreed to; a different one in the feed is refused. Installs nothing.
+#[tauri::command]
+async fn download_update(app: tauri::AppHandle, version: String) -> Result<UpdateInfo, CmdError> {
+    if app.state::<update::client::UpdateState>().mode() == update::client::UpdateMode::Off {
+        return Err(CmdError::new(
+            "UPDATE_OFF",
+            "Update checks are off. Turn them on first.",
+        ));
+    }
+    if let Err(e) = app.state::<net::NetGate>().check() {
+        return Err(CmdError::new("UPDATE_AIR_GAPPED", e.to_string()));
+    }
+    let a = app.clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), CmdError> {
+        let st = a.state::<update::client::UpdateState>();
+        let _one = st
+            .downloading
+            .try_lock()
+            .map_err(|_| CmdError::new("UPDATE_BUSY", "A download is already running."))?;
+        let (home, _) = vault_home(&a)?;
+        let dir = update_dir(&a)?;
+        // A previously staged installer is dropped: its folder is recreated for this download.
+        if let Some(old) = st.staged.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            old.discard();
+        }
+        let gate = a.state::<net::NetGate>();
+        let now = unix_now();
+        let r = update::install::download(
+            &update::client::GateFetch(&gate),
+            &update::install::Request {
+                anchors: &update::client::pinned_anchors(),
+                installed: env!("CARGO_PKG_VERSION"),
+                expected: &version,
+                now_unix: now,
+                dir: &dir,
+                state_dir: &home,
+            },
+        );
+        match r {
+            Ok(staged) => {
+                *st.staged.lock().unwrap_or_else(|e| e.into_inner()) = Some(staged);
+                Ok(())
+            }
+            Err(f) => {
+                if let Some(s) = f.status.clone() {
+                    st.record(s, now);
+                }
+                Err(from_update_fail(f))
+            }
+        }
+    })
+    .await
+    .map_err(|_| CmdError::new("UPDATE_DOWNLOAD_FAILED", "The download did not finish."))??;
+    Ok(update_info(&app))
+}
+
+/// "Install and restart" (#197): re-checks the staged bytes, locks the vault (waiting for any
+/// in-flight save, wiping keys, dropping bridge keys, clearing the clipboard and closing quick
+/// search), then starts the installer in passive update mode and exits. The installer relaunches
+/// shush, which always starts locked. If the installer cannot start, the vault stays locked and
+/// the error is returned.
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle, version: String) -> Result<(), CmdError> {
+    let a = app.clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), CmdError> {
+        let st = a.state::<update::client::UpdateState>();
+        let mut staged = st.staged.lock().unwrap_or_else(|e| e.into_inner());
+        let not_ready = || {
+            CmdError::new(
+                "UPDATE_NOT_DOWNLOADED",
+                "This update has not been downloaded and verified yet.",
+            )
+        };
+        if staged.as_ref().map(|s| s.version()) != Some(version.as_str()) {
+            return Err(not_ready());
+        }
+        let s = staged.as_mut().ok_or_else(not_ready)?;
+        if let Err(f) = s.recheck(&update::client::pinned_anchors()) {
+            if let Some(bad) = staged.take() {
+                bad.discard();
+            }
+            return Err(from_update_fail(f));
+        }
+        if let Some(w) = a.get_webview_window("spotlight") {
+            let _ = w.hide();
+        }
+        lock_vault(&a);
+        os::clipboard::clear_if_ours();
+        if let Err(f) = s.launch() {
+            // The vault stays locked, and the lock screen replaces the Updates card, so the
+            // error would be lost: say why on the lock screen and keep it in the update status
+            // for after unlock.
+            st.record(
+                update::client::UpdateStatus::Failed {
+                    code: f.code,
+                    message: f.message.clone(),
+                },
+                unix_now(),
+            );
+            let _ = a.emit(EVENT_AUTO_LOCKED, "update_failed");
+            return Err(from_update_fail(f));
+        }
+        let _ = a.emit(EVENT_AUTO_LOCKED, "update");
+        // Let the command answer, then quit so the installer can replace the executable.
+        let quit = a.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            quit.exit(0);
+        });
+        Ok(())
+    })
+    .await
+    .map_err(|_| CmdError::new("UPDATE_INSTALL_FAILED", "The install did not start."))?
+}
+
 /// Tauri builder with every shush command and the vault state registered.
 ///
 /// GUI plugins (e.g. the native file dialog) are attached in `main.rs`, not
@@ -2557,6 +2702,10 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
                     .mode
                     .lock()
                     .unwrap_or_else(|e| e.into_inner()) = update::client::UpdateMode::load(&dir);
+            }
+            // Installers left by a killed download or a finished install are never reused.
+            if let Ok(dir) = update_dir(app.handle()) {
+                let _ = os::private_dir::remove(&dir);
             }
             spawn_update_checker(app.handle().clone());
             // Another application may own the combination; Spotlight then stays
@@ -2654,7 +2803,9 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             set_air_gapped,
             update_status,
             set_update_mode,
-            check_for_update
+            check_for_update,
+            download_update,
+            install_update
         ])
 }
 

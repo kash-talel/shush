@@ -66,6 +66,8 @@ const COMMANDS: &[&str] = &[
     "update_status",
     "set_update_mode",
     "check_for_update",
+    "download_update",
+    "install_update",
 ];
 
 fn main() {

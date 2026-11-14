@@ -1,9 +1,10 @@
-//! Notify-only update client (issue #78, phase 2).
+//! Update check client (issue #78, phase 2).
 //!
 //! Fetches the signed feed through the network gate ([`crate::net::NetGate`]), runs it through
-//! [`super::verify_feed`], and reports one of a few states. It downloads and installs nothing:
-//! the installer URL in `release.json` is never requested here. `highest_seen` is not persisted
-//! either, because that only happens after a full download verification (phase 3).
+//! [`super::verify_feed`], and reports one of a few states. A check downloads and installs
+//! nothing: the installer URL in `release.json` is only requested by the user-started download
+//! in [`super::install`] (#197). `highest_seen` is read here as the rollback floor but only ever
+//! written there, after a full download verification.
 //!
 //! An update check sends a plain GET with `User-Agent: shush/<version>`: no identifiers, no
 //! cookies, no query string.
@@ -53,7 +54,7 @@ pub fn pinned_anchors() -> TrustAnchors {
 pub enum UpdateMode {
     /// Never check.
     Off,
-    /// Check and tell the user; never download.
+    /// Check and tell the user. Nothing is downloaded until the user clicks Download.
     Notify,
 }
 
@@ -153,28 +154,43 @@ pub fn channel_for(installed: &str) -> &'static str {
 }
 
 /// Runs one update check (client algorithm steps 1 to 4). Never downloads an installer.
-///
-/// The four files come from separate requests, so a feed deploy landing between them can pair a
-/// new `release.json` with the old `freshness.json`. That one case is fetched again once before
-/// it is reported.
+/// `highest_seen` is the persisted highest fully verified version (rollback floor), if any.
 pub fn check(
     fetch: &dyn Fetch,
     anchors: &TrustAnchors,
     installed: &str,
+    highest_seen: Option<&str>,
     now_unix: i64,
 ) -> UpdateStatus {
-    match check_once(fetch, anchors, installed, now_unix) {
-        Ok(Err(UpdateError::FreshnessMismatch)) => {}
-        Ok(r) => return to_status(r, installed),
-        Err(early) => return early,
-    }
-    match check_once(fetch, anchors, installed, now_unix) {
+    match fetch_verified(fetch, anchors, installed, highest_seen, now_unix) {
         Ok(r) => to_status(r, installed),
         Err(early) => early,
     }
 }
 
-fn to_status(r: Result<super::VerifiedRelease, UpdateError>, installed: &str) -> UpdateStatus {
+/// Fetches and verifies the feed. The outer `Err` is a failure before verification (fetch or
+/// decoding, already phrased for the user); the inner result is the verifier's verdict.
+///
+/// The four files come from separate requests, so a feed deploy landing between them can pair a
+/// new `release.json` with the old `freshness.json`. That one case is fetched again once before
+/// it is reported.
+pub fn fetch_verified(
+    fetch: &dyn Fetch,
+    anchors: &TrustAnchors,
+    installed: &str,
+    highest_seen: Option<&str>,
+    now_unix: i64,
+) -> Result<Result<super::VerifiedRelease, UpdateError>, UpdateStatus> {
+    match check_once(fetch, anchors, installed, highest_seen, now_unix) {
+        Ok(Err(UpdateError::FreshnessMismatch)) => {
+            check_once(fetch, anchors, installed, highest_seen, now_unix)
+        }
+        other => other,
+    }
+}
+
+/// The status a verifier verdict is shown as.
+pub fn to_status(r: Result<super::VerifiedRelease, UpdateError>, installed: &str) -> UpdateStatus {
     match r {
         Ok(v) if v.update_available => {
             let below_min_supported = v
@@ -221,6 +237,7 @@ fn check_once(
     fetch: &dyn Fetch,
     anchors: &TrustAnchors,
     installed: &str,
+    highest_seen: Option<&str>,
     now_unix: i64,
 ) -> Result<Result<super::VerifiedRelease, UpdateError>, UpdateStatus> {
     let channel = channel_for(installed);
@@ -271,7 +288,7 @@ fn check_once(
             channel,
             target: THIS_TARGET,
             installed,
-            highest_seen: None,
+            highest_seen,
             now_unix,
         },
     ))
@@ -286,6 +303,10 @@ pub struct UpdateState {
     /// Held for the whole of a check, so a background check and "Check now" never overlap and
     /// an older, slower result cannot overwrite a newer one.
     pub running: Mutex<()>,
+    /// Held for the whole of a download (#197): one at a time.
+    pub downloading: Mutex<()>,
+    /// A verified installer waiting for "Install and restart" (#197).
+    pub staged: Mutex<Option<super::install::Staged>>,
 }
 
 impl Default for UpdateState {
@@ -294,6 +315,8 @@ impl Default for UpdateState {
             mode: Mutex::new(UpdateMode::Notify),
             last: Mutex::new((UpdateStatus::Unchecked, None)),
             running: Mutex::new(()),
+            downloading: Mutex::new(()),
+            staged: Mutex::new(None),
         }
     }
 }
@@ -312,6 +335,23 @@ impl UpdateState {
     /// Last result.
     pub fn snapshot(&self) -> (UpdateStatus, Option<i64>) {
         self.last.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Version of the verified installer waiting to be installed, if any.
+    pub fn staged_version(&self) -> Option<String> {
+        self.staged
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|s| s.version().to_owned())
+    }
+
+    /// True while a download runs.
+    pub fn is_downloading(&self) -> bool {
+        matches!(
+            self.downloading.try_lock(),
+            Err(std::sync::TryLockError::WouldBlock)
+        )
     }
 }
 

@@ -1,8 +1,8 @@
 //! Update trust verification (issue #78): the offline core of the signed-feed client.
 //!
 //! This module only *decides* whether a feed and a downloaded installer may be trusted. It does no
-//! network I/O and installs nothing. Fetching (notify-only) lives in [`client`] and goes through
-//! the network gate (#157); download and install come in a later phase.
+//! network I/O and installs nothing. Fetching lives in [`client`] and goes through the network
+//! gate (#157); the verified download and the install handoff live in [`install`] (#197).
 //!
 //! The scheme is a minimal TUF:
 //! - `release.json` binds *version -> sha256 + size* and is signed by a **release key**.
@@ -22,6 +22,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 pub mod client;
+pub mod install;
 
 /// Hard cap on a manifest's size; both files are tiny, so anything bigger is hostile.
 pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;
@@ -322,6 +323,53 @@ pub fn verify_download(release: &ReleaseManifest, bytes: &[u8]) -> Result<(), Up
         return Err(UpdateError::ArtifactMismatch);
     }
     Ok(())
+}
+
+/// Streams an installer file through every byte-level check (issue #197): its length must equal
+/// the signed `size`, its SHA-256 the signed `sha256` (as [`verify_download`]), and `sig_text`
+/// (the installer's minisign signature from the feed's `latest.json`) must verify against a
+/// pinned **release** key. Reads at most `size + 1` bytes.
+pub fn verify_installer(
+    anchors: &TrustAnchors,
+    release: &ReleaseManifest,
+    sig_text: &str,
+    mut r: impl std::io::Read,
+) -> Result<(), UpdateError> {
+    let sig = minisign_verify::Signature::decode(sig_text)
+        .map_err(|_| UpdateError::BadSignature("installer"))?;
+    // Only a prehashed signature by a pinned release key can produce a stream verifier.
+    let mut verifier = anchors
+        .release
+        .iter()
+        .find_map(|k| k.0.verify_stream(&sig).ok())
+        .ok_or(UpdateError::BadSignature("installer"))?;
+    let mut sha = Sha256::new();
+    let mut len: u64 = 0;
+    let mut buf = vec![0u8; 64 * 1024];
+    let limit = release.artifact.size;
+    loop {
+        let n = match r.read(&mut buf) {
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return Err(UpdateError::ArtifactMismatch),
+        };
+        if n == 0 {
+            break;
+        }
+        len += n as u64;
+        if len > limit {
+            return Err(UpdateError::ArtifactMismatch);
+        }
+        sha.update(&buf[..n]);
+        verifier.update(&buf[..n]);
+    }
+    let digest: String = sha.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    if len != limit || !hex_eq(&digest, &release.artifact.sha256) {
+        return Err(UpdateError::ArtifactMismatch);
+    }
+    verifier
+        .finalize()
+        .map_err(|_| UpdateError::BadSignature("installer"))
 }
 
 #[cfg(test)]
