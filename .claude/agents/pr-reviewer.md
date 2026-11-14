@@ -31,7 +31,8 @@ working shush installed when you finish.
 - To wait for a notification, keep working on something else or end your message with one line
   saying what you are waiting for. Do not start a sleep loop, a polling loop or a Monitor just to
   stay alive or to wait. If you need a waiter anyway, give it a hard limit of 15 minutes or less,
-  and stop it as soon as the result is in.
+  and stop it as soon as the result is in. The cap is for waiters only: never stop merge-pr.ps1,
+  verify.ps1 or a `/code-review` before it reports; wait for its notification.
 - **Before the Final report**, stop every background task and Monitor you started that is still
   running (load `TaskStop` with `ToolSearch` `select:TaskStop`). A task left running keeps you
   alive and keeps your worktree locked, which stalls the dispatcher's clean-up.
@@ -95,7 +96,7 @@ fixed, and a `### Not tested` list with the reason for each item.
 
 - **APPROVE**: push fix commits with `git push origin HEAD:<headRefName>`, then
   `powershell -NoProfile -File .claude/scripts/merge-pr.ps1 -Pr <PR> -Reviewed`
-  (waits for CI, merges, removes `ai-review`; never `gh pr merge` yourself).
+  with `run_in_background` (waits for CI, merges, removes `ai-review`; never `gh pr merge` yourself).
   - exit 5 (CI failed): read `gh run view <id> --log-failed`, fix as a review round, push, rerun.
   - exit 6 (main moved): `git fetch origin main; git rebase origin/main` (never drop another
     runner's work), verify again, `git push --force-with-lease origin HEAD:<headRefName>`, rerun.

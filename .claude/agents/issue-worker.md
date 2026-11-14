@@ -30,7 +30,8 @@ Any `run_in_background` command or background skill reports back to you with a n
 - To wait for a notification, keep working on something else or end your message with one line
   saying what you are waiting for. Do not start a sleep loop, a polling loop or a Monitor just to
   stay alive or to wait. If you need a waiter anyway, give it a hard limit of 15 minutes or less,
-  and stop it as soon as the result is in.
+  and stop it as soon as the result is in. The cap is for waiters only: never stop merge-pr.ps1,
+  verify.ps1 or a `/code-review` before it reports; wait for its notification.
 - **Before the Final report**, stop every background task and Monitor you started that is still
   running, including dev servers and app processes (load `TaskStop` with `ToolSearch`
   `select:TaskStop`). A task left running keeps you alive and keeps your worktree locked, which
@@ -78,7 +79,8 @@ You are in an isolated git worktree. Never `git checkout main`, never touch the 
    `gh pr create --title "fix(#<NUMBER>): <summary>" --body-file "<file>"` (add `--label ai-review` for `review`).
 4. **Policy `review`:** STOP. Return `STATUS: REVIEW`. The pr-reviewer merges it.
 5. **Policy `auto`:** `powershell -NoProfile -File .claude/scripts/merge-pr.ps1 -Pr <PR>`. Never run
-   `gh pr merge` yourself. It waits for CI (a few minutes) and prints one result line:
+   `gh pr merge` yourself. Start it with `run_in_background` (see "Waiting on background work"): it
+   waits for CI (usually a few minutes, up to 30) and prints one result line:
    - exit 0 → merged. Make sure the issue is closed (`gh issue close <NUMBER>` if not).
    - exit 4 → the diff touches sensitive paths; it is now labelled `ai-review`. Add a
      `### Review focus` section (`gh pr edit <PR> --body-file`) and return `STATUS: REVIEW`.

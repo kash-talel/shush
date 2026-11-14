@@ -88,9 +88,12 @@ foreach ($wt in ($worktrees | Select-Object -Unique)) {
     if (-not (Test-Path -LiteralPath $wt)) { continue }
     $pushed = $false
     if ($outcome -ne 'DONE' -and $outcome -ne 'ESCALATE') {
+        # A git failure must mean "keep it": empty output from a failed command is not "clean".
         $dirty = @(& git --no-optional-locks -C $wt status --porcelain 2>$null | Where-Object { $_ -notmatch '^\?\? (src/node_modules|src-tauri/target)' })
+        $statusOk = ($LASTEXITCODE -eq 0)
         $unpushed = @(& git -C $wt log HEAD --not --remotes --oneline 2>$null)
-        $pushed = ($dirty.Count -eq 0 -and $unpushed.Count -eq 0)
+        $logOk = ($LASTEXITCODE -eq 0)
+        $pushed = ($statusOk -and $logOk -and $dirty.Count -eq 0 -and $unpushed.Count -eq 0)
     }
     if ($outcome -eq 'DONE' -or $outcome -eq 'ESCALATE' -or $pushed) {
         & powershell -NoProfile -File (Join-Path $PSScriptRoot 'issue-worktree.ps1') -Remove -Path $wt 2>$null | Out-Null
@@ -98,15 +101,21 @@ foreach ($wt in ($worktrees | Select-Object -Unique)) {
     } else { $kept += $wt }
 }
 foreach ($b in @(& git -C $main branch --list "fix/issue-$Number-*" "review/issue-$Number*" --format '%(refname:short)')) {
-    if ($b) { & git -C $main branch -D $b 2>$null | Out-Null }
+    if ($b) {
+        & git -C $main branch -D $b 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { $kept += "branch $b" }   # e.g. still checked out in a kept worktree
+    }
 }
 
 # --- main checkout: fast-forward only when it is on main ---
-$cur = (& git -C $main rev-parse --abbrev-ref HEAD).Trim()
+$cur = "$(& git -C $main rev-parse --abbrev-ref HEAD 2>$null)".Trim()
 & git -C $main fetch --quiet origin main 2>$null
-$mainNote = if ($cur -ne 'main') { "not updated: main checkout is on $cur" } else {
-    & git -C $main merge --ff-only --quiet origin/main 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) { 'fast-forwarded' } else { 'not updated: local changes overlap incoming files' } }
+$fetchOk = ($LASTEXITCODE -eq 0)
+$mainNote = if ($cur -ne 'main') { "not updated: main checkout is on $(if ($cur) { $cur } else { 'an unknown branch' })" }
+    elseif (-not $fetchOk) { 'not updated: git fetch origin main failed' }
+    else {
+        & git -C $main merge --ff-only --quiet origin/main 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { 'fast-forwarded' } else { 'not updated: local changes or commits on main block a fast-forward' } }
 
 # --- filed issues: show their live route ---
 $filed = @(([string]$f['FILED']) -split '[,\s#]+' | Where-Object { $_ -match '^\d+$' } | Select-Object -Unique)
