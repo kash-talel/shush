@@ -17,9 +17,10 @@
 
 1. **Master password.** Normalized to Unicode NFC, so the same password typed on different keyboard
    layouts derives the same key. Minimum 8 characters.
-2. **Keyfile (optional).** Generate a new 32-byte keyfile or pick any existing file. Its SHA-256
-   becomes Argon2id's secret input. Store it away from the vault (a USB drive); shush warns when they
-   share a folder. Without it the vault cannot be opened.
+2. **Keyfile (optional).** Generate a new keyfile (256 random bits in a checksummed 45-byte
+   file) or pick any existing file. Its SHA-256 becomes Argon2id's secret input. Store it away from
+   the vault (a USB drive) and keep a second copy on other media; shush warns when they share a
+   folder. Without it the vault cannot be opened.
 3. **Cipher.** AES-256-GCM (default, AES-NI accelerated) or XChaCha20-Poly1305 (192-bit nonces,
    constant-time in software), under *Advanced cryptography*.
 

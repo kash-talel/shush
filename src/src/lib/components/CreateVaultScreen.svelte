@@ -243,7 +243,7 @@
                 <span class="flex text-ruby" title={generatePath}>
                   <span class="truncate">{dir}</span><span class="shrink-0">{file}</span>
                 </span>
-                <span class="block truncate text-zinc-500">new 32-byte keyfile · click to change</span>
+                <span class="block truncate text-zinc-500">new 256-bit keyfile · click to change</span>
               </span>
             {:else}
               Choose where to save the new keyfile…
@@ -256,11 +256,14 @@
         {#if mode !== "none"}
           <p class={["mt-2 flex items-start gap-1.5 text-[11px] leading-4", keyfileNextToVault ? "text-caution" : "text-zinc-500"]}>
             <FileKey2 class="mt-px size-3.5 shrink-0" aria-hidden="true" />
-            {#if keyfileNextToVault}
-              The keyfile is in the same folder as the vault, which defeats its purpose. Store it on a USB drive.
-            {:else}
-              Keep the keyfile on a USB drive, away from the vault. Without it the vault cannot be opened.
-            {/if}
+            <span>
+              {#if keyfileNextToVault}
+                The keyfile is in the same folder as the vault, which defeats its purpose. Store it on a USB drive.
+              {:else}
+                Keep the keyfile on a USB drive, away from the vault.
+              {/if}
+              Keep a second copy on other media. If the keyfile is lost or changed the vault is lost, even with the right password.
+            </span>
           </p>
         {/if}
       </fieldset>

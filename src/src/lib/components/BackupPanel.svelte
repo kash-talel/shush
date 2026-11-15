@@ -192,6 +192,11 @@
         <div>
           <span class="mb-1.5 flex items-baseline justify-between text-xs font-medium text-zinc-300">Backup keyfile <span class="spec">optional</span></span>
           <KeyfileAttach bind:keyfile={exportKeyfile} acceptDrop={false} onerror={(e) => (exportError = e)} />
+          {#if exportKeyfile}
+            <p class="mt-1.5 text-[11px] leading-4 text-zinc-500">
+              Store this keyfile apart from the backup file and keep a second copy. If it is lost or changed the backup cannot be opened, even with the right password.
+            </p>
+          {/if}
         </div>
       {:else}
         <p class="text-[11px] text-zinc-500">Opens with the same master password and keyfile as this vault.</p>
