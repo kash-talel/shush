@@ -20,6 +20,10 @@ Pre-release (beta): add a `Release-As: 0.3.0-beta.1` footer to a commit on `main
 a `-` is published as a pre-release and goes to `/updates/beta/`, never to `stable`. Pre-releases
 ship the NSIS installer only (no `.msi`): WiX accepts only a numeric pre-release identifier.
 
+A beta install checks both feeds and takes the higher version (#175), so a stable release newer
+than the last beta (for example `0.3.0` after `0.3.0-beta.2`) still reaches beta users. Each feed
+is verified on its own against its own channel; nothing extra is signed.
+
 ## Dry run
 
 Actions, Release, "Run workflow" (`workflow_dispatch`): builds, runs the PE hardening check and
