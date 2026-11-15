@@ -12,6 +12,7 @@ pub mod bridge;
 pub mod crypto;
 pub mod net;
 pub mod os;
+pub mod sync;
 pub mod totp;
 pub mod update;
 pub mod vault;
@@ -1384,6 +1385,8 @@ async fn clear_duress_password(app: tauri::AppHandle) -> Result<(), CmdError> {
 /// Locks the vault and everything derived from it: the bridge drops its
 /// pairing keys and wipes queued plaintext passwords (issue #52).
 fn lock_vault(app: &tauri::AppHandle) {
+    // The pairing window and its code never outlive the unlocked vault (lan-sync.md §3, §9).
+    app.state::<sync::runtime::SyncRuntime>().cancel();
     app.state::<VaultState>().lock();
     app.state::<bridge::state::BridgeState>()
         .bridge()
@@ -2805,6 +2808,386 @@ async fn install_update(app: tauri::AppHandle, version: String) -> Result<(), Cm
     .map_err(|_| CmdError::new("UPDATE_INSTALL_FAILED", "The install did not start."))?
 }
 
+// --- LAN sync pairing (issue #156, docs/spec/lan-sync.md) ---
+
+/// A pinned peer as the Sync card lists it (no key material).
+#[derive(Serialize)]
+struct SyncPeerView {
+    id: String,
+    name: String,
+    paired_at: String,
+    last_sync_at: Option<String>,
+    last_address: Option<String>,
+}
+
+/// What the Sync card shows.
+#[derive(Serialize)]
+struct SyncStatus {
+    /// False in a build without the `network` feature.
+    available: bool,
+    /// True while the network gate is closed: every sync control is disabled.
+    air_gapped: bool,
+    /// A read-only vault cannot store peers.
+    read_only: bool,
+    /// This vault's device fingerprint, once it has a sync identity.
+    fingerprint: Option<String>,
+    /// Advertise pairing windows on the local network.
+    advertise: bool,
+    /// The name this device sends when pairing.
+    device_name: String,
+    peers: Vec<SyncPeerView>,
+    /// The pairing window shown on this device, if any.
+    window: Option<sync::runtime::WindowView>,
+}
+
+/// Name this device sends inside the encrypted pairing confirmation.
+fn sync_device_name() -> String {
+    sync::clean_name(&std::env::var("COMPUTERNAME").unwrap_or_default())
+}
+
+fn sync_window_view(app: &tauri::AppHandle) -> Option<sync::runtime::WindowView> {
+    app.state::<sync::runtime::SyncRuntime>().view()
+}
+
+fn sync_status_of(app: &tauri::AppHandle) -> Result<SyncStatus, CmdError> {
+    let (read_only, fingerprint, advertise, peers) = app
+        .state::<VaultState>()
+        .with(|u| {
+            let s = &u.vault.data().sync;
+            let fp = s
+                .identity
+                .as_ref()
+                .and_then(sync::identity::Identity::from_record)
+                .map(|i| i.fingerprint());
+            let peers = s
+                .peers
+                .iter()
+                .map(|p| SyncPeerView {
+                    id: p.id.clone(),
+                    name: p.name.clone(),
+                    paired_at: p.paired_at.clone(),
+                    last_sync_at: p.last_sync_at.clone(),
+                    last_address: p.last_address.clone(),
+                })
+                .collect();
+            (u.read_only, fp, s.advertise, peers)
+        })
+        .ok_or_else(locked)?;
+    Ok(SyncStatus {
+        available: net::NetGate::compiled_in(),
+        air_gapped: app.state::<net::NetGate>().is_air_gapped(),
+        read_only,
+        fingerprint,
+        advertise,
+        device_name: sync_device_name(),
+        peers,
+        window: sync_window_view(app),
+    })
+}
+
+/// Refuses while air-gapped (or without network support) or read-only.
+fn sync_preflight(app: &tauri::AppHandle) -> Result<(), CmdError> {
+    if let Err(e) = app.state::<net::NetGate>().check() {
+        return Err(CmdError::new("SYNC_AIR_GAPPED", e.to_string()));
+    }
+    let read_only = app
+        .state::<VaultState>()
+        .with(|u| u.read_only)
+        .ok_or_else(locked)?;
+    if read_only {
+        return Err(CmdError::new(
+            "READ_ONLY",
+            "A read-only vault cannot remember paired devices.",
+        ));
+    }
+    Ok(())
+}
+
+/// This vault's sync identity, created (and saved) on first use (§2).
+#[cfg_attr(not(feature = "network"), allow(dead_code))]
+fn sync_identity(app: &tauri::AppHandle) -> Result<sync::identity::Identity, CmdError> {
+    let existing = app
+        .state::<VaultState>()
+        .with(|u| {
+            u.vault
+                .data()
+                .sync
+                .identity
+                .as_ref()
+                .and_then(sync::identity::Identity::from_record)
+        })
+        .ok_or_else(locked)?;
+    if let Some(id) = existing {
+        return Ok(id);
+    }
+    let fresh = sync::identity::Identity::generate()
+        .map_err(|_| CmdError::new("INTERNAL", "Could not create a sync identity."))?;
+    let rec = fresh.to_record();
+    write(app, |d| {
+        d.sync.identity = Some(rec.clone());
+        Ok(())
+    })?;
+    Ok(fresh)
+}
+
+/// Saves a freshly paired device, provided the vault still has the identity
+/// the pairing ran with (it may have been locked, switched or reset since).
+#[cfg_attr(not(feature = "network"), allow(dead_code))]
+fn sync_store_peer(
+    app: &tauri::AppHandle,
+    expected: &[u8; 32],
+    p: &sync::pairing::Paired,
+    address: &str,
+) -> Result<(), sync::pairing::PairError> {
+    write(app, |d| {
+        let same = d
+            .sync
+            .identity
+            .as_ref()
+            .and_then(sync::identity::Identity::from_record)
+            .is_some_and(|i| i.public() == expected);
+        if !same {
+            return Err(CmdError::new("SYNC_IDENTITY_CHANGED", "identity changed"));
+        }
+        sync::upsert_peer(
+            &mut d.sync,
+            &p.public_key,
+            &p.name,
+            Some(address.to_owned()),
+        );
+        Ok(())
+    })
+    .map_err(|_| sync::pairing::PairError::StoreFailed)
+}
+
+fn pair_error(e: sync::pairing::PairError) -> CmdError {
+    use sync::pairing::PairError as P;
+    match e {
+        P::WrongCode => CmdError::new(
+            "WRONG_CODE",
+            "Wrong code. Check the code on the other device and try again.",
+        ),
+        P::InvalidCode => CmdError::new("INVALID_CODE", e.to_string()),
+        P::SelfPair => CmdError::new("SELF_PAIR", "This is the same vault on the same device."),
+        P::StoreFailed => CmdError::new(
+            "PAIR_NOT_SAVED",
+            "The pairing could not be saved. Unlock the vault and pair again.",
+        ),
+        P::Protocol | P::Rng => CmdError::new(
+            "PAIR_FAILED",
+            "The other device did not complete pairing. Try again.",
+        ),
+    }
+}
+
+#[tauri::command]
+fn sync_status(app: tauri::AppHandle) -> Result<SyncStatus, CmdError> {
+    sync_status_of(&app)
+}
+
+/// *Sync → Pair device*: opens a 2-minute pairing window on this device and
+/// shows its one-time code and address (`lan-sync.md` §3).
+#[tauri::command]
+async fn sync_start_pairing(app: tauri::AppHandle) -> Result<SyncStatus, CmdError> {
+    let a = app.clone();
+    blocking(move || sync_open_window(&a)).await?;
+    sync_status_of(&app)
+}
+
+/// Without network support the preflight always refuses.
+#[cfg(not(feature = "network"))]
+fn sync_open_window(app: &tauri::AppHandle) -> Result<(), CmdError> {
+    sync_preflight(app)?;
+    Err(CmdError::new(
+        "SYNC_AIR_GAPPED",
+        net::NetError::NotCompiledIn.to_string(),
+    ))
+}
+
+#[cfg(feature = "network")]
+fn sync_open_window(app: &tauri::AppHandle) -> Result<(), CmdError> {
+    sync_preflight(app)?;
+    let identity = sync_identity(app)?;
+    let advertise = read(app, |d| Ok(d.sync.advertise))?;
+    let code = sync::pairing::new_code().map_err(pair_error)?;
+    let gate = app.state::<net::NetGate>();
+    let listener = gate
+        .lan_listen(false)
+        .map_err(|e| CmdError::new("SYNC_LISTEN_FAILED", e.to_string()))?;
+    let port = listener.port();
+    let addresses = net::lan_addresses()
+        .into_iter()
+        .map(|ip| format!("{ip}:{port}"))
+        .collect();
+    // Fresh random instance and host names per window; TXT `v=1` only.
+    let ad = if advertise {
+        let names = (
+            sync::identity::random_base32(8),
+            sync::identity::random_base32(8),
+        );
+        match names {
+            (Ok(i), Ok(h)) => gate
+                .advertise_sync(port, &i.to_lowercase(), &h.to_lowercase())
+                .ok(),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let handles =
+        app.state::<sync::runtime::SyncRuntime>()
+            .begin(code.clone(), addresses, ad.is_some());
+    let a = app.clone();
+    let name = sync_device_name();
+    std::thread::spawn(move || {
+        let expected = *identity.public();
+        let gate = a.state::<net::NetGate>();
+        sync::runtime::run_pairing_window(
+            &gate,
+            listener,
+            &handles,
+            &code,
+            &identity,
+            &name,
+            |p, addr| sync_store_peer(&a, &expected, p, addr),
+        );
+        // Goodbye (TTL 0) and daemon stop as soon as the window closes.
+        drop(ad);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn sync_cancel_pairing(app: tauri::AppHandle) {
+    app.state::<sync::runtime::SyncRuntime>().cancel();
+}
+
+/// What *Join device* reports on success.
+#[derive(Serialize)]
+struct SyncJoined {
+    name: String,
+    fingerprint: String,
+}
+
+/// *Sync → Join device*: dials a pairing window and runs the initiator side
+/// with the code the user typed (`lan-sync.md` §3).
+#[tauri::command]
+async fn sync_join(
+    app: tauri::AppHandle,
+    address: String,
+    code: String,
+) -> Result<SyncJoined, CmdError> {
+    let code = Zeroizing::new(code);
+    blocking(move || {
+        sync::pairing::parse_code(&code).map_err(pair_error)?;
+        sync_preflight(&app)?;
+        sync_join_blocking(&app, &address, &code)
+    })
+    .await
+}
+
+#[cfg(not(feature = "network"))]
+fn sync_join_blocking(
+    _app: &tauri::AppHandle,
+    _address: &str,
+    _code: &str,
+) -> Result<SyncJoined, CmdError> {
+    Err(CmdError::new(
+        "SYNC_AIR_GAPPED",
+        net::NetError::NotCompiledIn.to_string(),
+    ))
+}
+
+#[cfg(feature = "network")]
+fn sync_join_blocking(
+    app: &tauri::AppHandle,
+    address: &str,
+    code: &str,
+) -> Result<SyncJoined, CmdError> {
+    let identity = sync_identity(app)?;
+    let gate = app.state::<net::NetGate>();
+    let mut stream = gate
+        .lan_connect(address, std::time::Duration::from_secs(5))
+        .map_err(|e| {
+            CmdError::new(
+                "SYNC_CONNECT_FAILED",
+                format!("Could not reach {}: {e}", address.trim()),
+            )
+        })?;
+    stream
+        .set_timeout(std::time::Duration::from_secs(30))
+        .map_err(|e| CmdError::new("SYNC_CONNECT_FAILED", e.to_string()))?;
+    let expected = *identity.public();
+    let peer = stream.peer().to_owned();
+    let p = sync::pairing::initiate(&mut stream, code, &identity, &sync_device_name(), |p| {
+        sync_store_peer(app, &expected, p, &peer)
+    })
+    .map_err(pair_error)?;
+    Ok(SyncJoined {
+        fingerprint: sync::identity::fingerprint(&p.public_key),
+        name: p.name,
+    })
+}
+
+/// Looks for open pairing windows on the local network for 3 seconds, then
+/// stops (no background browsing).
+#[tauri::command]
+async fn sync_discover(app: tauri::AppHandle) -> Result<Vec<serde_json::Value>, CmdError> {
+    blocking(move || {
+        if !app.state::<VaultState>().is_unlocked() {
+            return Err(locked());
+        }
+        if let Err(e) = app.state::<net::NetGate>().check() {
+            return Err(CmdError::new("SYNC_AIR_GAPPED", e.to_string()));
+        }
+        #[cfg(not(feature = "network"))]
+        return Ok(Vec::new());
+        #[cfg(feature = "network")]
+        app.state::<net::NetGate>()
+            .discover_sync(std::time::Duration::from_secs(3))
+            .map(|v| {
+                v.into_iter()
+                    .filter_map(|d| serde_json::to_value(d).ok())
+                    .collect()
+            })
+            .map_err(|e| CmdError::new("SYNC_DISCOVER_FAILED", e.to_string()))
+    })
+    .await
+}
+
+/// *Forget device* (§7): its next handshake fails the pin check.
+#[tauri::command]
+fn sync_forget(app: tauri::AppHandle, id: String) -> Result<SyncStatus, CmdError> {
+    write(&app, |d| {
+        if !sync::forget_peer(&mut d.sync, &id) {
+            return Err(CmdError::new("NOT_FOUND", "That device is not paired."));
+        }
+        Ok(())
+    })?;
+    sync_status_of(&app)
+}
+
+/// *Reset sync identity* (§7): a new key pair on next pairing, every peer cut off.
+#[tauri::command]
+fn sync_reset_identity(app: tauri::AppHandle) -> Result<SyncStatus, CmdError> {
+    app.state::<sync::runtime::SyncRuntime>().cancel();
+    write(&app, |d| {
+        sync::reset_identity(&mut d.sync);
+        Ok(())
+    })?;
+    sync_status_of(&app)
+}
+
+/// *Advertise on the local network* (§5). Off: manual address entry only.
+#[tauri::command]
+fn sync_set_advertise(app: tauri::AppHandle, enabled: bool) -> Result<SyncStatus, CmdError> {
+    write(&app, |d| {
+        d.sync.advertise = enabled;
+        Ok(())
+    })?;
+    sync_status_of(&app)
+}
+
 /// Tauri builder with every shush command and the vault state registered.
 ///
 /// GUI plugins (e.g. the native file dialog) are attached in `main.rs`, not
@@ -2818,6 +3201,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
         .manage(VaultState::default())
         .manage(bridge::state::BridgeState::default())
         .manage(net::NetGate::default())
+        .manage(sync::runtime::SyncRuntime::default())
         .manage(update::client::UpdateState::default())
         .manage(std::sync::Mutex::new(DeleteThrottle::default()))
         .plugin(
@@ -2951,7 +3335,15 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             set_update_mode,
             check_for_update,
             download_update,
-            install_update
+            install_update,
+            sync_status,
+            sync_start_pairing,
+            sync_cancel_pairing,
+            sync_join,
+            sync_discover,
+            sync_forget,
+            sync_reset_identity,
+            sync_set_advertise
         ])
 }
 

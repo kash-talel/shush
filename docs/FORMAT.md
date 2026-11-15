@@ -191,6 +191,14 @@ total     = max(4096, PADMÉ(4 + compressed_len))
 - The zstd frame must declare its content size; frames declaring more than 256 MiB are
   rejected before any allocation (decompression-bomb guard).
 - `VaultData` is the JSON model from spec §5 (`version: 1`).
+- **LAN sync (issue #156, `docs/spec/lan-sync.md` §6).** An optional `sync` object, absent until
+  the vault first pairs a device (older versions ignore it):
+  `{ "identity": { "secret": "<X25519 secret, 32 B base64>", "created_at": "<RFC 3339>" },
+  "peers": [ { "id": "<fingerprint>", "name": "…", "public_key": "<32 B base64>",
+  "paired_at": "…", "last_sync_at": null, "last_address": "192.168.1.31:53124" } ],
+  "advertise": false }`. Every key is optional; `advertise` is written only when the user turned
+  announcing off (default `true`). Each payload (and each duress slot) has its own identity and
+  peers. The public key is derived from `secret`; a peer is trusted only while it is listed.
 
 ## Writing (issue #11)
 

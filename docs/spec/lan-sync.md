@@ -1,6 +1,9 @@
 # ADR: LAN sync pairing, transport and discovery
 
-Status: **accepted** (design only; not implemented, Phase 8b). Issue #18.
+Status: **accepted**, Issue #18. Pairing, pinned peers, revocation, session handshake and
+windowed discovery are implemented (#156, `src-tauri/src/sync/`, sockets in `src-tauri/src/net.rs`).
+Not yet implemented: the *Sync now* window and item exchange inside a session (§4, §8), the
+revoke courtesy message over a live session (§7) — #228 — and the Public-network warning (§5) — #229.
 This document is normative. Where `master-specification.md`, `architecture-plan.md` or
 `security-model.md` say anything else about LAN sync pairing, transport or discovery, this
 document wins. Merging is out of scope here; it needs #9 and #19 first (see §8).

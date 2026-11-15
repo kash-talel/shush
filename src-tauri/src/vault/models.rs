@@ -41,6 +41,83 @@ pub struct VaultData {
     /// Last clock value this vault issued or observed, so new ones only grow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_hlc: Option<Hlc>,
+    /// LAN sync identity and pinned peers (issue #156, `docs/spec/lan-sync.md` §6).
+    /// Absent until the user first pairs a device from this vault.
+    #[serde(default, skip_serializing_if = "SyncData::is_empty")]
+    pub sync: SyncData,
+}
+
+/// LAN sync state stored in the encrypted payload (`lan-sync.md` §6). Each
+/// payload (and each duress slot) has its own identity and peer list.
+#[derive(Clone, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(test, derive(Debug))]
+pub struct SyncData {
+    /// This vault's X25519 static key pair, created on first pairing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<SyncIdentityRecord>,
+    /// Pinned peers. Only these may open a sync session.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub peers: Vec<SyncPeer>,
+    /// Advertise pairing and sync windows on the local network (mDNS). Off
+    /// means manual address entry only (`lan-sync.md` §5). Default on.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub advertise: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde passes a reference
+fn is_true(b: &bool) -> bool {
+    *b
+}
+
+impl Default for SyncData {
+    fn default() -> Self {
+        Self {
+            identity: None,
+            peers: Vec::new(),
+            advertise: true,
+        }
+    }
+}
+
+impl SyncData {
+    /// Nothing worth writing: no identity, no peers, default settings.
+    pub fn is_empty(&self) -> bool {
+        self.identity.is_none() && self.peers.is_empty() && self.advertise
+    }
+}
+
+/// The sync identity's secret half (the public key is derived from it).
+#[derive(Clone, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(test, derive(Debug))]
+pub struct SyncIdentityRecord {
+    /// X25519 secret key, standard base64 (32 bytes).
+    pub secret: String,
+    /// When it was generated, RFC 3339 UTC.
+    pub created_at: String,
+}
+
+/// A paired device (`lan-sync.md` §6).
+#[derive(Clone, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(test, derive(Debug))]
+pub struct SyncPeer {
+    /// Device fingerprint (`XXXX-XXXX-XXXX-XXXX`), unique per public key.
+    pub id: String,
+    /// Name the device sent in its pairing confirmation.
+    pub name: String,
+    /// Pinned X25519 static public key, standard base64 (32 bytes).
+    pub public_key: String,
+    /// When it was paired, RFC 3339 UTC.
+    pub paired_at: String,
+    /// Last completed sync session, if any.
+    #[serde(default)]
+    pub last_sync_at: Option<String>,
+    /// Address it was last seen at (`ip:port`), if known.
+    #[serde(default)]
+    pub last_address: Option<String>,
 }
 
 /// A paired browser as stored in the vault (issue #52).
@@ -68,6 +145,7 @@ impl VaultData {
             browser_pairings: Vec::new(),
             device_id: String::new(),
             last_hlc: None,
+            sync: SyncData::default(),
         }
     }
 }
