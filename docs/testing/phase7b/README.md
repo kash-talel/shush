@@ -38,3 +38,24 @@ Browsers only read the real `HKCU\Software\...\NativeMessagingHosts` keys, so th
 It aborts if a `com.shush.vault` key already exists and deletes the keys on exit either way.
 
 Last run: 2026-11-13, Edge 157, 15 passed.
+
+## Pipe listener, image check, limits and squat warning: `e2e-pipe.sh` (issue #153)
+
+Covers what `e2e-phase7b.sh` does not: the `shush-host.exe` client-image check, the per-connection
+rate limit, the connection cap and the squatted-pipe warning. It starts and stops the debug app
+itself on a scratch vault, touches no browser registry keys, and aborts if a shush pipe already
+exists (close an installed shush first; the pipe name is per user). Needs the bins built and Vite on
+port 1420, with `CDP_PORT` set (see `docs/testing/README.md`):
+
+```bash
+cargo build --manifest-path src-tauri/Cargo.toml --bins
+CDP_PORT=<port> bash docs/testing/phase7b/e2e-pipe.sh <scratch dir>
+```
+
+`pipe-probe.mjs` is its pipe-side helper. The 12 checks: a Node client (not `shush-host.exe`) is
+closed without an answer; the real host is answered; 30 requests per second per connection and then
+the connection is cut; 8 live connections served, the 9th dropped, and a slot frees when one closes;
+with a squatter holding the pipe name the app reports `serving: false` with the warning text, and
+`shush-host.exe` refuses a pipe not served by `shush.exe`.
+
+Last run: 2026-11-15, 12 passed.
