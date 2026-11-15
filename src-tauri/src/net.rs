@@ -390,6 +390,7 @@ type Closer = Box<dyn FnOnce() + Send>;
 /// The gate's list of open sockets.
 #[derive(Default)]
 struct Registry {
+    #[cfg_attr(not(feature = "network"), allow(dead_code))]
     next: u64,
     closers: std::collections::HashMap<u64, Closer>,
 }
@@ -406,6 +407,7 @@ fn lock_registry(r: &std::sync::Mutex<Registry>) -> std::sync::MutexGuard<'_, Re
 
 /// Membership of one socket in the gate's registry. Dropping it removes the entry.
 #[derive(Debug)]
+#[cfg_attr(not(feature = "network"), allow(dead_code))]
 pub(crate) struct Tracked {
     id: u64,
     open: std::sync::Arc<std::sync::Mutex<Registry>>,
@@ -463,6 +465,8 @@ impl NetGate {
     /// if air-gapped mode came on since the caller's `check()`.
     #[cfg(feature = "network")]
     fn track(&self, closer: Closer) -> Result<Tracked, NetError> {
+        // Counted before the race check: the socket did reach the network.
+        self.opened.fetch_add(1, Ordering::SeqCst);
         let mut reg = lock_registry(&self.open);
         if self.is_air_gapped() {
             drop(reg);
@@ -472,7 +476,6 @@ impl NetGate {
         reg.next += 1;
         let id = reg.next;
         reg.closers.insert(id, closer);
-        self.opened.fetch_add(1, Ordering::SeqCst);
         Ok(Tracked {
             id,
             open: self.open.clone(),
@@ -604,9 +607,15 @@ impl NetGate {
                 }
                 // A peer that closes without close_notify: completeness is checked below.
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(io(&e)),
+                Err(e) => {
+                    // Air-gapped mode shuts the socket down mid-read (issue #191).
+                    self.check()?;
+                    return Err(io(&e));
+                }
             }
         }
+        // A shutdown by air-gapped mode can look like a clean end: never return that body.
+        self.check()?;
         parse_http_response(&raw, max_body).map_err(|m| NetError::Io(m.into()))
     }
 
@@ -756,7 +765,7 @@ impl NetGate {
     }
 }
 
-// --- LAN sync sockets and discovery (issue #156, docs/spec/lan-sync.md §5) ---
+// --- LAN sync sockets and discovery (issue #156, docs/spec/lan-sync.md Â§5) ---
 
 /// DNS-SD service type of a shush pairing or sync window.
 #[cfg(feature = "network")]
@@ -930,8 +939,18 @@ impl NetGate {
         let daemon = mdns_sd::ServiceDaemon::new().map_err(io_err)?;
         let handle = daemon.clone();
         let t = self.track(Box::new(move || {
-            if let Ok(rx) = handle.shutdown() {
-                let _ = rx.recv_timeout(std::time::Duration::from_secs(1));
+            // A full command queue answers Again: retry rather than leave the daemon running.
+            for _ in 0..50 {
+                match handle.shutdown() {
+                    Ok(rx) => {
+                        let _ = rx.recv_timeout(std::time::Duration::from_secs(1));
+                        return;
+                    }
+                    Err(mdns_sd::Error::Again) => {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(_) => return,
+                }
             }
         }))?;
         DISCOVERY_LIVE.fetch_add(1, Ordering::SeqCst);
