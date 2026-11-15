@@ -434,6 +434,35 @@ fn up_to_date_feed_offers_nothing_to_download() {
     assert!(matches!(f.status, Some(UpdateStatus::UpToDate { .. })));
 }
 
+/// A beta install offered a stable release (#175) reads that release's installer signature from
+/// the stable feed, not its own beta feed.
+#[test]
+fn beta_install_downloads_a_stable_release_from_the_stable_feed() {
+    let fx = Fx::new();
+    let d = dirs();
+    let mut files = fx.feed("0.2.0");
+    // A beta latest.json that would fail the cross-check if it were read.
+    files.insert(
+        format!("{FEED_PREFIX}/beta/latest.json"),
+        br#"{"version":"0.2.0-beta.1","platforms":{}}"#.to_vec(),
+    );
+    let src = Src::new(&fx, files, vec![]);
+    let s = download(
+        &src,
+        &Request {
+            anchors: &fx.anchors(),
+            installed: "0.2.0-beta.1",
+            expected: "0.2.0",
+            now_unix: NOW,
+            dir: &d.dir,
+            state_dir: &d.state,
+        },
+    )
+    .unwrap();
+    assert_eq!(s.version(), "0.2.0");
+    assert_eq!(load_highest_seen(&d.state).as_deref(), Some("0.2.0"));
+}
+
 #[test]
 fn highest_seen_only_rises_and_fails_closed_to_none() {
     let d = tempfile::tempdir().unwrap();

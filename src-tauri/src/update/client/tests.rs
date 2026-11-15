@@ -331,3 +331,43 @@ fn beta_install_takes_the_higher_of_beta_and_stable() {
         UpdateStatus::Failed { .. }
     ));
 }
+
+#[test]
+fn beta_install_is_never_up_to_date_while_the_stable_feed_is_unconfirmed() {
+    let fx = Fx::new();
+    let a = fx.anchors();
+    let exp = NOW + 3600;
+    let installed = "0.3.0-beta.2";
+    let with_stable = |stable: Option<Fake>| {
+        let mut m = fx.feed_on("beta", installed, None, exp).0;
+        if let Some(s) = stable {
+            m.extend(s.0);
+        }
+        Fake(m)
+    };
+    // Beta is current but the stable feed cannot be reached: not "up to date".
+    let f = with_stable(None);
+    assert!(matches!(
+        check(&f, &a, installed, None, NOW),
+        UpdateStatus::Failed { .. }
+    ));
+    // Beta is current but the stable feed is stale (a freeze): reported as stale.
+    let f = with_stable(Some(fx.feed_on("stable", "0.3.0", None, NOW - 1)));
+    assert!(matches!(
+        check(&f, &a, installed, None, NOW),
+        UpdateStatus::Stale
+    ));
+    // A stable release older than the beta is expected and still reads as up to date.
+    let f = with_stable(Some(fx.feed_on("stable", "0.2.0", None, exp)));
+    assert!(matches!(
+        check(&f, &a, installed, None, NOW),
+        UpdateStatus::UpToDate { .. }
+    ));
+    // A beta offer is never hidden by a stable failure.
+    let mut m = fx.feed_on("beta", "0.4.0-beta.1", None, exp).0;
+    m.extend(fx.feed_on("stable", "0.3.0", None, NOW - 1).0);
+    match check(&Fake(m), &a, installed, None, NOW) {
+        UpdateStatus::Available { version, .. } => assert_eq!(version, "0.4.0-beta.1"),
+        other => panic!("{other:?}"),
+    }
+}

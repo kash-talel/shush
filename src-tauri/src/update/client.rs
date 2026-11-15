@@ -180,7 +180,7 @@ pub fn fetch_verified(
     installed: &str,
     highest_seen: Option<&str>,
     now_unix: i64,
-) -> Result<Result<super::VerifiedRelease, UpdateError>, UpdateStatus> {
+) -> Verdict {
     let one = |channel: &str| match check_once(
         fetch,
         anchors,
@@ -201,20 +201,34 @@ pub fn fetch_verified(
     }
     // A beta install also looks at the stable feed (#175) and takes the higher version, so a
     // stable release newer than the last beta (for example a security fix) still reaches it.
-    // Each feed is verified on its own, against its own channel; the stable one can only ever
-    // add an offer, never hide the beta's.
+    // Each feed is verified on its own, against its own channel; see `pick_higher` for how the
+    // two verdicts combine.
     let stable = one(super::STABLE_CHANNEL);
     pick_higher(primary, stable)
 }
 
 type Verdict = Result<Result<super::VerifiedRelease, UpdateError>, UpdateStatus>;
 
-/// Merges the beta feed's result with the stable feed's. A verified stable release wins when it
-/// is higher than the beta's, or when the beta feed gave no verified release; otherwise the beta
-/// result stands, including its error, since the stable feed's own failures (rollback, no stable
-/// release yet) are expected for a beta install.
+/// Merges the beta feed's result with the stable feed's.
+///
+/// - A verified stable release wins when it is higher than the beta's, or when the beta feed gave
+///   no verified release. It is signed and checked like any other offer.
+/// - A stable failure never hides a beta offer. But when the beta feed says "up to date", a stable
+///   failure is reported instead: the stable feed was not confirmed, so a newer stable release
+///   (a security fix) may be missing and the check must not claim "up to date". The one stable
+///   failure that is expected for a beta install, a stable release older than it (`Rollback`),
+///   is ignored.
 fn pick_higher(beta: Verdict, stable: Verdict) -> Verdict {
-    let Ok(Ok(s)) = &stable else { return beta };
+    let s = match &stable {
+        Ok(Ok(s)) => s,
+        Ok(Err(UpdateError::Rollback { .. })) => return beta,
+        _ => {
+            return match &beta {
+                Ok(Ok(b)) if !b.update_available => stable,
+                _ => beta,
+            }
+        }
+    };
     if let Ok(Ok(b)) = &beta {
         let higher = match (
             semver::Version::parse(&s.release.version),
