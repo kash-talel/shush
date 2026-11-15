@@ -2262,6 +2262,56 @@ fn bridge_reject_save(app: tauri::AppHandle, origin: String, username: String) {
         .take_pending_for(&origin, &username);
 }
 
+/// Quick search `Ctrl+Shift+Enter` (issue #155): asks the paired extension to
+/// fill `id` into its active tab. Never types anything itself (no `SendInput`);
+/// the extension reports the tab's origin and shush decides. Resolves to
+/// `filled`, or why nothing was typed: `not_paired`, `mismatch`, `refused` or
+/// `no_extension`.
+#[tauri::command]
+async fn bridge_autotype(app: tauri::AppHandle, id: String) -> Result<&'static str, CmdError> {
+    use bridge::protocol::AutotypeOutcome;
+    blocking(move || {
+        let exists = app
+            .state::<VaultState>()
+            .with(|u| {
+                u.vault
+                    .data()
+                    .items
+                    .iter()
+                    .any(|i| matches!(i, vault::models::VaultItem::Login(l) if l.base.id == id))
+            })
+            .ok_or_else(locked)?;
+        if !exists {
+            return Err(CmdError::new("NOT_FOUND", "That login no longer exists."));
+        }
+        let bridge = app.state::<bridge::state::BridgeState>();
+        {
+            let mut b = bridge.bridge();
+            sync_pairings(&app, &mut b);
+            if !b.has_pairings() {
+                return Ok("not_paired");
+            }
+            b.request_autotype(&id, std::time::Instant::now());
+        }
+        let result = loop {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let mut b = bridge.bridge();
+            match b.autotype_outcome(std::time::Instant::now()) {
+                Some(AutotypeOutcome::Waiting) => continue,
+                Some(AutotypeOutcome::Filled) => break "filled",
+                Some(AutotypeOutcome::Mismatch) => break "mismatch",
+                Some(AutotypeOutcome::Refused) => break "refused",
+                // Cleared by a lock while waiting.
+                None => break "refused",
+                Some(AutotypeOutcome::NoExtension) => break "no_extension",
+            }
+        };
+        bridge.bridge().clear_autotype();
+        Ok(result)
+    })
+    .await
+}
+
 // ---- Browser support registration (issue #53) -------------------------------
 
 /// Whether the native-messaging host is registered with the browsers.
@@ -2822,6 +2872,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             bridge_revoke,
             bridge_approve_save,
             bridge_reject_save,
+            bridge_autotype,
             browser_support_status,
             set_browser_support,
             network_status,
@@ -3218,6 +3269,7 @@ mod tests {
         assert_eq!(
             spotlight,
             [
+                "allow-bridge-autotype",
                 "allow-copy-field",
                 "allow-hide-spotlight",
                 "allow-list-items",

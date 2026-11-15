@@ -5,6 +5,8 @@
   import { KeyRound, LockKeyhole, ShieldCheck, Sparkles } from "@lucide/svelte";
   import {
     AUTO_LOCK_EVENT,
+    bridgeAutotype,
+    type AutotypeResult,
     copyField,
     listItems,
     toCmdError,
@@ -22,6 +24,7 @@
   let selected = $state(0);
   let contextMatch = $state<string | null>(null);
   let message = $state<string | null>(null);
+  let busy = $state(false);
   let input: HTMLInputElement | undefined = $state();
 
   /** Subsequence fuzzy score; higher is better, null = no match. */
@@ -102,6 +105,31 @@
     }
   }
 
+  const AUTOTYPE_WHY: Record<Exclude<AutotypeResult, "filled">, string> = {
+    not_paired: "No browser is paired. Pair one in Settings, Browser.",
+    mismatch: "Nothing typed: the browser tab is not this login's site.",
+    refused: "Nothing typed: the browser tab is not a web page, or the login is gone.",
+    no_extension: "Nothing typed: the shush extension did not answer. Is the browser open with it enabled?",
+  };
+
+  // Ctrl+Shift+Enter (#155): the paired extension reports the active tab's
+  // origin and shush only releases the login when it matches. The window title
+  // never does, and shush types nothing itself.
+  async function autotype() {
+    if (!current || busy) return;
+    busy = true;
+    message = "Asking the browser extension...";
+    try {
+      const r = await bridgeAutotype(current.id);
+      if (r === "filled") await hide();
+      else message = AUTOTYPE_WHY[r];
+    } catch (e) {
+      message = toCmdError(e).message;
+    } finally {
+      busy = false;
+    }
+  }
+
   function onkeydown(e: KeyboardEvent) {
     const next = e.key === "ArrowDown" || (e.ctrlKey && e.key.toLowerCase() === "j");
     const prev = e.key === "ArrowUp" || (e.ctrlKey && e.key.toLowerCase() === "k");
@@ -115,7 +143,8 @@
     } else if (e.key === "Enter") {
       e.preventDefault();
       if (!unlocked) void invoke("open_main_window");
-      else void copy(e.ctrlKey ? "username" : e.altKey ? "totp" : "password");
+      else if (e.ctrlKey && e.shiftKey) void autotype();
+      else void copy(e.ctrlKey ? "username": e.altKey ? "totp" : "password");
     }
   }
 
@@ -218,6 +247,7 @@
       <span class="flex items-center gap-1.5"><kbd class="kbd">Enter</kbd> password</span>
       <span class="flex items-center gap-1.5"><kbd class="kbd">Ctrl Enter</kbd> username</span>
       <span class="flex items-center gap-1.5"><kbd class="kbd">Alt Enter</kbd> 2FA code</span>
+      <span class="flex items-center gap-1.5"><kbd class="kbd">Ctrl Shift Enter</kbd> fill in browser</span>
     {/if}
   </footer>
 </div>

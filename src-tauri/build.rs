@@ -59,6 +59,7 @@ const COMMANDS: &[&str] = &[
     "bridge_revoke",
     "bridge_approve_save",
     "bridge_reject_save",
+    "bridge_autotype",
     "browser_support_status",
     "set_browser_support",
     "network_status",

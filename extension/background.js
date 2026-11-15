@@ -236,6 +236,47 @@ async function fill(tab, id) {
   return call("fill", { id, tab_origin: origin });
 }
 
+// ---- auto-type from shush Quick search (issue #155) ------------------------------
+
+// shush cannot push to the browser, so while paired the worker polls an
+// unsigned `hello`, which only says whether Quick search is waiting (no secret,
+// no counter). On `true` it reports the active tab's origin, taken from the
+// tabs API and never from the page or a window title, with a signed
+// `autotype_take`. shush decides whether it matches; the fill itself is the
+// same content-script fill the popup uses. No SendInput anywhere.
+const POLL_MS = 1000;
+const POLL_IDLE_MS = 10000; // shush not running: do not respawn the host every second
+
+async function autotypeOnce() {
+  if ((await loadPairing()) === null) return POLL_IDLE_MS;
+  let hello;
+  try {
+    hello = await call("hello", {}, { open: true });
+  } catch (e) {
+    return e.code === "NOT_CONNECTED" ? POLL_IDLE_MS : POLL_MS * 3;
+  }
+  if (!hello.autotype_pending) return POLL_MS;
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  try {
+    const secrets = await call("autotype_take", { tab_origin: tabOrigin(tab) ?? "" });
+    await chrome.tabs.sendMessage(tab.id, { cmd: "shush-fill", secrets }, { frameId: 0 });
+  } catch {
+    // shush records why nothing was typed (mismatch, locked, ...) and shows it.
+  }
+  return POLL_MS;
+}
+
+async function autotypeLoop() {
+  let wait = POLL_MS;
+  try {
+    wait = await autotypeOnce();
+  } catch {
+    wait = POLL_IDLE_MS;
+  }
+  setTimeout(autotypeLoop, wait);
+}
+autotypeLoop();
+
 // ---- messages from the popup and content scripts -------------------------------
 
 async function handle(msg, sender) {

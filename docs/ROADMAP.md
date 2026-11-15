@@ -115,7 +115,7 @@ focus race, keyboard-layout and UIPI problems of #13. Non-browser auto-type stay
    script detects login forms and shows a shush button; popup for pairing and status. No remote
    code, no network permission, minimal host permissions.
 7. **Registration**: Settings toggle writes and removes the three HKCU keys and manifests.
-8. **Auto-type** via the extension as described above.
+8. ✅ **Auto-type** via the extension as described above (#155: `autotype_take`, polled `hello.autotype_pending`, `bridge_autotype`, `Ctrl+Shift+Enter`).
 9. **E2E** `docs/testing/phase7b/`: Edge launched with `--load-extension` against a local test
    page, driven over CDP (no OS input), plus the main app over CDP.
 
