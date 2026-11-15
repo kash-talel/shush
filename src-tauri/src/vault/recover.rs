@@ -91,7 +91,13 @@ pub fn recover_from_backup<E: From<VaultError>>(
     verify(&bytes)?;
 
     let quarantine = quarantine_path(path);
-    copy_new(path, &quarantine).map_err(VaultError::from)?;
+    if let Err(e) = copy_new(path, &quarantine) {
+        // Never leave a partial copy behind (it would show in the banner).
+        if e.kind() != io::ErrorKind::AlreadyExists {
+            let _ = fs::remove_file(&quarantine);
+        }
+        return Err(VaultError::from(e).into());
+    }
     let result = write_atomic_keep_bak(path, &bytes, |written| {
         if written == bytes.as_slice() {
             Ok(())
