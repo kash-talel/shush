@@ -70,23 +70,26 @@ impl Fx {
         }
     }
     fn feed(&self, version: &str, min: Option<&str>, expires: i64) -> Fake {
+        self.feed_on("stable", version, min, expires)
+    }
+    fn feed_on(&self, channel: &str, version: &str, min: Option<&str>, expires: i64) -> Fake {
         let min = min
             .map(|m| format!(r#","min_supported":"{m}","security":true"#))
             .unwrap_or_default();
         let release = format!(
-            r#"{{"schema":1,"channel":"stable","version":"{version}","released_at":"{}"{min},"artifact":{{"target":"windows-x86_64-nsis","url":"https://example.invalid/x.exe","sha256":"{}","size":10}}}}"#,
+            r#"{{"schema":1,"channel":"{channel}","version":"{version}","released_at":"{}"{min},"artifact":{{"target":"windows-x86_64-nsis","url":"https://example.invalid/x.exe","sha256":"{}","size":10}}}}"#,
             rfc(NOW - 100),
             "0".repeat(64)
         )
         .into_bytes();
         let fresh = format!(
-            r#"{{"schema":1,"channel":"stable","release_sha256":"{}","issued_at":"{}","expires_at":"{}"}}"#,
+            r#"{{"schema":1,"channel":"{channel}","release_sha256":"{}","issued_at":"{}","expires_at":"{}"}}"#,
             sha(&release),
             rfc(NOW - 50),
             rfc(expires)
         )
         .into_bytes();
-        let p = |n: &str| format!("{FEED_PREFIX}/stable/{n}");
+        let p = |n: &str| format!("{FEED_PREFIX}/{channel}/{n}");
         let mut m = HashMap::new();
         m.insert(p("release.json.minisig"), sign(&self.rel, &release));
         m.insert(p("freshness.json.minisig"), sign(&self.ts, &fresh));
@@ -286,4 +289,45 @@ fn mode_persists_and_fails_closed() {
     assert_eq!(UpdateMode::load(d.path()), UpdateMode::Notify);
     std::fs::write(d.path().join(SETTINGS_FILE), b"garbage").unwrap();
     assert_eq!(UpdateMode::load(d.path()), UpdateMode::Off);
+}
+
+#[test]
+fn beta_install_takes_the_higher_of_beta_and_stable() {
+    let fx = Fx::new();
+    let a = fx.anchors();
+    let exp = NOW + 3600;
+    let both = |beta: &str, stable: &str| {
+        let mut m = fx.feed_on("beta", beta, None, exp).0;
+        m.extend(fx.feed_on("stable", stable, None, exp).0);
+        Fake(m)
+    };
+    let version = |f: &Fake, installed: &str| match check(f, &a, installed, None, NOW) {
+        UpdateStatus::Available { version, .. } => version,
+        other => panic!("{other:?}"),
+    };
+    // Stable newer than the last beta: offered to the beta install.
+    assert_eq!(
+        version(&both("0.3.0-beta.2", "0.3.0"), "0.3.0-beta.1"),
+        "0.3.0"
+    );
+    // A newer beta than stable stays on beta.
+    assert_eq!(
+        version(&both("0.4.0-beta.1", "0.3.0"), "0.3.0-beta.1"),
+        "0.4.0-beta.1"
+    );
+    // Stable older than the installed beta is a rollback on that feed only: beta still answers.
+    let f = both("0.3.0-beta.2", "0.2.0");
+    assert!(matches!(
+        check(&f, &a, "0.3.0-beta.2", None, NOW),
+        UpdateStatus::UpToDate { .. }
+    ));
+    // No beta feed at all: the stable release is still offered.
+    let f = fx.feed_on("stable", "0.3.0", None, exp);
+    assert_eq!(version(&f, "0.3.0-beta.1"), "0.3.0");
+    // A stable install never reads the beta feed.
+    let f = fx.feed_on("beta", "0.4.0-beta.1", None, exp);
+    assert!(matches!(
+        check(&f, &a, "0.3.0", None, NOW),
+        UpdateStatus::Failed { .. }
+    ));
 }

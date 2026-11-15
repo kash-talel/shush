@@ -281,12 +281,13 @@ fn verified_release(src: &dyn Source, req: &Request<'_>) -> Result<ReleaseManife
 
 /// Reads `latest.json`, cross-checks it against the signed release and returns the installer's
 /// minisign signature text.
-fn installer_signature(
-    src: &dyn Source,
-    release: &ReleaseManifest,
-    installed: &str,
-) -> Result<String, Fail> {
-    let channel = super::client::channel_for(installed);
+fn installer_signature(src: &dyn Source, release: &ReleaseManifest) -> Result<String, Fail> {
+    // The release's own (signed, channel-checked) channel: a beta install can be offered a
+    // stable release (#175), whose installer is listed in the stable feed.
+    let channel = release.channel.as_str();
+    if channel != "stable" && channel != "beta" {
+        return Err(fail("UPDATE_FEED_INVALID", "The update feed is malformed."));
+    }
     let raw = src
         .get(
             &format!("{}/{channel}/latest.json", super::client::FEED_PREFIX),
@@ -458,7 +459,7 @@ fn fetch_installer(src: &dyn Source, release: &ReleaseManifest, path: &Path) -> 
 /// installer is staged and `highest_seen` is raised; on failure nothing is left behind.
 pub fn download(src: &dyn Source, req: &Request<'_>) -> Result<Staged, Fail> {
     let release = verified_release(src, req)?;
-    let sig = installer_signature(src, &release, req.installed)?;
+    let sig = installer_signature(src, &release)?;
     // The version is signed and semver-checked, so it is safe in a file name.
     let name = format!("shush_{}_x64-setup.exe", release.version);
     crate::os::private_dir::create_fresh(req.dir).map_err(|e| storage_fail(&e))?;

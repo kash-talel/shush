@@ -181,12 +181,53 @@ pub fn fetch_verified(
     highest_seen: Option<&str>,
     now_unix: i64,
 ) -> Result<Result<super::VerifiedRelease, UpdateError>, UpdateStatus> {
-    match check_once(fetch, anchors, installed, highest_seen, now_unix) {
+    let one = |channel: &str| match check_once(
+        fetch,
+        anchors,
+        channel,
+        installed,
+        highest_seen,
+        now_unix,
+    ) {
         Ok(Err(UpdateError::FreshnessMismatch)) => {
-            check_once(fetch, anchors, installed, highest_seen, now_unix)
+            check_once(fetch, anchors, channel, installed, highest_seen, now_unix)
         }
         other => other,
+    };
+    let own = channel_for(installed);
+    let primary = one(own);
+    if own == super::STABLE_CHANNEL {
+        return primary;
     }
+    // A beta install also looks at the stable feed (#175) and takes the higher version, so a
+    // stable release newer than the last beta (for example a security fix) still reaches it.
+    // Each feed is verified on its own, against its own channel; the stable one can only ever
+    // add an offer, never hide the beta's.
+    let stable = one(super::STABLE_CHANNEL);
+    pick_higher(primary, stable)
+}
+
+type Verdict = Result<Result<super::VerifiedRelease, UpdateError>, UpdateStatus>;
+
+/// Merges the beta feed's result with the stable feed's. A verified stable release wins when it
+/// is higher than the beta's, or when the beta feed gave no verified release; otherwise the beta
+/// result stands, including its error, since the stable feed's own failures (rollback, no stable
+/// release yet) are expected for a beta install.
+fn pick_higher(beta: Verdict, stable: Verdict) -> Verdict {
+    let Ok(Ok(s)) = &stable else { return beta };
+    if let Ok(Ok(b)) = &beta {
+        let higher = match (
+            semver::Version::parse(&s.release.version),
+            semver::Version::parse(&b.release.version),
+        ) {
+            (Ok(sv), Ok(bv)) => sv.cmp_precedence(&bv).is_gt(),
+            _ => false,
+        };
+        if !higher {
+            return beta;
+        }
+    }
+    stable
 }
 
 /// The status a verifier verdict is shown as.
@@ -236,11 +277,11 @@ pub fn to_status(r: Result<super::VerifiedRelease, UpdateError>, installed: &str
 fn check_once(
     fetch: &dyn Fetch,
     anchors: &TrustAnchors,
+    channel: &str,
     installed: &str,
     highest_seen: Option<&str>,
     now_unix: i64,
-) -> Result<Result<super::VerifiedRelease, UpdateError>, UpdateStatus> {
-    let channel = channel_for(installed);
+) -> Verdict {
     let get = |name: &str| {
         fetch.get(
             &format!("{FEED_PREFIX}/{channel}/{name}"),
