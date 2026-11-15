@@ -767,6 +767,7 @@ mod tests {
         let tk = b.request_autotype("gone", t0);
         let r = take(&mut b, &mut ext, "https://github.com");
         assert_eq!(r["error"], "NOT_FOUND");
+        assert_eq!(b.autotype_outcome(tk, t0), Some(AutotypeOutcome::Refused));
     }
 
     #[test]
@@ -818,7 +819,7 @@ mod tests {
         let mut b = Bridge::default();
         let _ext = paired(&mut b);
         let d = vault();
-        let tk = b.request_autotype("gh", Instant::now());
+        b.request_autotype("gh", Instant::now());
         let body = json!({"type":"autotype_take","tab_origin":"https://github.com"});
         let r = send(
             &mut b,

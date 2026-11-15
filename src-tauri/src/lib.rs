@@ -2170,7 +2170,7 @@ fn bridge_state(app: tauri::AppHandle) -> Result<BridgeInfo, CmdError> {
     let bridge = app.state::<bridge::state::BridgeState>();
     let (serving, warning) = serving_warning(bridge.serving());
     sync_pairings(&app);
-    let mut b = bridge.bridge();
+    let b = bridge.bridge();
     Ok(BridgeInfo {
         serving,
         warning,
