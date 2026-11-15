@@ -25,6 +25,8 @@
   let contextMatch = $state<string | null>(null);
   let message = $state<string | null>(null);
   let busy = $state(false);
+  /** Bumped on every open, so a late auto-type reply is ignored. */
+  let session = 0;
   let input: HTMLInputElement | undefined = $state();
 
   /** Subsequence fuzzy score; higher is better, null = no match. */
@@ -69,6 +71,8 @@
   }
 
   async function open(context: string | null) {
+    session += 1;
+    busy = false;
     query = "";
     message = null;
     contextMatch = null;
@@ -109,6 +113,7 @@
     not_paired: "No browser is paired. Pair one in Settings, Browser.",
     mismatch: "Nothing typed: the browser tab is not this login's site.",
     refused: "Nothing typed: the browser tab is not a web page, or the login is gone.",
+    locked: "Nothing typed: shush locked before the browser answered.",
     no_extension: "Nothing typed: the shush extension did not answer. Is the browser open with it enabled?",
   };
 
@@ -117,16 +122,20 @@
   // never does, and shush types nothing itself.
   async function autotype() {
     if (!current || busy) return;
+    // A reply that arrives after Quick search was closed and reopened belongs
+    // to the old session: it must not hide or annotate the new one.
+    const mine = session;
     busy = true;
     message = "Asking the browser extension...";
     try {
       const r = await bridgeAutotype(current.id);
+      if (mine !== session) return;
       if (r === "filled") await hide();
       else message = AUTOTYPE_WHY[r];
     } catch (e) {
-      message = toCmdError(e).message;
+      if (mine === session) message = toCmdError(e).message;
     } finally {
-      busy = false;
+      if (mine === session) busy = false;
     }
   }
 
@@ -144,7 +153,7 @@
       e.preventDefault();
       if (!unlocked) void invoke("open_main_window");
       else if (e.ctrlKey && e.shiftKey) void autotype();
-      else void copy(e.ctrlKey ? "username": e.altKey ? "totp" : "password");
+      else void copy(e.ctrlKey ? "username" : e.altKey ? "totp" : "password");
     }
   }
 

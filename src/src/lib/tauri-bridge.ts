@@ -484,7 +484,13 @@ export const bridgeRejectSave = (origin: string, username: string) =>
   invoke<void>("bridge_reject_save", { origin, username });
 
 /** Why Quick search auto-type did or did not fill (issue #155). */
-export type AutotypeResult = "filled" | "not_paired" | "mismatch" | "refused" | "no_extension";
+export type AutotypeResult =
+  | "filled"
+  | "not_paired"
+  | "mismatch"
+  | "refused"
+  | "locked"
+  | "no_extension";
 /**
  * Asks the paired extension to fill this login into the browser's active tab.
  * The extension reports the tab origin and shush checks it; nothing is typed

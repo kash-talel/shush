@@ -2131,9 +2131,15 @@ fn serving_warning(s: bridge::state::Serving) -> (bool, Option<String>) {
 }
 
 /// Loads the unlocked vault's pairings into the bridge if that has not happened yet.
-fn sync_pairings(app: &tauri::AppHandle, b: &mut bridge::protocol::Bridge) {
+/// Call it without holding the bridge lock: it takes the vault lock, then the
+/// bridge lock, the same order as the pipe server (`bridge::server::process`).
+/// The reverse order can deadlock against a browser request.
+fn sync_pairings(app: &tauri::AppHandle) {
+    let bridge = app.state::<bridge::state::BridgeState>();
     app.state::<VaultState>().with(|u| {
-        b.load_pairings(&u.vault.data().browser_pairings);
+        bridge
+            .bridge()
+            .load_pairings(&u.vault.data().browser_pairings);
     });
 }
 
@@ -2163,8 +2169,8 @@ fn bridge_state(app: tauri::AppHandle) -> Result<BridgeInfo, CmdError> {
     }
     let bridge = app.state::<bridge::state::BridgeState>();
     let (serving, warning) = serving_warning(bridge.serving());
+    sync_pairings(&app);
     let mut b = bridge.bridge();
-    sync_pairings(&app, &mut b);
     Ok(BridgeInfo {
         serving,
         warning,
@@ -2200,8 +2206,8 @@ fn bridge_start_pairing(app: tauri::AppHandle) -> Result<PairingCode, CmdError> 
         ));
     }
     let bridge = app.state::<bridge::state::BridgeState>();
+    sync_pairings(&app);
     let mut b = bridge.bridge();
-    sync_pairings(&app, &mut b);
     let now = std::time::Instant::now();
     let code = b
         .start_pairing(now)
@@ -2265,8 +2271,8 @@ fn bridge_reject_save(app: tauri::AppHandle, origin: String, username: String) {
 /// Quick search `Ctrl+Shift+Enter` (issue #155): asks the paired extension to
 /// fill `id` into its active tab. Never types anything itself (no `SendInput`);
 /// the extension reports the tab's origin and shush decides. Resolves to
-/// `filled`, or why nothing was typed: `not_paired`, `mismatch`, `refused` or
-/// `no_extension`.
+/// `filled`, or why nothing was typed: `not_paired`, `mismatch`, `refused`,
+/// `locked` or `no_extension`.
 #[tauri::command]
 async fn bridge_autotype(app: tauri::AppHandle, id: String) -> Result<&'static str, CmdError> {
     use bridge::protocol::AutotypeOutcome;
@@ -2285,28 +2291,33 @@ async fn bridge_autotype(app: tauri::AppHandle, id: String) -> Result<&'static s
             return Err(CmdError::new("NOT_FOUND", "That login no longer exists."));
         }
         let bridge = app.state::<bridge::state::BridgeState>();
-        {
+        sync_pairings(&app);
+        let ticket = {
             let mut b = bridge.bridge();
-            sync_pairings(&app, &mut b);
             if !b.has_pairings() {
                 return Ok("not_paired");
             }
-            b.request_autotype(&id, std::time::Instant::now());
-        }
+            b.request_autotype(&id, std::time::Instant::now())
+        };
         let result = loop {
             std::thread::sleep(std::time::Duration::from_millis(100));
-            let mut b = bridge.bridge();
-            match b.autotype_outcome(std::time::Instant::now()) {
+            // The bridge guard is a temporary: it is released before the
+            // vault lock below is taken (lock order: vault, then bridge).
+            let outcome = bridge
+                .bridge()
+                .autotype_outcome(ticket, std::time::Instant::now());
+            match outcome {
                 Some(AutotypeOutcome::Waiting) => continue,
                 Some(AutotypeOutcome::Filled) => break "filled",
                 Some(AutotypeOutcome::Mismatch) => break "mismatch",
                 Some(AutotypeOutcome::Refused) => break "refused",
-                // Cleared by a lock while waiting.
-                None => break "refused",
                 Some(AutotypeOutcome::NoExtension) => break "no_extension",
+                // Dropped by a lock, or replaced by a newer request.
+                None if !app.state::<VaultState>().is_unlocked() => break "locked",
+                None => break "refused",
             }
         };
-        bridge.bridge().clear_autotype();
+        bridge.bridge().clear_autotype(ticket);
         Ok(result)
     })
     .await

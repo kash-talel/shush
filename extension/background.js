@@ -258,8 +258,10 @@ async function autotypeOnce() {
   if (!hello.autotype_pending) return POLL_MS;
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   try {
-    const secrets = await call("autotype_take", { tab_origin: tabOrigin(tab) ?? "" });
-    await chrome.tabs.sendMessage(tab.id, { cmd: "shush-fill", secrets }, { frameId: 0 });
+    const origin = tabOrigin(tab) ?? "";
+    const secrets = await call("autotype_take", { tab_origin: origin });
+    // `origin` lets the content script refuse if the tab navigated meanwhile.
+    await chrome.tabs.sendMessage(tab.id, { cmd: "shush-fill", secrets, origin }, { frameId: 0 });
   } catch {
     // shush records why nothing was typed (mismatch, locked, ...) and shows it.
   }
@@ -299,8 +301,13 @@ async function handle(msg, sender) {
     case "fill": {
       const secrets = await fill(tab, String(msg.id));
       if (fromContent) return secrets;
-      // Popup: the click was the user gesture; deliver to the tab's top frame.
-      await chrome.tabs.sendMessage(tab.id, { cmd: "shush-fill", secrets }, { frameId: 0 });
+      // Popup: the click was the user gesture; deliver to the tab's top frame,
+      // which fills only if it is still the origin shush checked.
+      await chrome.tabs.sendMessage(
+        tab.id,
+        { cmd: "shush-fill", secrets, origin: tabOrigin(tab) },
+        { frameId: 0 },
+      );
       return {};
     }
     case "save": {
