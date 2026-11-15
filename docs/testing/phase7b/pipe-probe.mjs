@@ -60,13 +60,24 @@ function host() {
   let stderr = "";
   p.stderr.on("data", (d) => (stderr += d));
   p.stdin.on("error", () => {});
-  const exited = new Promise((res) => p.on("exit", (c) => res(c)));
+  const exited = new Promise((res) => { p.on("exit", (c) => res(c)); p.on("error", () => res("spawn-error")); });
   return {
-    p, exited, err: () => stderr,
+    p, exited, r, err: () => stderr,
     async send() { p.stdin.write(HELLO); return r.next(); },
   };
 }
-const isHello = (b) => b && b.length > 0 && JSON.parse(b.toString()).rid === 1;
+/** True only for a real hello answer: an error reply also echoes rid, so check the inner body
+ *  (a JSON string `{"ok":true,"result":{version,…}}`). */
+const isHello = (b) => {
+  if (!b || b.length === 0) return false;
+  try {
+    const m = JSON.parse(b.toString());
+    const inner = JSON.parse(m.body);
+    return m.rid === 1 && inner.ok === true && inner.result?.version !== undefined;
+  } catch {
+    return false;
+  }
+};
 
 if (mode === "serve") {
   // 1. Not shush-host.exe: the image check closes the pipe before reading a byte.
@@ -84,12 +95,13 @@ if (mode === "serve") {
   h.p.stdin.end();
   await h.exited;
 
-  // 3. Rate limit: 30 requests per second per connection, then it hangs up.
+  // 3. Rate limit: 30 requests per second per connection, then it hangs up. All 45 frames are
+  // written at once so the 30 allowed ones land well inside the 1 s window even on a slow build.
   const rl = host();
-  let replies = 0, last;
+  rl.p.stdin.write(Buffer.concat(Array.from({ length: 45 }, () => HELLO)));
+  let replies = 0;
   for (let i = 0; i < 45; i++) {
-    last = await rl.send();
-    if (!isHello(last)) break;
+    if (!isHello(await rl.r.next())) break;
     replies++;
   }
   const code = await Promise.race([rl.exited, sleep(5000).then(() => "timeout")]);
@@ -108,8 +120,10 @@ if (mode === "serve") {
   const ans = await ninth.send();
   const c9 = await Promise.race([ninth.exited, sleep(5000).then(() => "timeout")]);
   report(!isHello(ans) && c9 !== 0 && c9 !== "timeout", `connection cap: 9th connection dropped (code ${c9})`);
-  held.pop().p.stdin.end();
-  await sleep(500);
+  const freed = held.pop();
+  freed.p.stdin.end();
+  await Promise.race([freed.exited, sleep(5000)]);
+  await sleep(500); // let the server thread see the close and free its slot
   const again = host();
   report(isHello(await again.send()), "connection cap: a slot frees up when one connection closes");
   again.p.stdin.end();

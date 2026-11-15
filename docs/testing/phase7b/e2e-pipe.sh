@@ -27,8 +27,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
 SHUSH_EXE="${SHUSH_EXE:-$REPO/src-tauri/target/debug/shush.exe}"
 HOST_EXE="$(dirname "$SHUSH_EXE")/shush-host.exe"
-EXE_WIN="$(cygpath -w "$SHUSH_EXE")"
-HOST_WIN="$(cygpath -w "$HOST_EXE")"
+EXE_WIN="$(cygpath -wa "$SHUSH_EXE")"
+HOST_WIN="$(cygpath -wa "$HOST_EXE")"
 D="node $HERE/../phase8a/cdp.mjs"
 PW="Pipe-E2E-2026-pass"
 pass=0; fail=0
@@ -44,24 +44,35 @@ export SHUSH_NO_SINGLE_INSTANCE=1
 export WEBVIEW2_USER_DATA_FOLDER="$(cygpath -w "$WORK")\\webview2"
 export WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=${CDP_PORT:-9222} --remote-debugging-address=127.0.0.1"
 
-pipe_exists() { ps "[IO.Directory]::GetFiles('\\\\.\\pipe\\') -match 'shush-S-1-' | Select-Object -First 1"; }
+# Prints "no" only when the pipe listing worked and holds no shush pipe (fails closed).
+pipe_exists() { ps "try { if ([IO.Directory]::GetFiles('\\\\.\\pipe\\') -match 'shush-S-1-') { 'yes' } else { 'no' } } catch { 'yes' }"; }
 # Stops only the processes started from this checkout's build.
 stop_app() {
   ps "Get-CimInstance Win32_Process | Where-Object { \$_.ExecutablePath -ieq '$EXE_WIN' -or \$_.ExecutablePath -ieq '$HOST_WIN' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }" >/dev/null
 }
 cleanup() { [ -n "${SQUAT_PID:-}" ] && kill "$SQUAT_PID" 2>/dev/null; stop_app; }
-trap cleanup EXIT
+# Adds a probe's PASS/FAIL lines to the totals; a probe that crashed (exit code is not its FAIL
+# count) is a failure too, so a crash can never pass silently.
+tally() {
+  local log="$1" rc="$2" p f
+  p=$(grep -c '^PASS' "$log"); f=$(grep -c '^FAIL' "$log")
+  pass=$((pass + p)); fail=$((fail + f))
+  [ "$rc" = "$f" ] || bad "$(basename "$log" .log) probe exited $rc after $f FAIL line(s)"
+}
 
-if [ -n "$(pipe_exists)" ]; then
-  echo "ABORT: a shush pipe already exists (an installed or other shush is running). Close it first."
+if [ "$(pipe_exists)" != "no" ]; then
+  echo "ABORT: a shush pipe already exists (an installed or other shush is running), or the pipe list could not be read. Close it first."
   exit 2
 fi
+# Set only after the guard: an abort must not stop an app the user is running.
+trap cleanup EXIT
 
 launch() {
   "$SHUSH_EXE" > "$WORK/app.log" 2>&1 &
-  # cdp.mjs fails at once while the port is closed or the page is still about:blank: retry.
-  for _ in $(seq 1 60); do
-    [ "$($D eval "document.body.innerText.length > 0" 2>/dev/null)" = "true" ] && break
+  # cdp.mjs fails at once while the port is closed or the page is still about:blank: retry until
+  # the create or unlock form is up (a cold Vite can take a while to render it).
+  for _ in $(seq 1 90); do
+    [ "$($D eval "!!document.querySelector('#new-password,#unseal,#master-password')" 2>/dev/null)" = "true" ] && break
     sleep 1
   done
 }
@@ -79,8 +90,8 @@ invoke "'bridge_state'" | grep -q '"serving":true' \
   && ok "app reports the pipe is serving" || bad "app reports the pipe is serving"
 
 echo "--- 1-4. image check, rate limit, connection cap"
-node "$HERE/pipe-probe.mjs" serve "$HOST_WIN" | tee "$WORK/serve.log"
-pass=$((pass + $(grep -c '^PASS' "$WORK/serve.log"))); fail=$((fail + $(grep -c '^FAIL' "$WORK/serve.log")))
+node "$HERE/pipe-probe.mjs" serve "$HOST_WIN" 2>&1 | tee "$WORK/serve.log"
+tally "$WORK/serve.log" "${PIPESTATUS[0]}"
 
 echo "--- 5. squatted pipe name"
 stop_app
@@ -95,13 +106,18 @@ $D eval "document.querySelector('#unseal')?.click(),1" >/dev/null
 waitfor "document.querySelector('#master-password')"
 $D fill "#master-password" "$PW" >/dev/null
 $D click "button[type=submit]" >/dev/null
-sleep 4
-info=$(invoke "'bridge_state'")
+# bridge_state errors while the vault is still locked (the debug KDF is slow): poll until it answers.
+info=""
+for _ in $(seq 1 60); do
+  info=$(invoke "'bridge_state'" 2>/dev/null)
+  echo "$info" | grep -q '"serving"' && break
+  sleep 1
+done
 echo "$info" | grep -q '"serving":false' && ok "squatted: app reports not serving" || bad "squatted: app reports not serving"
 echo "$info" | grep -q "Another program is using shush's browser pipe" \
   && ok "squatted: warning text is shown" || bad "squatted: warning text is shown"
-node "$HERE/pipe-probe.mjs" refuse "$HOST_WIN" | tee "$WORK/refuse.log"
-pass=$((pass + $(grep -c '^PASS' "$WORK/refuse.log"))); fail=$((fail + $(grep -c '^FAIL' "$WORK/refuse.log")))
+node "$HERE/pipe-probe.mjs" refuse "$HOST_WIN" 2>&1 | tee "$WORK/refuse.log"
+tally "$WORK/refuse.log" "${PIPESTATUS[0]}"
 
 echo "--- $pass passed, $fail failed"
 [ "$fail" = 0 ]
