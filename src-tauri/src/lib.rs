@@ -2131,9 +2131,15 @@ fn serving_warning(s: bridge::state::Serving) -> (bool, Option<String>) {
 }
 
 /// Loads the unlocked vault's pairings into the bridge if that has not happened yet.
-fn sync_pairings(app: &tauri::AppHandle, b: &mut bridge::protocol::Bridge) {
+/// Call it without holding the bridge lock: it takes the vault lock, then the
+/// bridge lock, the same order as the pipe server (`bridge::server::process`).
+/// The reverse order can deadlock against a browser request.
+fn sync_pairings(app: &tauri::AppHandle) {
+    let bridge = app.state::<bridge::state::BridgeState>();
     app.state::<VaultState>().with(|u| {
-        b.load_pairings(&u.vault.data().browser_pairings);
+        bridge
+            .bridge()
+            .load_pairings(&u.vault.data().browser_pairings);
     });
 }
 
@@ -2163,8 +2169,8 @@ fn bridge_state(app: tauri::AppHandle) -> Result<BridgeInfo, CmdError> {
     }
     let bridge = app.state::<bridge::state::BridgeState>();
     let (serving, warning) = serving_warning(bridge.serving());
-    let mut b = bridge.bridge();
-    sync_pairings(&app, &mut b);
+    sync_pairings(&app);
+    let b = bridge.bridge();
     Ok(BridgeInfo {
         serving,
         warning,
@@ -2200,8 +2206,8 @@ fn bridge_start_pairing(app: tauri::AppHandle) -> Result<PairingCode, CmdError> 
         ));
     }
     let bridge = app.state::<bridge::state::BridgeState>();
+    sync_pairings(&app);
     let mut b = bridge.bridge();
-    sync_pairings(&app, &mut b);
     let now = std::time::Instant::now();
     let code = b
         .start_pairing(now)
@@ -2260,6 +2266,61 @@ fn bridge_reject_save(app: tauri::AppHandle, origin: String, username: String) {
         .state::<bridge::state::BridgeState>()
         .bridge()
         .take_pending_for(&origin, &username);
+}
+
+/// Quick search `Ctrl+Shift+Enter` (issue #155): asks the paired extension to
+/// fill `id` into its active tab. Never types anything itself (no `SendInput`);
+/// the extension reports the tab's origin and shush decides. Resolves to
+/// `filled`, or why nothing was typed: `not_paired`, `mismatch`, `refused`,
+/// `locked` or `no_extension`.
+#[tauri::command]
+async fn bridge_autotype(app: tauri::AppHandle, id: String) -> Result<&'static str, CmdError> {
+    use bridge::protocol::AutotypeOutcome;
+    blocking(move || {
+        let exists = app
+            .state::<VaultState>()
+            .with(|u| {
+                u.vault
+                    .data()
+                    .items
+                    .iter()
+                    .any(|i| matches!(i, vault::models::VaultItem::Login(l) if l.base.id == id))
+            })
+            .ok_or_else(locked)?;
+        if !exists {
+            return Err(CmdError::new("NOT_FOUND", "That login no longer exists."));
+        }
+        let bridge = app.state::<bridge::state::BridgeState>();
+        sync_pairings(&app);
+        let ticket = {
+            let mut b = bridge.bridge();
+            if !b.has_pairings() {
+                return Ok("not_paired");
+            }
+            b.request_autotype(&id, std::time::Instant::now())
+        };
+        let result = loop {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            // The bridge guard is a temporary: it is released before the
+            // vault lock below is taken (lock order: vault, then bridge).
+            let outcome = bridge
+                .bridge()
+                .autotype_outcome(ticket, std::time::Instant::now());
+            match outcome {
+                Some(AutotypeOutcome::Waiting) => continue,
+                Some(AutotypeOutcome::Filled) => break "filled",
+                Some(AutotypeOutcome::Mismatch) => break "mismatch",
+                Some(AutotypeOutcome::Refused) => break "refused",
+                Some(AutotypeOutcome::NoExtension) => break "no_extension",
+                // Dropped by a lock, or replaced by a newer request.
+                None if !app.state::<VaultState>().is_unlocked() => break "locked",
+                None => break "refused",
+            }
+        };
+        bridge.bridge().clear_autotype(ticket);
+        Ok(result)
+    })
+    .await
 }
 
 // ---- Browser support registration (issue #53) -------------------------------
@@ -2822,6 +2883,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             bridge_revoke,
             bridge_approve_save,
             bridge_reject_save,
+            bridge_autotype,
             browser_support_status,
             set_browser_support,
             network_status,
@@ -3218,6 +3280,7 @@ mod tests {
         assert_eq!(
             spotlight,
             [
+                "allow-bridge-autotype",
                 "allow-copy-field",
                 "allow-hide-spotlight",
                 "allow-list-items",

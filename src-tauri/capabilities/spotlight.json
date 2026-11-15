@@ -1,12 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "spotlight",
-  "description": "Quick search window: list item titles and copy through the Rust clipboard. No secret-returning, export, import, file-dialog, or vault-management command (issue #20).",
+  "description": "Quick search window: list item titles, copy through the Rust clipboard, and ask the paired extension to fill (no secret reaches the webview). No secret-returning, export, import, file-dialog, or vault-management command (issue #20).",
   "windows": ["spotlight"],
   "permissions": [
     "core:event:default",
     "allow-vault-status",
     "allow-list-items",
+    "allow-bridge-autotype",
     "allow-copy-field",
     "allow-hide-spotlight",
     "allow-open-main-window"

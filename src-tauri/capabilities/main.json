@@ -63,6 +63,7 @@
     "allow-bridge-revoke",
     "allow-bridge-approve-save",
     "allow-bridge-reject-save",
+    "allow-bridge-autotype",
     "allow-browser-support-status",
     "allow-set-browser-support",
     "allow-network-status",

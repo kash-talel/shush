@@ -19,12 +19,18 @@
 //! | `match {tab_origin}` | paired, unlocked | `[{id, title, username}]` (no secrets) |
 //! | `fill {id, tab_origin}` | paired, unlocked, exact origin | `{username, password, totp?}` |
 //! | `save {tab_origin, username, password}` | paired, unlocked | `{queued}`; written only after approval in shush |
+//! | `autotype_take {tab_origin}` | paired, unlocked, a live request from Quick search | `{username, password, totp?}` |
 //! | `revoke` | paired | `{}` |
+//!
+//! `hello` also reports `autotype_pending` (no secrets). The extension polls
+//! it, and on `true` answers with its active tab's origin via `autotype_take`.
+//! The origin is checked against the item the user picked in Quick search, as
+//! for `fill`; the request is consumed by the first answer, match or not.
 //!
 //! `fill` only ever returns the item's current password. Archived passwords
 //! are never sent to a browser: no automatic "try the old password" fallback.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
@@ -43,6 +49,8 @@ pub const VERSION: u32 = 1;
 /// Most saves waiting for approval; older ones are dropped first.
 pub const MAX_PENDING_SAVES: usize = 20;
 const MAX_FIELD: usize = 4096;
+/// How long a Quick search auto-type request waits for the extension.
+pub const AUTOTYPE_TTL: Duration = Duration::from_secs(8);
 
 #[derive(Deserialize)]
 struct Envelope {
@@ -81,7 +89,35 @@ enum Request {
         username: String,
         password: String,
     },
+    AutotypeTake {
+        tab_origin: String,
+    },
     Revoke,
+}
+
+/// What became of a Quick search auto-type request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutotypeOutcome {
+    /// Still waiting for the extension's answer.
+    Waiting,
+    /// The extension reported a matching origin and received the login.
+    Filled,
+    /// The extension's active tab does not match the login.
+    Mismatch,
+    /// The login was deleted or the tab is not a web page.
+    Refused,
+    /// Nobody answered in time (no extension running, or no browser tab).
+    NoExtension,
+}
+
+/// A request from Quick search to fill the item in the browser's active tab.
+struct Autotype {
+    /// Ticket from [`Bridge::request_autotype`], so overlapping callers never
+    /// read or clear each other's request.
+    ticket: u64,
+    item_id: String,
+    since: Instant,
+    outcome: AutotypeOutcome,
 }
 
 /// A login the extension offered to save, waiting for approval in shush.
@@ -166,6 +202,9 @@ pub struct Bridge {
     offer: Option<PairingOffer>,
     pairings: Vec<Pairing>,
     pending: Vec<PendingSave>,
+    autotype: Option<Autotype>,
+    /// Last auto-type ticket handed out.
+    autotype_seq: u64,
     /// Pairings live inside the vault; while it is locked none are loaded and
     /// every request but `hello` answers `LOCKED`. `Default` is unsealed (tests).
     sealed: bool,
@@ -282,10 +321,54 @@ impl Bridge {
     /// pairing keys are dropped from memory and the pairing code is withdrawn.
     pub fn on_vault_locked(&mut self) {
         self.pending.clear();
+        self.autotype = None;
         self.pairings.clear();
         self.offer = None;
         self.sealed = true;
         self.dirty = false;
+    }
+
+    /// Whether any browser is paired.
+    pub fn has_pairings(&self) -> bool {
+        !self.pairings.is_empty()
+    }
+
+    /// Asks the paired extension to fill `item_id` into its active tab. The
+    /// caller (Quick search) has checked that the vault is unlocked. Replaces
+    /// an earlier request. Returns the ticket that reads and clears it.
+    pub fn request_autotype(&mut self, item_id: &str, now: Instant) -> u64 {
+        self.autotype_seq += 1;
+        self.autotype = Some(Autotype {
+            ticket: self.autotype_seq,
+            item_id: item_id.to_string(),
+            since: now,
+            outcome: AutotypeOutcome::Waiting,
+        });
+        self.autotype_seq
+    }
+
+    /// Where the current auto-type request stands; an unanswered one turns
+    /// into [`AutotypeOutcome::NoExtension`] after [`AUTOTYPE_TTL`]. `None`
+    /// when the request is gone: replaced by a newer one or dropped on lock.
+    pub fn autotype_outcome(&mut self, ticket: u64, now: Instant) -> Option<AutotypeOutcome> {
+        let a = self.autotype.as_mut().filter(|a| a.ticket == ticket)?;
+        if a.outcome == AutotypeOutcome::Waiting && now.duration_since(a.since) >= AUTOTYPE_TTL {
+            a.outcome = AutotypeOutcome::NoExtension;
+        }
+        Some(a.outcome)
+    }
+
+    /// Forgets the auto-type request (after its outcome was shown).
+    pub fn clear_autotype(&mut self, ticket: u64) {
+        if self.autotype.as_ref().is_some_and(|a| a.ticket == ticket) {
+            self.autotype = None;
+        }
+    }
+
+    fn autotype_waiting(&self, now: Instant) -> bool {
+        self.autotype.as_ref().is_some_and(|a| {
+            a.outcome == AutotypeOutcome::Waiting && now.duration_since(a.since) < AUTOTYPE_TTL
+        })
     }
 
     /// Handles one framed request. `vault` is `None` while locked. Always
@@ -386,6 +469,7 @@ impl Bridge {
                     "locked": vault.is_none(),
                     "paired": paired.is_some(),
                     "pairing_nonce": nonce,
+                    "autotype_pending": self.autotype_waiting(now),
                 }))
             }
             Request::Pair { ext_nonce, proof } => {
@@ -419,13 +503,36 @@ impl Bridge {
                 if !item_matches(&login.url, &tab) {
                     return Err("ORIGIN_MISMATCH");
                 }
-                let totp = login
-                    .totp_secret
-                    .as_deref()
-                    .and_then(|s| crate::totp::current_code(s).ok())
-                    .map(|c| c.code);
-                // Only the current password; `password_history` is never sent.
-                Ok(json!({ "username": login.username, "password": login.password, "totp": totp }))
+                Ok(fill_answer(login))
+            }
+            Request::AutotypeTake { tab_origin } => {
+                let data = vault.ok_or("LOCKED")?;
+                if !self.autotype_waiting(now) {
+                    return Err("NO_AUTOTYPE");
+                }
+                let id = self.autotype.as_ref().map(|a| a.item_id.clone());
+                let set = |this: &mut Self, o| {
+                    if let Some(a) = this.autotype.as_mut() {
+                        a.outcome = o;
+                    }
+                };
+                let Some(tab) = Origin::parse_tab(tab_origin) else {
+                    set(self, AutotypeOutcome::Refused);
+                    return Err("BAD_ORIGIN");
+                };
+                let Some(login) = logins(data).find(|l| Some(&l.base.id) == id.as_ref()) else {
+                    set(self, AutotypeOutcome::Refused);
+                    return Err("NOT_FOUND");
+                };
+                // Same rule as `fill`: the tab origin the browser reported
+                // must match the item; a window title never enters into it.
+                if !item_matches(&login.url, &tab) {
+                    set(self, AutotypeOutcome::Mismatch);
+                    return Err("ORIGIN_MISMATCH");
+                }
+                let out = fill_answer(login);
+                set(self, AutotypeOutcome::Filled);
+                Ok(out)
             }
             Request::Save {
                 tab_origin,
@@ -458,6 +565,17 @@ impl Bridge {
             }
         }
     }
+}
+
+/// What `fill` and `autotype_take` send for a matching login. Only the current
+/// password; `password_history` is never sent.
+fn fill_answer(login: &crate::vault::models::LoginItem) -> Value {
+    let totp = login
+        .totp_secret
+        .as_deref()
+        .and_then(|s| crate::totp::current_code(s).ok())
+        .map(|c| c.code);
+    json!({ "username": login.username, "password": login.password, "totp": totp })
 }
 
 fn logins(data: &VaultData) -> impl Iterator<Item = &crate::vault::models::LoginItem> {
@@ -599,6 +717,119 @@ mod tests {
     }
 
     #[test]
+    fn autotype_fills_only_on_matching_tab_origin() {
+        let mut b = Bridge::default();
+        let mut ext = paired(&mut b);
+        let d = vault();
+        let t0 = Instant::now();
+        let take = |b: &mut Bridge, ext: &mut Ext, o: &str| {
+            signed(
+                b,
+                ext,
+                json!({"type":"autotype_take","tab_origin":o}),
+                Some(&d),
+            )
+        };
+
+        // Nothing requested: refused, nothing returned.
+        let r = take(&mut b, &mut ext, "https://github.com");
+        assert_eq!(r["error"], "NO_AUTOTYPE");
+        let h = signed(&mut b, &mut ext, json!({"type":"hello"}), Some(&d));
+        assert_eq!(h["result"]["autotype_pending"], false);
+
+        // Mismatching origin (look-alike): nothing leaks, request is consumed.
+        let tk = b.request_autotype("gh", t0);
+        let h = open(&mut b, json!({"type":"hello"}));
+        assert_eq!(h["result"]["autotype_pending"], true);
+        let r = take(&mut b, &mut ext, "https://github.com.evil.test");
+        assert_eq!(r["error"], "ORIGIN_MISMATCH");
+        assert!(!r.to_string().contains("current-pw"));
+        assert_eq!(b.autotype_outcome(tk, t0), Some(AutotypeOutcome::Mismatch));
+        let r = take(&mut b, &mut ext, "https://github.com");
+        assert_eq!(
+            r["error"], "NO_AUTOTYPE",
+            "a consumed request cannot be replayed"
+        );
+
+        // Matching origin fills, once.
+        let tk = b.request_autotype("gh", t0);
+        let r = take(&mut b, &mut ext, "https://github.com");
+        assert_eq!(r["result"]["password"], "current-pw");
+        assert_eq!(b.autotype_outcome(tk, t0), Some(AutotypeOutcome::Filled));
+        let r = take(&mut b, &mut ext, "https://github.com");
+        assert_eq!(r["error"], "NO_AUTOTYPE");
+
+        // Non-web tab, deleted item.
+        let tk = b.request_autotype("gh", t0);
+        let r = take(&mut b, &mut ext, "chrome://settings");
+        assert_eq!(r["error"], "BAD_ORIGIN");
+        assert_eq!(b.autotype_outcome(tk, t0), Some(AutotypeOutcome::Refused));
+        let tk = b.request_autotype("gone", t0);
+        let r = take(&mut b, &mut ext, "https://github.com");
+        assert_eq!(r["error"], "NOT_FOUND");
+        assert_eq!(b.autotype_outcome(tk, t0), Some(AutotypeOutcome::Refused));
+    }
+
+    #[test]
+    fn autotype_expires_and_is_dropped_on_lock() {
+        let mut b = Bridge::default();
+        let mut ext = paired(&mut b);
+        let t0 = Instant::now();
+        let tk = b.request_autotype("gh", t0);
+        assert_eq!(b.autotype_outcome(tk, t0), Some(AutotypeOutcome::Waiting));
+        let later = t0 + AUTOTYPE_TTL;
+        assert_eq!(
+            b.autotype_outcome(tk, later),
+            Some(AutotypeOutcome::NoExtension)
+        );
+        assert!(!b.autotype_waiting(later));
+        // Locked vault: refused, and the lock drops the request.
+        let tk = b.request_autotype("gh", Instant::now());
+        let r = signed(
+            &mut b,
+            &mut ext,
+            json!({"type":"autotype_take","tab_origin":"https://github.com"}),
+            None,
+        );
+        assert_eq!(r["error"], "LOCKED");
+        b.on_vault_locked();
+        assert_eq!(b.autotype_outcome(tk, Instant::now()), None);
+    }
+
+    #[test]
+    fn overlapping_autotype_requests_keep_their_own_outcome() {
+        let mut b = Bridge::default();
+        let t0 = Instant::now();
+        let first = b.request_autotype("gh", t0);
+        let second = b.request_autotype("gh", t0);
+        // The replaced request is gone for its caller; its clean-up does not
+        // remove the newer one.
+        assert_eq!(b.autotype_outcome(first, t0), None);
+        b.clear_autotype(first);
+        assert_eq!(
+            b.autotype_outcome(second, t0),
+            Some(AutotypeOutcome::Waiting)
+        );
+        b.clear_autotype(second);
+        assert_eq!(b.autotype_outcome(second, t0), None);
+    }
+
+    #[test]
+    fn unauthenticated_autotype_take_is_refused() {
+        let mut b = Bridge::default();
+        let _ext = paired(&mut b);
+        let d = vault();
+        b.request_autotype("gh", Instant::now());
+        let body = json!({"type":"autotype_take","tab_origin":"https://github.com"});
+        let r = send(
+            &mut b,
+            json!({"v":1,"rid":1,"body":body.to_string()}),
+            Some(&d),
+        );
+        assert_eq!(r["error"], "NOT_PAIRED");
+    }
+
+    #[test]
     fn unpaired_gets_hello_only() {
         let mut b = Bridge::default();
         let d = vault();
@@ -609,6 +840,7 @@ mod tests {
             json!({"type":"match","tab_origin":"https://github.com"}),
             json!({"type":"fill","id":"gh","tab_origin":"https://github.com"}),
             json!({"type":"save","tab_origin":"https://a.test","username":"u","password":"p"}),
+            json!({"type":"autotype_take","tab_origin":"https://github.com"}),
             json!({"type":"revoke"}),
         ] {
             let r = send(

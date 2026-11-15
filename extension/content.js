@@ -198,6 +198,9 @@
   // The popup's fill is delivered here after the user clicked it.
   chrome.runtime.onMessage.addListener((msg, sender) => {
     if (sender.id !== chrome.runtime.id || msg?.cmd !== "shush-fill") return;
+    // shush checked the login against `msg.origin`; if the tab has since
+    // navigated to another origin, this page must not get it.
+    if (msg.origin !== location.origin) return;
     apply(msg.secrets);
   });
 
