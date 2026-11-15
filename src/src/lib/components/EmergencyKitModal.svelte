@@ -213,7 +213,7 @@
           <strong>Obtain Vault Binary:</strong> Locate the encrypted <span class="text-uv print:text-black font-semibold">vault.shush</span> file or an encrypted <span class="text-uv print:text-black font-semibold">.shushbackup</span> export.
         </li>
         <li>
-          <strong>Retrieve Keyfile (if enabled):</strong> If factor 2 was required, insert the USB flash drive holding your 32-byte keyfile.
+          <strong>Retrieve Keyfile (if enabled):</strong> If factor 2 was required, insert the USB flash drive holding your keyfile (or its second copy).
         </li>
         <li>
           <strong>Run shush.exe:</strong> Execute the standalone <span class="font-semibold">shush.exe</span> binary on any Windows 10/11 x64 machine. No internet access or installer is required.

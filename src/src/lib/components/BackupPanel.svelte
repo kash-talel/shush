@@ -194,7 +194,7 @@
           <KeyfileAttach bind:keyfile={exportKeyfile} acceptDrop={false} onerror={(e) => (exportError = e)} />
           {#if exportKeyfile}
             <p class="mt-1.5 text-[11px] leading-4 text-zinc-500">
-              Keep a second copy of this keyfile. If it is lost or changed the backup cannot be opened, even with the right password.
+              Store this keyfile apart from the backup file and keep a second copy. If it is lost or changed the backup cannot be opened, even with the right password.
             </p>
           {/if}
         </div>
