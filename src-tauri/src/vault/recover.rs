@@ -3,15 +3,16 @@
 //! `.bak` is the previous generation of the file, re-sealed on every unlock,
 //! so it is not a history: it is only worth restoring when the main file can
 //! no longer be read. Nothing is ever deleted here. The damaged file is
-//! renamed to `vault.shush.corrupt-<UTC timestamp>` and stays until the user
+//! copied to `vault.shush.corrupt-<UTC timestamp>` and stays until the user
 //! discards it from the lock screen's banner.
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
-use super::container::{sibling, write_atomic};
+use super::container::{sibling, write_atomic_keep_bak};
 use super::models::rfc3339_from_unix;
-use super::{read_header, VaultError};
+use super::{check_structure, read_vault_file, VaultError};
 
 /// Prefix (after the vault's file name and a dot) of a quarantined file.
 pub const CORRUPT_PREFIX: &str = "corrupt-";
@@ -25,12 +26,18 @@ pub fn is_damage(e: &VaultError) -> bool {
     )
 }
 
-/// Whether `path` is damaged and `.bak` has a readable header: the only case
-/// in which recovery is offered.
+/// Reads `path` and runs the structural checks unlock makes before the KDF.
+fn check_file(path: &Path) -> Result<(), VaultError> {
+    check_structure(&read_vault_file(path)?)
+}
+
+/// Whether `path` is damaged (its header or its layout) and `.bak` is
+/// structurally intact: the only case in which recovery is offered. Wrong
+/// credentials never lead here: they only show when decrypting.
 pub fn can_recover(path: &Path) -> bool {
     path.is_file()
-        && read_header(path).is_err_and(|e| is_damage(&e))
-        && read_header(&sibling(path, "bak")).is_ok()
+        && check_file(path).is_err_and(|e| is_damage(&e))
+        && check_file(&sibling(path, "bak")).is_ok()
 }
 
 fn quarantine_path(path: &Path) -> PathBuf {
@@ -53,29 +60,39 @@ fn quarantine_path(path: &Path) -> PathBuf {
     candidate
 }
 
+/// Copies `from` to a new file `to` (never overwriting one) and flushes it.
+fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
+    let mut src = fs::File::open(from)?;
+    let mut dst = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(to)?;
+    io::copy(&mut src, &mut dst)?;
+    dst.sync_all()
+}
+
 /// Replaces the damaged vault at `path` with the contents of its `.bak`.
 ///
 /// `verify` receives the `.bak` bytes and must fully decrypt them with the
-/// user's credentials; if it fails nothing on disk has changed. Returns the
-/// quarantine path of the damaged file.
-pub fn recover_from_backup(
+/// user's credentials; if it fails nothing on disk has changed. The damaged
+/// file is then copied to `vault.shush.corrupt-<UTC>` and the `.bak` bytes
+/// replace `path` through a crash-safe write that never touches `.bak`
+/// (plain `write_atomic` would copy the damaged file over it), so at every
+/// step both the damaged original and the good backup exist on disk.
+/// Returns the quarantine path.
+pub fn recover_from_backup<E: From<VaultError>>(
     path: &Path,
-    verify: impl FnOnce(&[u8]) -> Result<(), VaultError>,
-) -> Result<PathBuf, VaultError> {
+    verify: impl FnOnce(&[u8]) -> Result<(), E>,
+) -> Result<PathBuf, E> {
     if !can_recover(path) {
-        return Err(VaultError::Malformed(
-            "no damaged vault with an intact backup",
-        ));
+        return Err(VaultError::Malformed("no damaged vault with an intact backup").into());
     }
-    let bak = sibling(path, "bak");
-    let bytes = fs::read(&bak)?;
+    let bytes = read_vault_file(&sibling(path, "bak"))?;
     verify(&bytes)?;
 
-    // The damaged file must leave `path` first: `write_atomic` copies whatever
-    // is at `path` over `.bak`, which would destroy the only good copy.
     let quarantine = quarantine_path(path);
-    fs::rename(path, &quarantine)?;
-    let result = write_atomic(path, &bytes, |written| {
+    copy_new(path, &quarantine).map_err(VaultError::from)?;
+    let result = write_atomic_keep_bak(path, &bytes, |written| {
         if written == bytes.as_slice() {
             Ok(())
         } else {
@@ -83,9 +100,10 @@ pub fn recover_from_backup(
         }
     });
     if let Err(e) = result {
-        // Put the user's original back so a failed recovery changes nothing.
-        let _ = fs::rename(&quarantine, path);
-        return Err(e);
+        // The damaged original is still at `path`: drop the extra copy so a
+        // failed recovery changes nothing.
+        let _ = fs::remove_file(&quarantine);
+        return Err(e.into());
     }
     Ok(quarantine)
 }
@@ -163,6 +181,34 @@ mod tests {
         fs::write(&v, b"damaged").unwrap();
         fs::remove_file(&bak).unwrap();
         assert!(!can_recover(&v), "no bak");
+    }
+
+    #[test]
+    fn recovers_file_cut_short_after_an_intact_header() {
+        let (_dir, v) = setup();
+        let bak = sibling(&v, "bak");
+        let good = fs::read(&bak).unwrap();
+        let cut = &good[..good.len() - 1];
+        fs::write(&v, cut).unwrap();
+        assert!(crate::vault::read_header(&v).is_ok(), "header still reads");
+        assert!(can_recover(&v));
+
+        let q = recover_from_backup(&v, verify_pw(b"pw")).unwrap();
+        assert_eq!(fs::read(&v).unwrap(), good);
+        assert_eq!(fs::read(&bak).unwrap(), good);
+        assert_eq!(fs::read(&q).unwrap(), cut);
+    }
+
+    #[test]
+    fn not_offered_when_bak_is_damaged_too() {
+        let (_dir, v) = setup();
+        let bak = sibling(&v, "bak");
+        let good = fs::read(&bak).unwrap();
+        fs::write(&v, b"damaged").unwrap();
+        fs::write(&bak, &good[..good.len() - 1]).unwrap();
+        assert!(!can_recover(&v));
+        assert!(recover_from_backup(&v, verify_pw(b"pw")).is_err());
+        assert_eq!(fs::read(&v).unwrap(), b"damaged");
     }
 
     #[test]

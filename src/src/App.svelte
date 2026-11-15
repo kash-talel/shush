@@ -124,8 +124,9 @@
       }}
     />
   {:else if status}
-    <!-- Re-mount per vault: a switched-to vault starts sealed with a clean form. -->
-    {#key status.id}
+    <!-- Re-mount per vault: a switched-to vault starts sealed with a clean form.
+         Also when its header error changes (a recovery from .bak clears it). -->
+    {#key `${status.id}:${status.error?.code ?? ""}`}
       <UnlockScreen
         vault={status}
         {autoLockReason}

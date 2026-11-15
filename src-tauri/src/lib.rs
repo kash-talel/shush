@@ -346,6 +346,15 @@ fn status_for(
                 status.cipher = Some(cipher_info(h.suite));
                 status.kdf = Some(h.kdf);
                 status.can_delete = true;
+                // The header reads but the layout is broken (a sync client
+                // cut the file short, issue #170): unlock would fail too.
+                if !unlocked && vault::recover::can_recover(path) {
+                    status.can_recover = true;
+                    status.error = Some(CmdError::new(
+                        "VAULT_UNREADABLE",
+                        "The vault file is damaged, but its backup (.bak) is intact. You can recover it from the backup or delete this vault, using its master password.",
+                    ));
+                }
             }
             Err(e) => {
                 let bak = vault::container::sibling(path, "bak");
@@ -355,7 +364,8 @@ fn status_for(
                         status.cipher = Some(cipher_info(bh.suite));
                         status.kdf = Some(bh.kdf);
                         status.can_delete = true;
-                        status.can_recover = vault::recover::is_damage(&e);
+                        status.can_recover =
+                            vault::recover::is_damage(&e) && vault::recover::can_recover(path);
                         status.error = Some(CmdError::new(
                             "VAULT_UNREADABLE",
                             "Vault header is unreadable, but its backup (.bak) is intact. You can recover it from the backup or delete this vault, using its master password.",
@@ -734,8 +744,10 @@ async fn recover_vault_from_backup(
         if lock.is_none() {
             return Err(VaultError::Io(std::io::ErrorKind::PermissionDenied).into());
         }
-        vault::recover::recover_from_backup(&entry.path, |bytes| {
-            OpenVault::unlock(bytes, password.as_bytes(), digest.as_ref()).map(drop)
+        vault::recover::recover_from_backup(&entry.path, |bytes| -> Result<(), CmdError> {
+            OpenVault::unlock(bytes, password.as_bytes(), digest.as_ref()).map(drop)?;
+            // Someone may have unlocked during the slow KDF.
+            require_locked(&app)
         })?;
         Ok(())
     })
@@ -3153,6 +3165,15 @@ mod tests {
         let err = status.error.unwrap();
         assert_eq!(err.code, "VAULT_UNREADABLE");
         assert!(err.message.contains(".bak"));
+        assert!(status.can_recover);
+
+        // Header intact but the file cut short (issue #170): still offered.
+        let good = std::fs::read(&bak_file).unwrap();
+        std::fs::write(&vault_file, &good[..good.len() - 1]).unwrap();
+        let cut = status_for(None, &vault_file, false, false, false);
+        assert!(cut.can_recover);
+        assert_eq!(cut.error.unwrap().code, "VAULT_UNREADABLE");
+        std::fs::write(&vault_file, b"corrupted header content").unwrap();
 
         // Authenticating for delete with wrong password fails and returns WRONG_CREDENTIALS
         assert_eq!(
