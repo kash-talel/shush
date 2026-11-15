@@ -69,6 +69,7 @@
     [
       ...vault.conflicted_copies.map((name) => ({ name, kind: "copy" as const })),
       ...(vault.stale_tmp ? [{ name: vault.stale_tmp, kind: "tmp" as const }] : []),
+      ...vault.quarantined.map((name) => ({ name, kind: "corrupt" as const })),
     ].filter((s) => !dismissed.includes(s.name) && !removed.includes(s.name)),
   );
 
@@ -200,6 +201,12 @@
                   Your sync service left a possible conflicted copy of this vault:
                   <span class="font-mono break-all">{s.name}</span>. It may hold changes this vault lacks. Nothing was merged.
                   To compare, add it to the shelf as an existing vault.
+                </span>
+              {:else if s.kind === "corrupt"}
+                <span>
+                  A damaged copy of this vault was set aside during recovery:
+                  <span class="font-mono break-all">{s.name}</span>. Discard it once you no longer need it, so it cannot be compared
+                  with the restored vault.
                 </span>
               {:else}
                 <span>

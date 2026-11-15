@@ -295,6 +295,10 @@ struct VaultStatus {
     conflicted_copies: Vec<String>,
     /// A stale `.tmp` from an interrupted save (name), while the vault is intact.
     stale_tmp: Option<String>,
+    /// Damaged files a recovery from `.bak` set aside (issue #170).
+    quarantined: Vec<String>,
+    /// The main file is damaged but `.bak` is readable: offer recovery.
+    can_recover: bool,
 }
 
 fn status_for(
@@ -326,6 +330,8 @@ fn status_for(
         can_delete: false,
         conflicted_copies: Vec::new(),
         stale_tmp: None,
+        quarantined: Vec::new(),
+        can_recover: false,
     };
     if entry.is_some() && !status.exists {
         status.error = Some(CmdError::new(
@@ -349,9 +355,10 @@ fn status_for(
                         status.cipher = Some(cipher_info(bh.suite));
                         status.kdf = Some(bh.kdf);
                         status.can_delete = true;
+                        status.can_recover = vault::recover::is_damage(&e);
                         status.error = Some(CmdError::new(
                             "VAULT_UNREADABLE",
-                            "Vault header is unreadable, but its backup (.bak) is intact. You can delete this vault using its master password.",
+                            "Vault header is unreadable, but its backup (.bak) is intact. You can recover it from the backup or delete this vault, using its master password.",
                         ));
                     }
                 }
@@ -381,6 +388,7 @@ fn vault_status(app: tauri::AppHandle) -> Result<VaultStatus, CmdError> {
         let found = vault::siblings::scan(&path, &known);
         status.conflicted_copies = found.conflicted_copies;
         status.stale_tmp = found.stale_tmp;
+        status.quarantined = found.quarantined;
     }
     Ok(status)
 }
@@ -427,6 +435,8 @@ struct VaultCard {
     error: Option<CmdError>,
     /// Whether the vault can be deleted (header or .bak decrypts).
     can_delete: bool,
+    /// Whether the damaged file can be replaced from `.bak` (issue #170).
+    can_recover: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -457,6 +467,7 @@ fn list_vaults(app: tauri::AppHandle) -> Result<VaultList, CmdError> {
                 keyfile_required: s.keyfile_required,
                 error: s.error,
                 can_delete: s.can_delete,
+                can_recover: s.can_recover,
             }
         })
         .collect();
@@ -692,6 +703,41 @@ async fn delete_vault(
             reg.ensure_safety_net(def);
             Ok(())
         })
+    })
+    .await
+}
+
+/// Replaces a damaged vault file with its `.bak` (issue #170).
+///
+/// Only offered when the main file is unreadable but `.bak` is not. The
+/// credentials must fully decrypt `.bak` first; the damaged file is renamed
+/// to `vault.shush.corrupt-<UTC>`, never deleted. The UI then unlocks
+/// normally, whose refresh re-seals the file (the #8 invariant).
+#[tauri::command]
+async fn recover_vault_from_backup(
+    app: tauri::AppHandle,
+    id: String,
+    password: String,
+    keyfile_path: Option<String>,
+) -> Result<(), CmdError> {
+    let password = Zeroizing::new(password);
+    require_locked(&app)?;
+    let entry = edit_registry(&app, |reg, _| {
+        Ok(reg.get(&id).cloned().ok_or(RegistryError::UnknownVault)?)
+    })?;
+    blocking(move || {
+        let digest = keyfile_path
+            .as_deref()
+            .map(|p| crypto::keyfile::digest_file(Path::new(p)).map_err(keyfile_error))
+            .transpose()?;
+        let lock = vault::lock::VaultLock::try_acquire(&entry.path)?;
+        if lock.is_none() {
+            return Err(VaultError::Io(std::io::ErrorKind::PermissionDenied).into());
+        }
+        vault::recover::recover_from_backup(&entry.path, |bytes| {
+            OpenVault::unlock(bytes, password.as_bytes(), digest.as_ref()).map(drop)
+        })?;
+        Ok(())
     })
     .await
 }
@@ -2830,6 +2876,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             app_info,
             vault_status,
             discard_vault_sibling,
+            recover_vault_from_backup,
             list_vaults,
             select_vault,
             check_new_vault,

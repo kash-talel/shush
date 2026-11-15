@@ -45,6 +45,8 @@
       can_delete: false,
       conflicted_copies: [],
       stale_tmp: null,
+      quarantined: [],
+      can_recover: false,
     },
   );
 

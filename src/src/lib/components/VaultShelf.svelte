@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Eye, EyeOff, Folder, FolderOpen, Pencil, Plus, Trash2 } from "@lucide/svelte";
+  import { Eye, EyeOff, Folder, FolderOpen, Pencil, Plus, RotateCcw, Trash2 } from "@lucide/svelte";
   import Spindle from "./Spindle.svelte";
   import VaultFormDialog from "./VaultFormDialog.svelte";
   import DeleteVaultDialog from "./DeleteVaultDialog.svelte";
+  import RecoverVaultDialog from "./RecoverVaultDialog.svelte";
   import { vaultColor } from "../vault-colors";
   import {
     listVaults,
@@ -34,7 +35,7 @@
   } = $props();
 
   let list = $state.raw<VaultList | null>(null);
-  let dialog = $state<"new" | "existing" | "edit" | "delete" | null>(null);
+  let dialog = $state<"new" | "existing" | "edit" | "delete" | "recover" | null>(null);
   let error = $state<CmdError | null>(null);
 
   const selected = $derived(list?.vaults.find((v) => v.id === current.id) ?? null);
@@ -128,6 +129,9 @@
       <button type="button" class="act" onclick={() => (dialog = "existing")}><FolderOpen aria-hidden="true" /> Open vault file</button>
       {#if selected}
         <button type="button" class="act" onclick={() => (dialog = "edit")}><Pencil aria-hidden="true" /> Edit</button>
+        {#if selected.can_recover}
+          <button type="button" class="act" onclick={() => (dialog = "recover")}><RotateCcw aria-hidden="true" /> Recover from backup</button>
+        {/if}
         {#if selected.can_delete}
           <button type="button" class="act hazardous" onclick={() => (dialog = "delete")}><Trash2 aria-hidden="true" /> Delete</button>
         {:else if selected.exists}
@@ -172,6 +176,8 @@
     <VaultFormDialog mode="edit" {list} vault={selected} onclose={() => (dialog = null)} onchanged={changed} />
   {:else if dialog === "delete" && selected}
     <DeleteVaultDialog vault={selected} onclose={() => (dialog = null)} ondeleted={changed} />
+  {:else if dialog === "recover" && selected}
+    <RecoverVaultDialog vault={selected} onclose={() => (dialog = null)} onrecovered={changed} />
   {/if}
 {/if}
 

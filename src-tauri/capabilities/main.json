@@ -10,6 +10,7 @@
     "allow-app-info",
     "allow-vault-status",
     "allow-discard-vault-sibling",
+    "allow-recover-vault-from-backup",
     "allow-list-vaults",
     "allow-select-vault",
     "allow-check-new-vault",

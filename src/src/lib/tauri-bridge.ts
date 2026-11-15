@@ -45,6 +45,10 @@ export interface VaultStatus {
   conflicted_copies: string[];
   /** Stale `.tmp` left by an interrupted save, while the vault itself is intact. */
   stale_tmp: string | null;
+  /** Damaged files a recovery from the backup set aside (`.corrupt-*`). */
+  quarantined: string[];
+  /** The vault file is damaged but its backup is readable. */
+  can_recover: boolean;
 }
 
 /** Counts only: item contents never cross the IPC boundary here. */
@@ -171,6 +175,7 @@ export interface VaultCard {
   keyfile_required: boolean | null;
   error: CmdError | null;
   can_delete: boolean;
+  can_recover: boolean;
 }
 
 export interface VaultList {
@@ -200,6 +205,8 @@ export const setHideVaultNames = (hide: boolean) =>
   invoke<VaultStatus>("set_hide_vault_names", { hide });
 export const deleteVault = (id: string, password: string, keyfilePath: string | null, confirmName: string) =>
   invoke<void>("delete_vault", { id, password, keyfilePath, confirmName });
+export const recoverVaultFromBackup = (id: string, password: string, keyfilePath: string | null) =>
+  invoke<void>("recover_vault_from_backup", { id, password, keyfilePath });
 export const showInExplorer = (id: string) => invoke<void>("show_in_explorer", { id });
 export const lock = () => invoke<void>("lock");
 export const showSpotlight = () => invoke<void>("show_spotlight");

@@ -18,17 +18,21 @@ pub struct SiblingReport {
     pub conflicted_copies: Vec<String>,
     /// A `.tmp` left behind by an interrupted save, while the main vault is intact.
     pub stale_tmp: Option<String>,
+    /// Damaged vault files set aside by a recovery from `.bak` (issue #170).
+    pub quarantined: Vec<String>,
 }
 
 impl SiblingReport {
     /// Nothing found.
     pub fn is_empty(&self) -> bool {
-        self.conflicted_copies.is_empty() && self.stale_tmp.is_none()
+        self.conflicted_copies.is_empty() && self.stale_tmp.is_none() && self.quarantined.is_empty()
     }
 
     /// Whether `name` is one of the reported files.
     pub fn contains(&self, name: &str) -> bool {
-        self.stale_tmp.as_deref() == Some(name) || self.conflicted_copies.iter().any(|c| c == name)
+        self.stale_tmp.as_deref() == Some(name)
+            || self.conflicted_copies.iter().any(|c| c == name)
+            || self.quarantined.iter().any(|c| c == name)
     }
 }
 
@@ -98,11 +102,31 @@ pub fn scan(vault: &Path, known: &[PathBuf]) -> SiblingReport {
         }
     }
     report.conflicted_copies.sort();
+    report.quarantined = scan_quarantined(vault);
     let tmp = sibling(vault, "tmp");
     if tmp.is_file() && read_header(vault).is_ok() {
         report.stale_tmp = sibling_name(&tmp);
     }
     report
+}
+
+/// `vault.shush.corrupt-*` files a recovery left behind.
+fn scan_quarantined(vault: &Path) -> Vec<String> {
+    let (Some(dir), Some(name)) = (vault.parent(), vault.file_name().and_then(|n| n.to_str()))
+    else {
+        return Vec::new();
+    };
+    let prefix = format!("{name}.{}", super::recover::CORRUPT_PREFIX);
+    let mut found: Vec<String> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().is_file())
+        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+        .filter(|f| f.starts_with(&prefix))
+        .collect();
+    found.sort();
+    found
 }
 
 fn sibling_name(p: &Path) -> Option<String> {
@@ -182,6 +206,25 @@ mod tests {
         .unwrap());
         assert!(scan(&v, std::slice::from_ref(&known)).is_empty());
         assert!(v.exists());
+    }
+
+    #[test]
+    fn reports_and_discards_quarantined_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = dir.path().join("vault.shush");
+        make_vault(&v);
+        std::fs::write(
+            dir.path().join("vault.shush.corrupt-20260101T000000Z"),
+            b"x",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("other.shush.corrupt-1"), b"x").unwrap();
+        let r = scan(&v, &[]);
+        assert_eq!(r.quarantined, vec!["vault.shush.corrupt-20260101T000000Z"]);
+        assert!(!r.is_empty());
+        assert!(discard(&v, &[], "vault.shush.corrupt-20260101T000000Z").unwrap());
+        assert!(scan(&v, &[]).is_empty());
+        assert!(dir.path().join("other.shush.corrupt-1").exists());
     }
 
     #[test]
