@@ -523,6 +523,51 @@ export const setAirGapped = (enabled: boolean) => invoke<NetworkStatus>("set_air
 /** Window event fired after the air-gapped switch changes, so dependent cards refresh. */
 export const NETWORK_CHANGED_EVENT = "shush:network-changed";
 
+/** LAN sync pairing (issue #156, docs/spec/lan-sync.md). */
+export interface SyncPeer {
+  /** Fingerprint, `XXXX-XXXX-XXXX-XXXX`. */
+  id: string;
+  name: string;
+  paired_at: string;
+  last_sync_at: string | null;
+  last_address: string | null;
+}
+export interface SyncWindow {
+  /** `XXXX-XXXX`, only while open. */
+  code: string | null;
+  addresses: string[];
+  advertised: boolean;
+  seconds_left: number;
+  failures: number;
+  state: "open" | "paired" | "too_many_failures" | "expired" | "cancelled" | "failed";
+  peer_name: string | null;
+  peer_fingerprint: string | null;
+  error: string | null;
+}
+export interface SyncStatus {
+  available: boolean;
+  air_gapped: boolean;
+  read_only: boolean;
+  fingerprint: string | null;
+  advertise: boolean;
+  device_name: string;
+  peers: SyncPeer[];
+  window: SyncWindow | null;
+}
+export interface SyncFound {
+  instance: string;
+  address: string;
+}
+export const syncStatus = () => invoke<SyncStatus>("sync_status");
+export const syncStartPairing = () => invoke<SyncStatus>("sync_start_pairing");
+export const syncCancelPairing = () => invoke<void>("sync_cancel_pairing");
+export const syncJoin = (address: string, code: string) =>
+  invoke<{ name: string; fingerprint: string }>("sync_join", { address, code });
+export const syncDiscover = () => invoke<SyncFound[]>("sync_discover");
+export const syncForget = (id: string) => invoke<SyncStatus>("sync_forget", { id });
+export const syncResetIdentity = () => invoke<SyncStatus>("sync_reset_identity");
+export const syncSetAdvertise = (enabled: boolean) => invoke<SyncStatus>("sync_set_advertise", { enabled });
+
 /** Update checks (issue #78). Download and install happen only when the user clicks (#197). */
 export type UpdateMode = "off" | "notify";
 export type UpdateState =

@@ -72,6 +72,14 @@
     "allow-set-update-mode",
     "allow-check-for-update",
     "allow-download-update",
-    "allow-install-update"
+    "allow-install-update",
+    "allow-sync-status",
+    "allow-sync-start-pairing",
+    "allow-sync-cancel-pairing",
+    "allow-sync-join",
+    "allow-sync-discover",
+    "allow-sync-forget",
+    "allow-sync-reset-identity",
+    "allow-sync-set-advertise"
   ]
 }

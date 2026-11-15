@@ -27,7 +27,7 @@ path = "src/bin/shush-host.rs"
 # feature; build with `--no-default-features` for a binary with no socket code.
 # Even with it on, shush starts air-gapped and the user must opt in.
 default = ["network"]
-network = []
+network = ["dep:mdns-sd", "dep:if-addrs"]
 
 [build-dependencies]
 embed-resource = "3"
@@ -98,6 +98,13 @@ semver = "1"
 time = { version = "0.3", features = ["parsing"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1"
+# LAN sync (issue #156, docs/spec/lan-sync.md): Noise XX / XXpsk3 transport, sync identity
+# fingerprints, and the time-boxed discovery responder. Pinned exactly per the spec; the
+# discovery daemon is created only inside `net.rs` (the network gate).
+snow = "=0.9.6"
+blake2 = "0.10"
+mdns-sd = { version = "=0.21.7", default-features = false, optional = true }
+if-addrs = { version = "0.15", optional = true }
 
 [dev-dependencies]
 hex = "0.4"

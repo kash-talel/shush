@@ -666,6 +666,268 @@ impl NetGate {
     }
 }
 
+// --- LAN sync sockets and discovery (issue #156, docs/spec/lan-sync.md §5) ---
+
+/// DNS-SD service type of a shush pairing or sync window.
+#[cfg(feature = "network")]
+pub const SYNC_SERVICE: &str = "_shush-sync._tcp.local.";
+
+/// Discovery daemons alive right now (test-harness evidence that nothing is
+/// advertised or browsed outside a window).
+static DISCOVERY_LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// How many discovery daemons are running (0 outside a window).
+pub fn discovery_daemons_live() -> usize {
+    DISCOVERY_LIVE.load(Ordering::SeqCst)
+}
+
+/// The listening socket of one pairing or sync window. Dropping it closes it.
+#[cfg(feature = "network")]
+pub struct LanListener {
+    inner: std::net::TcpListener,
+}
+
+/// One LAN connection (accepted or dialled).
+#[cfg(feature = "network")]
+pub struct LanStream {
+    inner: std::net::TcpStream,
+    peer: String,
+}
+
+/// A window found by discovery.
+#[cfg(feature = "network")]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Discovered {
+    /// Random instance name the window advertised.
+    pub instance: String,
+    /// `ip:port` to dial.
+    pub address: String,
+}
+
+/// A running discovery daemon (an advertised window, or a browse). Dropping
+/// it sends the goodbye (TTL 0) for an advertised window and stops the daemon.
+#[cfg(feature = "network")]
+pub struct Advertisement {
+    daemon: mdns_sd::ServiceDaemon,
+    fullname: String,
+}
+
+#[cfg(feature = "network")]
+fn io_err(e: impl std::fmt::Display) -> NetError {
+    NetError::Io(e.to_string())
+}
+
+#[cfg(feature = "network")]
+impl NetGate {
+    /// Binds the listener of a window on an ephemeral port: on every IPv4
+    /// interface, or on loopback only (tests).
+    pub fn lan_listen(&self, loopback_only: bool) -> Result<LanListener, NetError> {
+        let ip = if loopback_only {
+            std::net::Ipv4Addr::LOCALHOST
+        } else {
+            std::net::Ipv4Addr::UNSPECIFIED
+        };
+        let inner = self.tcp_listen(std::net::SocketAddr::from((ip, 0)))?;
+        inner.set_nonblocking(true).map_err(io_err)?;
+        Ok(LanListener { inner })
+    }
+
+    /// Dials `ip:port` (no host names, so no DNS lookup).
+    pub fn lan_connect(
+        &self,
+        addr: &str,
+        timeout: std::time::Duration,
+    ) -> Result<LanStream, NetError> {
+        let sa: std::net::SocketAddr = addr
+            .trim()
+            .parse()
+            .map_err(|_| NetError::Io("enter an address like 192.168.1.20:53124".into()))?;
+        let inner = self.tcp_connect(&sa, timeout)?;
+        Ok(LanStream {
+            inner,
+            peer: sa.to_string(),
+        })
+    }
+
+    /// Starts a discovery daemon (counted as one opened socket).
+    fn discovery_daemon(&self, fullname: String) -> Result<Advertisement, NetError> {
+        self.check()?;
+        let daemon = mdns_sd::ServiceDaemon::new().map_err(io_err)?;
+        DISCOVERY_LIVE.fetch_add(1, Ordering::SeqCst);
+        self.opened.fetch_add(1, Ordering::SeqCst);
+        Ok(Advertisement { daemon, fullname })
+    }
+
+    /// Advertises a window as `<instance>._shush-sync._tcp.local.` on host
+    /// `<host>.local.` with TXT `v=1` only (no user, computer or vault name).
+    pub fn advertise_sync(
+        &self,
+        port: u16,
+        instance: &str,
+        host: &str,
+    ) -> Result<Advertisement, NetError> {
+        self.check()?;
+        let info = mdns_sd::ServiceInfo::new(
+            SYNC_SERVICE,
+            instance,
+            &format!("{host}.local."),
+            (),
+            port,
+            &[("v", "1")][..],
+        )
+        .map_err(io_err)?
+        .enable_addr_auto();
+        let ad = self.discovery_daemon(info.get_fullname().to_owned())?;
+        ad.daemon.register(info).map_err(io_err)?;
+        Ok(ad)
+    }
+
+    /// Browses for open windows for `wait`, then stops (time-boxed; nothing
+    /// keeps listening afterwards).
+    pub fn discover_sync(&self, wait: std::time::Duration) -> Result<Vec<Discovered>, NetError> {
+        let guard = self.discovery_daemon(String::new())?;
+        let rx = guard.daemon.browse(SYNC_SERVICE).map_err(io_err)?;
+        let deadline = std::time::Instant::now() + wait;
+        let mut found: Vec<Discovered> = Vec::new();
+        loop {
+            self.check()?;
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            let Ok(ev) = rx.recv_timeout(left.min(std::time::Duration::from_millis(200))) else {
+                continue;
+            };
+            let mdns_sd::ServiceEvent::ServiceResolved(s) = ev else {
+                continue;
+            };
+            if s.get_property_val_str("v") != Some("1") {
+                continue;
+            }
+            let instance = s
+                .get_fullname()
+                .split('.')
+                .next()
+                .unwrap_or_default()
+                .to_owned();
+            for ip in s.addresses.iter().filter(|ip| ip.is_ipv4()) {
+                let d = Discovered {
+                    instance: instance.clone(),
+                    address: std::net::SocketAddr::new(ip.to_ip_addr(), s.port).to_string(),
+                };
+                if !found.contains(&d) {
+                    found.push(d);
+                }
+            }
+        }
+        let _ = guard.daemon.stop_browse(SYNC_SERVICE);
+        Ok(found)
+    }
+}
+
+#[cfg(feature = "network")]
+impl Drop for Advertisement {
+    fn drop(&mut self) {
+        let wait = std::time::Duration::from_secs(1);
+        if !self.fullname.is_empty() {
+            if let Ok(rx) = self.daemon.unregister(&self.fullname) {
+                let _ = rx.recv_timeout(wait);
+            }
+        }
+        if let Ok(rx) = self.daemon.shutdown() {
+            let _ = rx.recv_timeout(wait);
+        }
+        DISCOVERY_LIVE.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// This machine's IPv4 addresses a peer could dial (up, not loopback or
+/// link-local), for the pairing screen's manual-entry hint.
+#[cfg(feature = "network")]
+pub fn lan_addresses() -> Vec<String> {
+    let mut v: Vec<String> = if_addrs::get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|i| i.is_oper_up() && !i.is_loopback() && !i.is_link_local())
+        .filter_map(|i| match i.ip() {
+            std::net::IpAddr::V4(a) => Some(a.to_string()),
+            std::net::IpAddr::V6(_) => None,
+        })
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+#[cfg(feature = "network")]
+impl LanListener {
+    /// The port peers dial.
+    pub fn port(&self) -> u16 {
+        self.inner.local_addr().map_or(0, |a| a.port())
+    }
+
+    /// Waits for one connection, polling every 100 ms, while `keep_waiting()`
+    /// is true and the gate is open. `Ok(None)`: stopped without a connection.
+    pub fn accept(
+        &self,
+        gate: &NetGate,
+        keep_waiting: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<LanStream>, NetError> {
+        loop {
+            gate.check()?;
+            if !keep_waiting() {
+                return Ok(None);
+            }
+            match self.inner.accept() {
+                Ok((s, peer)) => {
+                    // Accepted sockets inherit non-blocking mode on Windows.
+                    s.set_nonblocking(false).map_err(io_err)?;
+                    gate.opened.fetch_add(1, Ordering::SeqCst);
+                    return Ok(Some(LanStream {
+                        inner: s,
+                        peer: peer.to_string(),
+                    }));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(e) => return Err(io_err(e)),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "network")]
+impl LanStream {
+    /// The other end, `ip:port`.
+    pub fn peer(&self) -> &str {
+        &self.peer
+    }
+
+    /// Read and write timeout for every later operation.
+    pub fn set_timeout(&self, d: std::time::Duration) -> Result<(), NetError> {
+        self.inner.set_read_timeout(Some(d)).map_err(io_err)?;
+        self.inner.set_write_timeout(Some(d)).map_err(io_err)
+    }
+}
+
+#[cfg(feature = "network")]
+impl std::io::Read for LanStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+#[cfg(feature = "network")]
+impl std::io::Write for LanStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.inner.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -931,6 +1193,72 @@ mod tests {
         assert_eq!(g.sockets_opened(), 0);
     }
 
+    /// Issue #156: no LAN listener, connection or discovery while air-gapped.
+    #[cfg(feature = "network")]
+    #[test]
+    fn lan_sync_refuses_while_air_gapped() {
+        let g = NetGate::default();
+        assert!(matches!(g.lan_listen(true), Err(NetError::AirGapped)));
+        assert!(matches!(
+            g.lan_connect("127.0.0.1:9", std::time::Duration::from_millis(10)),
+            Err(NetError::AirGapped)
+        ));
+        assert!(matches!(
+            g.advertise_sync(1, "abcdefgh", "ijklmnop"),
+            Err(NetError::AirGapped)
+        ));
+        assert!(matches!(
+            g.discover_sync(std::time::Duration::from_millis(10)),
+            Err(NetError::AirGapped)
+        ));
+        assert_eq!(g.sockets_opened(), 0);
+    }
+
+    /// The window listener stops accepting as soon as the gate closes.
+    #[cfg(feature = "network")]
+    #[test]
+    fn lan_listener_stops_when_the_gate_closes() {
+        let g = NetGate::default();
+        g.set_air_gapped(false);
+        let l = g.lan_listen(true).unwrap();
+        assert_ne!(l.port(), 0);
+        let mut polls = 0;
+        let r = l.accept(&g, &mut || {
+            polls += 1;
+            if polls == 2 {
+                g.set_air_gapped(true);
+            }
+            true
+        });
+        assert!(matches!(r, Err(NetError::AirGapped)));
+        g.set_air_gapped(false);
+        assert!(matches!(l.accept(&g, &mut || false), Ok(None)));
+        assert!(g
+            .lan_connect("not an address", std::time::Duration::from_millis(10))
+            .is_err());
+    }
+
+    /// Live check of advertise + browse on this machine's network (multicast
+    /// must be allowed, so not run in CI): the window is found while
+    /// advertised, and no daemon is left once it is dropped.
+    #[cfg(feature = "network")]
+    #[test]
+    #[ignore = "needs multicast on a real network interface"]
+    fn discovery_live() {
+        let g = NetGate::default();
+        g.set_air_gapped(false);
+        let ad = g.advertise_sync(40123, "shushtst", "shushhst").unwrap();
+        let found = g.discover_sync(std::time::Duration::from_secs(4)).unwrap();
+        assert!(
+            found
+                .iter()
+                .any(|d| d.instance == "shushtst" && d.address.ends_with(":40123")),
+            "{found:?}"
+        );
+        drop(ad);
+        assert_eq!(discovery_daemons_live(), 0);
+    }
+
     #[test]
     fn setting_persists_and_fails_closed() {
         let d = tempfile::tempdir().unwrap();
@@ -973,7 +1301,13 @@ mod tests {
         ];
         // Crates and Windows APIs that open sockets on their own; adding one
         // must route it through the gate and then update this list.
+        // `mdns-sd` (issue #156) is allowed: its daemon is created only by
+        // `NetGate::advertise_sync` / `discover_sync` above, and only this
+        // file may name it (the text scan below still forbids "mdns" elsewhere).
         let cargo = std::fs::read_to_string(manifest.join("Cargo.toml")).unwrap();
+        let cargo = cargo
+            .replace("mdns-sd = {", "")
+            .replace("\"dep:mdns-sd\"", "");
         for n in [
             "reqwest",
             "hyper",

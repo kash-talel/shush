@@ -7,6 +7,7 @@
   import DuressCard from "./DuressCard.svelte";
   import BrowserCard from "./BrowserCard.svelte";
   import NetworkCard from "./NetworkCard.svelte";
+  import SyncCard from "./SyncCard.svelte";
   import UpdatesCard from "./UpdatesCard.svelte";
   import EmergencyKitModal from "./EmergencyKitModal.svelte";
   import {
@@ -318,6 +319,8 @@
     <BrowserCard onchanged={onimported} />
 
     <NetworkCard />
+
+    <SyncCard />
 
     <UpdatesCard />
 
