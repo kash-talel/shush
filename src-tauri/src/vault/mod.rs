@@ -18,6 +18,7 @@ pub mod importer;
 pub mod items;
 pub mod lock;
 pub mod models;
+pub mod recover;
 pub mod registry;
 pub mod siblings;
 pub mod slots;
@@ -585,6 +586,21 @@ pub fn read_vault_file(path: &Path) -> Result<Vec<u8>, VaultError> {
         return Err(VaultError::TooLarge);
     }
     Ok(std::fs::read(path)?)
+}
+
+/// The structural checks [`OpenVault::unlock`] makes before the KDF runs:
+/// header, kind and layout. Cheap, and needs no credentials (issue #170).
+pub fn check_structure(bytes: &[u8]) -> Result<(), VaultError> {
+    let header = Header::parse(bytes)?;
+    if header.kind != FileKind::Vault {
+        return Err(VaultError::WrongKind(header.kind));
+    }
+    if container::read_version(bytes) == FORMAT_VERSION {
+        slots::parse(bytes)?;
+    } else {
+        container::parse(bytes)?;
+    }
+    Ok(())
 }
 
 /// Creates a new vault file at `path`. Never overwrites an existing file.

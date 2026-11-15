@@ -386,6 +386,26 @@ pub fn write_atomic(
     bytes: &[u8],
     verify: impl FnOnce(&[u8]) -> Result<(), VaultError>,
 ) -> Result<(), VaultError> {
+    write_atomic_inner(path, bytes, verify, true)
+}
+
+/// [`write_atomic`] without step 3: `path.bak` is never touched. For
+/// restoring from `.bak` (issue #170), where copying `path` over it could
+/// destroy the only good copy.
+pub fn write_atomic_keep_bak(
+    path: &Path,
+    bytes: &[u8],
+    verify: impl FnOnce(&[u8]) -> Result<(), VaultError>,
+) -> Result<(), VaultError> {
+    write_atomic_inner(path, bytes, verify, false)
+}
+
+fn write_atomic_inner(
+    path: &Path,
+    bytes: &[u8],
+    verify: impl FnOnce(&[u8]) -> Result<(), VaultError>,
+    backup: bool,
+) -> Result<(), VaultError> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
@@ -402,7 +422,7 @@ pub fn write_atomic(
         }
         verify(&readback)?;
 
-        if path.exists() {
+        if backup && path.exists() {
             let bak = sibling(path, "bak");
             fs::copy(path, &bak)?;
             // FlushFileBuffers requires a handle with write access on Windows.

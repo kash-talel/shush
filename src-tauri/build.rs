@@ -6,6 +6,7 @@ const COMMANDS: &[&str] = &[
     "app_info",
     "vault_status",
     "discard_vault_sibling",
+    "recover_vault_from_backup",
     "list_vaults",
     "select_vault",
     "check_new_vault",
