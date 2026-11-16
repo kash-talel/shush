@@ -84,7 +84,7 @@
   }
 
   const date = (unix: number) => new Date(unix * 1000).toLocaleDateString();
-  const canCheck = $derived(info !== null && info.mode === "notify" && !info.air_gapped && !busy);
+  const canCheck = $derived(info !== null && info.mode !== "off" && info.install_kind !== "managed" && !info.air_gapped && !busy);
   /** A newer version the user can download (not the one already staged). */
   const offered = $derived(
     info?.status.state === "available" && info.status.version !== info.staged ? info.status.version : null,
@@ -128,11 +128,19 @@
       onchange={(e) => changeMode(e.currentTarget)}
     >
       <option value="notify">Notify only</option>
+      {#if info?.can_self_update}
+        <option value="download_then_ask">Download, then ask</option>
+      {/if}
       <option value="off">Off</option>
     </select>
   </label>
 
-  {#if info?.air_gapped}
+  {#if info?.install_kind === "managed"}
+    <p class="text-xs text-zinc-300" role="status">
+      Managed by your organization. Your administrator updates shush; it never downloads or installs
+      updates itself.
+    </p>
+  {:else if info?.air_gapped}
     <p class="text-xs text-zinc-400" role="status">
       Air-gapped mode is on, so shush will not check for updates. Turn it off under Network to allow checks.
     </p>
@@ -154,8 +162,18 @@
         {#if s.below_min_supported}
           <p class="text-caution">Your version is no longer supported. Please update.</p>
         {/if}
-        {#if info.staged !== s.version}
-          <p class="text-zinc-400">Download it here, or from the shush website. Nothing is installed until you confirm.</p>
+        {#if !info.can_self_update}
+          <p class="text-zinc-400">
+            This copy cannot update itself. Read the release notes and get the new version from
+            <span class="select-all font-mono">github.com/kash-talel/shush/releases/tag/v{s.version}</span>.
+          </p>
+        {:else if info.staged !== s.version}
+          <p class="text-zinc-400">
+            {info.mode === "download_then_ask" && downloading
+              ? "Downloading it in the background."
+              : "Download it here, or from the shush website."}
+            Nothing is installed until you confirm.
+          </p>
         {/if}
       {:else if s.state === "stale"}
         <p class="flex items-start gap-1.5 text-caution">
@@ -210,7 +228,7 @@
       {#if busy && !downloading}<LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />{/if}
       Check now
     </button>
-    {#if offered && !info?.air_gapped && info?.mode === "notify"}
+    {#if offered && !info?.air_gapped && info?.mode !== "off" && info?.can_self_update}
       {@const version = offered}
       <button
         type="button"

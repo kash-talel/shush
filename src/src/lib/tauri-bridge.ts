@@ -576,7 +576,9 @@ export const syncResetIdentity = () => invoke<SyncStatus>("sync_reset_identity")
 export const syncSetAdvertise = (enabled: boolean) => invoke<SyncStatus>("sync_set_advertise", { enabled });
 
 /** Update checks (issue #78). Download and install happen only when the user clicks (#197). */
-export type UpdateMode = "off" | "notify";
+export type UpdateMode = "off" | "notify" | "download_then_ask";
+/** How this copy was installed (#198); only "installer" may update itself. */
+export type InstallKind = "installer" | "managed" | "hand_copied" | "unknown";
 export type UpdateState =
   | { state: "unchecked" }
   | { state: "up_to_date"; verified_until: number }
@@ -595,6 +597,9 @@ export interface UpdateInfo {
   staged: string | null;
   /** True while a download runs. */
   downloading: boolean;
+  install_kind: InstallKind;
+  /** False for managed, hand-copied and unknown installs: they never download or install. */
+  can_self_update: boolean;
 }
 export const updateStatus = () => invoke<UpdateInfo>("update_status");
 export const setUpdateMode = (mode: UpdateMode) => invoke<UpdateInfo>("set_update_mode", { mode });

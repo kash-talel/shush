@@ -289,6 +289,27 @@ fn mode_persists_and_fails_closed() {
     assert_eq!(UpdateMode::load(d.path()), UpdateMode::Notify);
     std::fs::write(d.path().join(SETTINGS_FILE), b"garbage").unwrap();
     assert_eq!(UpdateMode::load(d.path()), UpdateMode::Off);
+    // The new mode round-trips, and an unknown name still means off.
+    UpdateMode::DownloadThenAsk.save(d.path()).unwrap();
+    assert_eq!(UpdateMode::load(d.path()), UpdateMode::DownloadThenAsk);
+    assert_eq!(
+        serde_json::to_string(&UpdateMode::DownloadThenAsk).unwrap(),
+        "\"download_then_ask\""
+    );
+    std::fs::write(d.path().join(SETTINGS_FILE), br#"{"mode":"auto_install"}"#).unwrap();
+    assert_eq!(UpdateMode::load(d.path()), UpdateMode::Off);
+}
+
+#[test]
+fn failed_mode_save_leaves_the_saved_mode_untouched() {
+    // The command saves before changing the mode in effect; a failed save must report an error
+    // and leave the old file as it was (the UI then shows the mode really in effect, #195).
+    let d = tempfile::tempdir().unwrap();
+    UpdateMode::Off.save(d.path()).unwrap();
+    // A directory where the temp file goes makes the write fail.
+    std::fs::create_dir(d.path().join(format!("{SETTINGS_FILE}.tmp"))).unwrap();
+    assert!(UpdateMode::DownloadThenAsk.save(d.path()).is_err());
+    assert_eq!(UpdateMode::load(d.path()), UpdateMode::Off);
 }
 
 #[test]
