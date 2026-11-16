@@ -158,6 +158,32 @@ pub(crate) enum Hop {
     Redirect(String),
 }
 
+/// Tries each address in turn, every attempt capped by what is left of the one shared
+/// `deadline`, so a network that silently drops (say) IPv6 cannot stretch a request to
+/// minutes. The last real error is kept for the user; a gate refusal ends the loop at once.
+#[cfg(feature = "network")]
+fn connect_within<T>(
+    addrs: &[std::net::SocketAddr],
+    timeout: std::time::Duration,
+    deadline: std::time::Instant,
+    mut connect: impl FnMut(&std::net::SocketAddr, std::time::Duration) -> Result<T, NetError>,
+) -> Result<T, NetError> {
+    let mut last_err = NetError::Io("could not connect".into());
+    for a in addrs {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            last_err = NetError::Io("timed out".into());
+            break;
+        }
+        match connect(a, timeout.min(left)) {
+            Ok(s) => return Ok(s),
+            Err(e @ (NetError::AirGapped | NetError::NotCompiledIn)) => return Err(e),
+            Err(e) => last_err = e,
+        }
+    }
+    Err(last_err)
+}
+
 /// Pull-based reader over a response: bytes already read past the head first, then the socket.
 /// Checks the deadline and the gate before every socket read.
 struct Pull<'a, R> {
@@ -685,26 +711,7 @@ impl NetGate {
             .to_socket_addrs()
             .map_err(|e| io(&e))?
             .collect();
-        // Every address shares the one deadline, so a network that silently drops (say) IPv6
-        // cannot stretch a request to minutes. The last real error is kept for the user.
-        let mut tcp = None;
-        let mut last_err = NetError::Io("could not connect".into());
-        for a in &addrs {
-            let left = deadline.saturating_duration_since(std::time::Instant::now());
-            if left.is_zero() {
-                last_err = NetError::Io("timed out".into());
-                break;
-            }
-            match self.tcp_connect(a, timeout.min(left)) {
-                Ok(s) => {
-                    tcp = Some(s);
-                    break;
-                }
-                Err(e @ (NetError::AirGapped | NetError::NotCompiledIn)) => return Err(e),
-                Err(e) => last_err = e,
-            }
-        }
-        let tcp = tcp.ok_or(last_err)?;
+        let tcp = connect_within(&addrs, timeout, deadline, |a, t| self.tcp_connect(a, t))?;
         tcp.inner
             .set_read_timeout(Some(timeout))
             .map_err(|e| io(&e))?;
@@ -1139,6 +1146,42 @@ impl std::io::Write for LanStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "network")]
+    #[test]
+    fn connect_loop_stays_inside_the_request_deadline() {
+        use std::time::{Duration, Instant};
+        let addrs: Vec<std::net::SocketAddr> = (1..=6)
+            .map(|i| format!("127.0.0.{i}:443").parse().unwrap())
+            .collect();
+        // Every attempt "blackholes": it burns its whole allowance, as a dropped IPv6 would.
+        let start = Instant::now();
+        let deadline = start + Duration::from_millis(45);
+        let mut attempts = 0;
+        let r: Result<(), _> =
+            connect_within(&addrs, Duration::from_millis(20), deadline, |_, t| {
+                attempts += 1;
+                assert!(t <= Duration::from_millis(20));
+                std::thread::sleep(t);
+                Err(NetError::Io("blackhole".into()))
+            });
+        assert!(r.is_err());
+        assert!(attempts < addrs.len(), "later addresses must be skipped");
+        assert!(start.elapsed() < Duration::from_millis(300));
+        // A refusal by the gate is not retried on the next address.
+        let mut n = 0;
+        let r: Result<(), _> = connect_within(
+            &addrs,
+            Duration::from_secs(1),
+            Instant::now() + Duration::from_secs(5),
+            |_, _| {
+                n += 1;
+                Err(NetError::AirGapped)
+            },
+        );
+        assert_eq!(r, Err(NetError::AirGapped));
+        assert_eq!(n, 1);
+    }
 
     #[test]
     fn default_is_air_gapped_and_opens_nothing() {
