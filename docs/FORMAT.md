@@ -127,6 +127,43 @@ until then.
 
 **Keyfile add/remove.** Sets or clears `FLAGS` bit 0 and changes the Argon2 `secret` input; it is a
 rekey (new salt, full re-seal) and needs the password plus, when removing, the current keyfile.
+Once the recovery envelope (#221, below) exists, every rekey that changes the password or keyfile also
+re-seals or clears it, so it never holds a stale `K`.
+
+## Recovery envelope (design, issue #221; not implemented)
+
+Lets a one-time recovery code stand in for the **keyfile only**; the master password is still required
+(spec `security-model.md` section 3.1 item 5). Needs format **v4**: a v3 reader rejects it as
+`UnsupportedVersion` before any KDF, per the version policy.
+
+```
+RECOVERY_ENVELOPE (104 bytes, directly after KDF_SALT; the fixed header grows from 0x35 to 0x9D)
+  ENV_SALT (32) || ENV_NONCE (24, zero-padded like other nonces) || ENV_CT (48)
+
+R           = SHA-256(UTF-8(canonical code))              # Base32 uppercase, groups and checksum removed
+RecoveryKey = Argon2id(P, ENV_SALT, secret=R, same m/t/p as the header, 32 bytes)
+ENV_CT      = AEAD(RecoveryKey, ENV_NONCE, plaintext = K (32 bytes), AAD = fixed header with the envelope's own bytes zeroed || "R")
+```
+
+- The code is 160 random bits (32 Base32 characters plus a checksum group, UI-level only; the checksum
+  is never stored). `K` is the existing keyfile digest, so the slots, the KDF and `FLAGS` bit 0 are unchanged.
+- **Always present.** Every v4 file carries 104 bytes here; with no recovery code (or no keyfile) they are
+  random. Presence leaks nothing, and there is no fingerprint of the keyfile or code: the only check
+  value is the AEAD tag, which needs both password and code.
+- **Recover** = Argon2id for `RecoveryKey`, unseal `K`, then the normal unlock (Argon2id with `P`,
+  `KDF_SALT`, `secret=K`) over both slots. Two KDF runs, always, including on failure. Failure is reported
+  as wrong credentials. `K` is zeroized as soon as the second KDF finishes.
+- **Both slots share it.** The keyfile is shared by the main and duress vault, so one envelope covers
+  both; it is sealed under the real password, so a duress password with the code fails like a wrong code.
+- **AAD** covers the whole fixed header (envelope bytes zeroed), so tampering with salt, flags or
+  parameters fails the envelope; the envelope bytes themselves are covered by the slot AADs.
+- **Rekey (see Vault lifecycle).** Password or keyfile change: re-seal the envelope with a fresh
+  `ENV_SALT`/`ENV_NONCE`, either carrying the code over (user re-enters it) or issuing a new code; keyfile
+  removal or clearing the code overwrites the envelope with random bytes. A new `KDF_SALT` never
+  coexists with an envelope sealed against the old `K`.
+- **Migration v3 to v4** follows the lifecycle rule (read old, write new, `vault.shush.v3.bak`), filling
+  the envelope with random bytes.
+- **Backups** (`.shushbackup`, v2) do not carry an envelope.
 
 ## Single-payload layout (format v2: backups; legacy vaults)
 
