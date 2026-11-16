@@ -7,6 +7,8 @@ struct Fake {
     subs: HashMap<(u8, String), Vec<String>>,
     fail_user: bool,
     fail_subs: bool,
+    /// A key whose values cannot be read (another program's restricted entry).
+    fail_key: Option<String>,
 }
 
 fn h(x: Hive) -> u8 {
@@ -43,6 +45,9 @@ impl Fake {
 impl Reg for Fake {
     fn value(&self, hive: Hive, key: &str, name: &str) -> Result<Option<String>, String> {
         if self.fail_user && hive == Hive::User {
+            return Err("denied".into());
+        }
+        if self.fail_key.as_deref() == Some(key) {
             return Err("denied".into());
         }
         Ok(self.vals.get(&(h(hive), key.into(), name.into())).cloned())
@@ -128,6 +133,20 @@ fn unreadable_or_ambiguous_registry_fails_safe_with_a_log_line() {
     let (k, log) = run(&f, DIR);
     assert_eq!(k, InstallKind::Unknown);
     assert!(log[0].contains("both"));
+}
+
+#[test]
+fn unreadable_foreign_machine_entry_does_not_block_a_per_user_install() {
+    let mut f = Fake::default();
+    f.user_install(DIR);
+    f.subs
+        .entry((h(Hive::Machine64), UNINSTALL.into()))
+        .or_default()
+        .push("OtherVendor".into());
+    f.fail_key = Some(format!(r"{UNINSTALL}\OtherVendor"));
+    assert_eq!(run(&f, DIR).0, InstallKind::Installer);
+    // It never makes a copy self-updating on its own.
+    assert_eq!(run(&f, r"D:\tools\shush").0, InstallKind::HandCopied);
 }
 
 #[test]

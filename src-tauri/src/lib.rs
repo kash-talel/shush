@@ -2645,9 +2645,13 @@ fn not_self_updatable(app: &tauri::AppHandle) -> CmdError {
             "UPDATE_MANAGED",
             "Managed by your organization: your administrator updates shush.",
         ),
+        InstallKind::Unknown => CmdError::new(
+            "UPDATE_NOTIFY_ONLY",
+            "shush could not tell how this copy was installed, so it will not update itself. Download the new version from the release page.",
+        ),
         _ => CmdError::new(
             "UPDATE_NOTIFY_ONLY",
-            "This copy of shush was not installed by the installer, so it cannot update itself.              Download the new version from the release page.",
+            "This copy of shush was not installed by the installer, so it cannot update itself. Download the new version from the release page.",
         ),
     }
 }
@@ -2693,6 +2697,12 @@ fn set_update_mode(
         .mode
         .lock()
         .unwrap_or_else(|e| e.into_inner()) = mode;
+    // Switching to "download then ask" while a newer version is already shown fetches it now
+    // rather than after the next scheduled check.
+    if mode == update::client::UpdateMode::DownloadThenAsk {
+        let b = app.clone();
+        tauri::async_runtime::spawn_blocking(move || background_download(&b));
+    }
     Ok(update_info(&app))
 }
 
@@ -2718,10 +2728,13 @@ async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, CmdError>
     let a = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         run_update_check(&a);
-        background_download(&a);
     })
     .await
     .map_err(|_| CmdError::new("UPDATE_CHECK_FAILED", "The update check did not finish."))?;
+    // "Download then ask" fetches in the background: the check returns now and the card shows
+    // the download running instead of a spinning Check now button.
+    let b = app.clone();
+    tauri::async_runtime::spawn_blocking(move || background_download(&b));
     Ok(update_info(&app))
 }
 

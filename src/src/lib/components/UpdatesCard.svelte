@@ -114,8 +114,8 @@
     <RefreshCw class="size-4 text-emerald" aria-hidden="true" /> Updates
   </h3>
   <p class="text-xs leading-5 text-zinc-400">
-    shush can check for new versions and tell you. Nothing is downloaded or installed until you click, and
-    the check sends no identifiers. The feed and the installer are signature-checked, so a tampered or
+    shush can check for new versions and tell you. Nothing is downloaded unless you click Download or choose
+    "Download, then ask", nothing is installed until you confirm, and the check sends no identifiers. The feed and the installer are signature-checked, so a tampered or
     replayed one is ignored.
   </p>
 
@@ -128,7 +128,7 @@
       onchange={(e) => changeMode(e.currentTarget)}
     >
       <option value="notify">Notify only</option>
-      {#if info?.can_self_update}
+      {#if info?.can_self_update || info?.mode === "download_then_ask"}
         <option value="download_then_ask">Download, then ask</option>
       {/if}
       <option value="off">Off</option>

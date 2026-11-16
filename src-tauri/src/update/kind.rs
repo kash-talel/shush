@@ -111,9 +111,12 @@ pub fn detect(
         };
         for n in names {
             let sub = format!(r"{UNINSTALL}\{n}");
+            // Another program's entry that cannot be read (restricted ACL, odd value type) is
+            // skipped: it must not cost a real per-user install its updates. This cannot unlock
+            // self-update on its own, which still needs a matching HKCU registration.
             let display = match reg.value(hive, &sub, "DisplayName") {
                 Ok(d) => d,
-                Err(e) => return unknown(format!("HKLM read failed: {e}")),
+                Err(_) => continue,
             };
             if !display.is_some_and(|d| d.trim().eq_ignore_ascii_case(product)) {
                 continue;
