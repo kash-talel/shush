@@ -161,8 +161,20 @@ ENV_CT      = AEAD(RecoveryKey, ENV_NONCE, plaintext = K (32 bytes), AAD = fixed
   `ENV_SALT`/`ENV_NONCE`, either carrying the code over (user re-enters it) or issuing a new code; keyfile
   removal or clearing the code overwrites the envelope with random bytes. A new `KDF_SALT` never
   coexists with an envelope sealed against the old `K`.
-- **Migration v3 to v4** follows the lifecycle rule (read old, write new, `vault.shush.v3.bak`), filling
-  the envelope with random bytes.
+- **Setting, replacing or clearing the code is a rekey.** The slot AADs cover the whole fixed header,
+  envelope included, so any change to the envelope bytes invalidates the slot the session cannot re-seal.
+  It therefore follows every Rekey rule above, including refusal while a duress password is set.
+- **Migration v3 to v4 is not done on ordinary saves.** Moving to v4 changes `FORMAT_VERSION` and the header
+  length, both inside the slot AADs, so it would destroy the other slot (a duress or real vault the session
+  cannot see or re-seal). An ordinary save, including the unlock re-seal, keeps a v3 file as v3. A v3 file
+  becomes v4 only through a rekey operation (which already has the duress rules above), with the envelope
+  filled with random bytes unless a code is being set, and the pre-migration copy `vault.shush.v3.bak` is
+  written first as for any version change. This is an exception to the "read old, write new" rule of the
+  version policy: a v4 build keeps writing v3 for v3 files. New vaults are created as v4.
+- **Deniability residue.** The code works only with the real password. Under coercion, a duress password
+  plus the code fails exactly like a mistyped code, so the failure itself does not prove a second vault,
+  but the user must be ready to say the code is wrong or lost. The setup UI says so when a duress password
+  is planned.
 - **Backups** (`.shushbackup`, v2) do not carry an envelope.
 
 ## Single-payload layout (format v2: backups; legacy vaults)
