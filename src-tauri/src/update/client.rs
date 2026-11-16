@@ -406,6 +406,30 @@ impl UpdateState {
         *self.last.lock().unwrap_or_else(|e| e.into_inner()) = (status, Some(now_unix));
     }
 
+    /// Records the result of a check. Returns whether it reached a verified answer (false:
+    /// retry sooner). A refusal because the gate closed mid-check keeps the last real result
+    /// instead of replacing it with an air-gap error (#200).
+    pub fn record_check(&self, status: UpdateStatus, now_unix: i64) -> bool {
+        if matches!(
+            status,
+            UpdateStatus::Failed {
+                code: "UPDATE_AIR_GAPPED",
+                ..
+            }
+        ) {
+            return false;
+        }
+        let settled = !matches!(
+            status,
+            UpdateStatus::Failed {
+                code: "UPDATE_FETCH_FAILED" | "UPDATE_FEED_MISMATCH",
+                ..
+            }
+        );
+        self.record(status, now_unix);
+        settled
+    }
+
     /// Last result.
     pub fn snapshot(&self) -> (UpdateStatus, Option<i64>) {
         self.last.lock().unwrap_or_else(|e| e.into_inner()).clone()

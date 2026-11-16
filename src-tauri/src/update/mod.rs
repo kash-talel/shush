@@ -24,6 +24,7 @@ use sha2::{Digest, Sha256};
 pub mod client;
 pub mod install;
 pub mod kind;
+pub mod schedule;
 
 /// Hard cap on a manifest's size; both files are tiny, so anything bigger is hostile.
 pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;

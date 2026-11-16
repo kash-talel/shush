@@ -2576,25 +2576,7 @@ fn run_update_check(app: &tauri::AppHandle) -> bool {
         highest_seen.as_deref(),
         now,
     );
-    // The gate closed mid-check: keep the last real result rather than an air-gap error.
-    if matches!(
-        status,
-        update::client::UpdateStatus::Failed {
-            code: "UPDATE_AIR_GAPPED",
-            ..
-        }
-    ) {
-        return false;
-    }
-    let settled = !matches!(
-        status,
-        update::client::UpdateStatus::Failed {
-            code: "UPDATE_FETCH_FAILED" | "UPDATE_FEED_MISMATCH",
-            ..
-        }
-    );
-    state.record(status, now);
-    settled
+    state.record_check(status, now)
 }
 
 /// Background checker: first check shortly after start, then every 24 h plus up to 2 h of
@@ -2603,30 +2585,18 @@ fn run_update_check(app: &tauri::AppHandle) -> bool {
 fn spawn_update_checker(app: tauri::AppHandle) {
     use rand::Rng;
     std::thread::spawn(move || {
-        let mut due: Option<std::time::Instant> = None;
+        let mut sched = update::schedule::Schedule::default();
         loop {
             std::thread::sleep(std::time::Duration::from_secs(60));
             let eligible = {
                 let st = app.state::<update::client::UpdateState>();
                 st.mode() != update::client::UpdateMode::Off && st.kind().may_check()
             } && app.state::<net::NetGate>().check().is_ok();
-            if !eligible {
-                due = None;
-                continue;
-            }
-            let now = std::time::Instant::now();
-            match due {
-                None => due = Some(now + std::time::Duration::from_secs(30)),
-                Some(t) if now >= t => {
-                    let settled = run_update_check(&app);
-                    background_download(&app);
-                    let base = if settled { 24 * 60 * 60 } else { 60 * 60 };
-                    let jitter = rand::thread_rng().gen_range(0..2 * 60 * 60);
-                    due = Some(
-                        std::time::Instant::now() + std::time::Duration::from_secs(base + jitter),
-                    );
-                }
-                Some(_) => {}
+            if sched.tick(std::time::Instant::now(), eligible) == update::schedule::Tick::Check {
+                let settled = run_update_check(&app);
+                background_download(&app);
+                let jitter = rand::thread_rng().gen_range(0..update::schedule::JITTER_SECS);
+                sched.done(std::time::Instant::now(), settled, jitter);
             }
         }
     });

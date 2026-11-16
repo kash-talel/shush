@@ -429,3 +429,51 @@ fn beta_install_is_never_up_to_date_while_the_stable_feed_is_unconfirmed() {
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn newer_installed_build_gets_neutral_rollback_wording() {
+    let fx = Fx::new();
+    let f = fx.feed("0.1.0", None, NOW + 3600);
+    let UpdateStatus::Failed { code, message } = check(&f, &fx.anchors(), "0.1.2", None, NOW)
+    else {
+        panic!("expected a failure");
+    };
+    assert_eq!(code, "UPDATE_ROLLBACK");
+    let m = message.to_lowercase();
+    assert!(!m.contains("rollback") && !m.contains("attack") && !m.contains("tamper"));
+    assert!(m.contains("nothing is offered"));
+}
+
+#[test]
+fn air_gapped_check_keeps_the_last_good_result() {
+    let st = UpdateState::default();
+    let good = UpdateStatus::UpToDate {
+        verified_until: NOW + 100,
+    };
+    assert!(st.record_check(good.clone(), NOW));
+    let gate = NetGate::default();
+    let fx = Fx::new();
+    let air = check(&GateFetch(&gate), &fx.anchors(), "0.1.2", None, NOW + 5);
+    assert!(matches!(
+        air,
+        UpdateStatus::Failed {
+            code: "UPDATE_AIR_GAPPED",
+            ..
+        }
+    ));
+    assert!(!st.record_check(air, NOW + 5));
+    assert_eq!(st.snapshot(), (good, Some(NOW)));
+}
+
+#[test]
+fn fetch_failure_is_unsettled_and_checks_never_overlap() {
+    let st = UpdateState::default();
+    let fx = Fx::new();
+    let r = check(&Fake(HashMap::new()), &fx.anchors(), "0.1.2", None, NOW);
+    assert!(!st.record_check(r, NOW));
+    // `running` serialises checks: while one holds it, another cannot take it.
+    let held = st.running.lock().unwrap();
+    assert!(st.running.try_lock().is_err());
+    drop(held);
+    assert!(st.running.try_lock().is_ok());
+}
