@@ -582,7 +582,7 @@ export type InstallKind = "installer" | "managed" | "hand_copied" | "unknown";
 export type UpdateState =
   | { state: "unchecked" }
   | { state: "up_to_date"; verified_until: number }
-  | { state: "available"; version: string; security: boolean; below_min_supported: boolean }
+  | { state: "available"; version: string; security: boolean; below_min_supported: boolean; changes_vault_format: boolean }
   | { state: "stale" }
   | { state: "failed"; code: string; message: string };
 export interface UpdateInfo {

@@ -88,6 +88,12 @@ as v3 through the crash-safe write path (Writing, above), which copies the old f
 first, so the original generation is kept. Migration never changes the salt, KDF parameters, suite or
 keyfile flag. A future version bump follows the same rule: read old, write new, keep the old as `.bak`.
 
+**Pre-migration copy (implemented, #199).** `.bak` is only the previous generation, so the first save that
+rewrites an older-format file first writes a permanent copy `vault.shush.v<N>.bak` (N = the old format
+version; fsynced, read back, never replaced once present). If that copy cannot be written the save fails
+and the old file is left unchanged, so the next unlock can retry. The update prompt says when the signed
+`release.json` `vault_format` is higher than this build's; a lower or equal value is ignored.
+
 **Clean Restore (implemented).** Replace-mode import goes through the same save path, so
 `vault.shush.bak` holds the vault as it was before the restore. If the save is refused or fails,
 nothing on disk changes.

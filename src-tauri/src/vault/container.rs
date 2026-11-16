@@ -436,6 +436,51 @@ fn write_atomic_inner(
     result
 }
 
+/// Keeps a permanent copy of an older-format vault before the first save
+/// rewrites it in the current format (issue #199). `.bak` only holds the
+/// previous generation, so two saves later the old-format file would be gone
+/// and an older build could never open the vault again.
+///
+/// The copy is `path.v<N>.bak` (`N` = the file's format version), written,
+/// fsynced and read back. An existing copy is never replaced: it is the
+/// oldest generation. Does nothing when `path` is missing or already current.
+/// Any failure is returned and the caller must not migrate.
+pub fn keep_premigration_copy(path: &Path) -> Result<(), VaultError> {
+    let bytes = match fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    if bytes.len() <= OFF_VERSION + 1 {
+        return Ok(());
+    }
+    let version = read_version(&bytes);
+    if version >= FORMAT_VERSION {
+        return Ok(());
+    }
+    let copy = sibling(path, &format!("v{version}.bak"));
+    if copy.exists() {
+        return Ok(());
+    }
+    let tmp = sibling(path, &format!("v{version}.bak.tmp"));
+    let result = (|| {
+        {
+            let mut f = File::create(&tmp)?;
+            f.write_all(&bytes)?;
+            f.sync_all()?;
+        }
+        if fs::read(&tmp)? != bytes {
+            return Err(VaultError::WriteVerifyFailed);
+        }
+        fs::rename(&tmp, &copy)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
 fn rename_with_retry(from: &Path, to: &Path) -> Result<(), VaultError> {
     const ATTEMPTS: u32 = 10;
     let mut attempt = 0;

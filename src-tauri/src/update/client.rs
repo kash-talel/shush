@@ -108,6 +108,9 @@ pub enum UpdateStatus {
         security: bool,
         /// The installed version is below the release's `min_supported`.
         below_min_supported: bool,
+        /// The release writes a newer vault format than this build (issue #199). The feed's
+        /// value is only compared upward: a lower one changes nothing.
+        changes_vault_format: bool,
     },
     /// The feed's freshness proof expired: "can't confirm you're up to date".
     Stale,
@@ -258,10 +261,15 @@ pub fn to_status(r: Result<super::VerifiedRelease, UpdateError>, installed: &str
                 .and_then(|m| semver::Version::parse(m).ok())
                 .zip(semver::Version::parse(installed).ok())
                 .is_some_and(|(min, inst)| inst.cmp_precedence(&min).is_lt());
+            let changes_vault_format = v
+                .release
+                .vault_format
+                .is_some_and(|f| f > u32::from(crate::vault::container::FORMAT_VERSION));
             UpdateStatus::Available {
                 version: v.release.version,
                 security: v.release.security,
                 below_min_supported,
+                changes_vault_format,
             }
         }
         Ok(v) => UpdateStatus::UpToDate {
