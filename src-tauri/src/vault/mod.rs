@@ -406,7 +406,20 @@ impl OpenVault {
     ) -> Result<(), VaultError> {
         // An older-format file is about to be rewritten: keep it first, and
         // do not migrate if that copy cannot be made (issue #199).
-        container::keep_premigration_copy(path)?;
+        // Only the file this vault was loaded from is kept, never a file a
+        // concurrent writer put there.
+        if !self.is_current_format() {
+            match std::fs::read(path) {
+                Ok(on_disk) => {
+                    if Some(disk_id(&on_disk)) != self.disk_id {
+                        return Err(VaultError::ChangedOnDisk);
+                    }
+                    container::keep_premigration_copy(path, &on_disk)?;
+                }
+                Err(e) if e.kind() == ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
         let bytes = self.to_bytes()?;
         let expected = self.disk_id;
         let index = self.slot.index;
@@ -1225,6 +1238,30 @@ mod tests {
             container::read_version(&std::fs::read(&path).unwrap()),
             FORMAT_VERSION
         );
+    }
+
+    #[test]
+    fn premigration_copy_is_of_the_loaded_file_and_follows_a_rollback() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.shush");
+        let copy = container::sibling(&path, "v2.bak");
+        let v = OpenVault::create(b"pw", None, FAST).unwrap();
+        let v2 = container::seal(&v.header, &v.keys, &encode_json(v.data()).unwrap()).unwrap();
+        std::fs::write(&path, &v2).unwrap();
+        let mut opened = unlock_file(&path, b"pw").unwrap();
+        // Another writer replaced the file: it is not kept, the save is refused.
+        let mut foreign = v2.clone();
+        let last = foreign.len() - 1;
+        foreign[last] ^= 1;
+        std::fs::write(&path, &foreign).unwrap();
+        assert_eq!(opened.refresh(&path).err(), Some(VaultError::ChangedOnDisk));
+        assert!(!copy.exists());
+        // A copy from an earlier migration (then a rollback) is replaced by the
+        // newer old-format file.
+        std::fs::write(&path, &v2).unwrap();
+        std::fs::write(&copy, b"older generation").unwrap();
+        opened.refresh(&path).unwrap();
+        assert_eq!(std::fs::read(&copy).unwrap(), v2);
     }
 
     #[test]

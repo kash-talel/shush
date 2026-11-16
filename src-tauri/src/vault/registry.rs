@@ -131,14 +131,21 @@ pub fn with_extension(path: &Path) -> PathBuf {
 
 /// Every file or folder that belongs to the vault at `path`.
 pub fn vault_files(path: &Path) -> Vec<PathBuf> {
-    use super::container::sibling;
-    vec![
+    use super::container::{sibling, FORMAT_VERSION};
+    let mut files = vec![
         path.to_path_buf(),
         sibling(path, "bak"),
         sibling(path, "tmp"),
         sibling(path, "d"),
         sibling(path, "lock"),
-    ]
+    ];
+    // Pre-migration copies (issue #199): deleting a vault must not leave an
+    // older-format copy of it behind.
+    for v in 0..FORMAT_VERSION {
+        files.push(sibling(path, &format!("v{v}.bak")));
+        files.push(sibling(path, &format!("v{v}.bak.tmp")));
+    }
+    files
 }
 
 fn new_id() -> String {
@@ -719,6 +726,14 @@ mod tests {
             reg.check_new(&dir.path().join("old.shush"), "O"),
             Err(RegistryError::LocationTaken)
         );
+        // So would a pre-migration copy of a deleted vault (issue #199).
+        touch(&dir.path().join("pre.shush.v2.bak"));
+        assert_eq!(
+            reg.check_new(&dir.path().join("pre.shush"), "P"),
+            Err(RegistryError::LocationTaken)
+        );
+        assert!(vault_files(&dir.path().join("pre.shush"))
+            .contains(&dir.path().join("pre.shush.v2.bak")));
         assert_eq!(
             reg.check_new(&dir.path().join("nope").join("x.shush"), "X"),
             Err(RegistryError::NoSuchFolder)

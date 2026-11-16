@@ -164,8 +164,8 @@
         {/if}
         {#if s.changes_vault_format}
           <p class="text-caution">
-            This update changes how your vault is stored. The first time you unlock after updating,
-            shush keeps a copy of your current vault file next to it
+            This update changes how your vault is stored. The first time you change anything after
+            updating, shush keeps a copy of your current vault file next to it
             and will not change the vault if that copy cannot be saved. An older shush cannot open
             the updated vault, so keep a backup before you update.
           </p>
