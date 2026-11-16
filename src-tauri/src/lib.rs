@@ -2518,7 +2518,7 @@ fn set_air_gapped(app: tauri::AppHandle, enabled: bool) -> Result<NetworkStatus,
 /// What Settings -> Updates shows (issue #78, notify-only).
 #[derive(serde::Serialize)]
 struct UpdateInfo {
-    /// The user's choice (`off` or `notify`).
+    /// The user's choice (`off`, `notify` or `download_then_ask`).
     mode: update::client::UpdateMode,
     /// True while the network gate is closed: nothing is checked.
     air_gapped: bool,
@@ -2532,6 +2532,10 @@ struct UpdateInfo {
     staged: Option<String>,
     /// True while a download runs.
     downloading: bool,
+    /// How this copy was installed (#198).
+    install_kind: update::kind::InstallKind,
+    /// Only a per-user installer may download and install updates.
+    can_self_update: bool,
 }
 
 fn update_info(app: &tauri::AppHandle) -> UpdateInfo {
@@ -2546,6 +2550,8 @@ fn update_info(app: &tauri::AppHandle) -> UpdateInfo {
         installed: env!("CARGO_PKG_VERSION"),
         staged: st.staged_version(),
         downloading: st.is_downloading(),
+        install_kind: st.kind(),
+        can_self_update: st.kind().can_self_update(),
     }
 }
 
@@ -2600,9 +2606,10 @@ fn spawn_update_checker(app: tauri::AppHandle) {
         let mut due: Option<std::time::Instant> = None;
         loop {
             std::thread::sleep(std::time::Duration::from_secs(60));
-            let eligible = app.state::<update::client::UpdateState>().mode()
-                == update::client::UpdateMode::Notify
-                && app.state::<net::NetGate>().check().is_ok();
+            let eligible = {
+                let st = app.state::<update::client::UpdateState>();
+                st.mode() != update::client::UpdateMode::Off && st.kind().may_check()
+            } && app.state::<net::NetGate>().check().is_ok();
             if !eligible {
                 due = None;
                 continue;
@@ -2611,11 +2618,9 @@ fn spawn_update_checker(app: tauri::AppHandle) {
             match due {
                 None => due = Some(now + std::time::Duration::from_secs(30)),
                 Some(t) if now >= t => {
-                    let base = if run_update_check(&app) {
-                        24 * 60 * 60
-                    } else {
-                        60 * 60
-                    };
+                    let settled = run_update_check(&app);
+                    background_download(&app);
+                    let base = if settled { 24 * 60 * 60 } else { 60 * 60 };
                     let jitter = rand::thread_rng().gen_range(0..2 * 60 * 60);
                     due = Some(
                         std::time::Instant::now() + std::time::Duration::from_secs(base + jitter),
@@ -2630,6 +2635,49 @@ fn spawn_update_checker(app: tauri::AppHandle) {
 #[tauri::command]
 fn update_status(app: tauri::AppHandle) -> UpdateInfo {
     update_info(&app)
+}
+
+/// Error for a download or install on a copy that must not update itself (#198).
+fn not_self_updatable(app: &tauri::AppHandle) -> CmdError {
+    use update::kind::InstallKind;
+    match app.state::<update::client::UpdateState>().kind() {
+        InstallKind::Managed => CmdError::new(
+            "UPDATE_MANAGED",
+            "Managed by your organization: your administrator updates shush.",
+        ),
+        InstallKind::Unknown => CmdError::new(
+            "UPDATE_NOTIFY_ONLY",
+            "shush could not tell how this copy was installed, so it will not update itself. Download the new version from the release page.",
+        ),
+        _ => CmdError::new(
+            "UPDATE_NOTIFY_ONLY",
+            "This copy of shush was not installed by the installer, so it cannot update itself. Download the new version from the release page.",
+        ),
+    }
+}
+
+/// "Download then ask": after a check found a newer version, fetches and verifies it in the
+/// background so only the install confirmation is left. Never installs. Does nothing unless the
+/// mode asks for it, this copy may self-update, the gate is open and the version is not staged.
+fn background_download(app: &tauri::AppHandle) {
+    let st = app.state::<update::client::UpdateState>();
+    if st.mode() != update::client::UpdateMode::DownloadThenAsk
+        || !st.kind().can_self_update()
+        || app.state::<net::NetGate>().check().is_err()
+    {
+        return;
+    }
+    let (status, _) = st.snapshot();
+    if let update::client::UpdateStatus::Available { version, .. } = status {
+        if st.staged_version().as_deref() != Some(version.as_str()) {
+            if let Err(e) = do_download(app, &version) {
+                eprintln!(
+                    "shush: background update download: [{}] {}",
+                    e.code, e.message
+                );
+            }
+        }
+    }
 }
 
 /// Settings choice for update checks. Saved before it takes effect.
@@ -2649,6 +2697,12 @@ fn set_update_mode(
         .mode
         .lock()
         .unwrap_or_else(|e| e.into_inner()) = mode;
+    // Switching to "download then ask" while a newer version is already shown fetches it now
+    // rather than after the next scheduled check.
+    if mode == update::client::UpdateMode::DownloadThenAsk {
+        let b = app.clone();
+        tauri::async_runtime::spawn_blocking(move || background_download(&b));
+    }
     Ok(update_info(&app))
 }
 
@@ -2661,6 +2715,13 @@ async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, CmdError>
             "Update checks are off. Turn them on first.",
         ));
     }
+    if !app
+        .state::<update::client::UpdateState>()
+        .kind()
+        .may_check()
+    {
+        return Err(not_self_updatable(&app));
+    }
     if let Err(e) = app.state::<net::NetGate>().check() {
         return Err(CmdError::new("UPDATE_AIR_GAPPED", e.to_string()));
     }
@@ -2670,6 +2731,10 @@ async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, CmdError>
     })
     .await
     .map_err(|_| CmdError::new("UPDATE_CHECK_FAILED", "The update check did not finish."))?;
+    // "Download then ask" fetches in the background: the check returns now and the card shows
+    // the download running instead of a spinning Check now button.
+    let b = app.clone();
+    tauri::async_runtime::spawn_blocking(move || background_download(&b));
     Ok(update_info(&app))
 }
 
@@ -2691,61 +2756,69 @@ fn from_update_fail(f: update::install::Fail) -> CmdError {
     CmdError::new(f.code, f.message)
 }
 
-/// "Download": re-verifies the feed, downloads the installer through the gate into the private
-/// folder and verifies size, SHA-256 and signature (#197). `version` is the release the user
-/// agreed to; a different one in the feed is refused. Installs nothing.
-#[tauri::command]
-async fn download_update(app: tauri::AppHandle, version: String) -> Result<UpdateInfo, CmdError> {
-    if app.state::<update::client::UpdateState>().mode() == update::client::UpdateMode::Off {
+/// Blocking body of a download (user click or "download then ask"): re-verifies the feed,
+/// downloads through the gate into the private folder, verifies, and stages the installer.
+/// Every network call goes through the gate, so turning air-gapped mode on stops it at the next
+/// call. Refuses copies that must not update themselves.
+fn do_download(a: &tauri::AppHandle, version: &str) -> Result<(), CmdError> {
+    let st = a.state::<update::client::UpdateState>();
+    if st.mode() == update::client::UpdateMode::Off {
         return Err(CmdError::new(
             "UPDATE_OFF",
             "Update checks are off. Turn them on first.",
         ));
     }
-    if let Err(e) = app.state::<net::NetGate>().check() {
+    if !st.kind().can_self_update() {
+        return Err(not_self_updatable(a));
+    }
+    if let Err(e) = a.state::<net::NetGate>().check() {
         return Err(CmdError::new("UPDATE_AIR_GAPPED", e.to_string()));
     }
+    let _one = st
+        .downloading
+        .try_lock()
+        .map_err(|_| CmdError::new("UPDATE_BUSY", "A download is already running."))?;
+    let (home, _) = vault_home(a)?;
+    let dir = update_dir(a)?;
+    // A previously staged installer is dropped: its folder is recreated for this download.
+    if let Some(old) = st.staged.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        old.discard();
+    }
+    let gate = a.state::<net::NetGate>();
+    let now = unix_now();
+    let r = update::install::download(
+        &update::client::GateFetch(&gate),
+        &update::install::Request {
+            anchors: &update::client::pinned_anchors(),
+            installed: env!("CARGO_PKG_VERSION"),
+            expected: version,
+            now_unix: now,
+            dir: &dir,
+            state_dir: &home,
+        },
+    );
+    match r {
+        Ok(staged) => {
+            *st.staged.lock().unwrap_or_else(|e| e.into_inner()) = Some(staged);
+            Ok(())
+        }
+        Err(f) => {
+            if let Some(s) = f.status.clone() {
+                st.record(s, now);
+            }
+            Err(from_update_fail(f))
+        }
+    }
+}
+
+/// "Download": fetches and verifies the installer the user agreed to (`version`; a different
+/// one in the feed is refused) (#197). Installs nothing.
+#[tauri::command]
+async fn download_update(app: tauri::AppHandle, version: String) -> Result<UpdateInfo, CmdError> {
     let a = app.clone();
-    tauri::async_runtime::spawn_blocking(move || -> Result<(), CmdError> {
-        let st = a.state::<update::client::UpdateState>();
-        let _one = st
-            .downloading
-            .try_lock()
-            .map_err(|_| CmdError::new("UPDATE_BUSY", "A download is already running."))?;
-        let (home, _) = vault_home(&a)?;
-        let dir = update_dir(&a)?;
-        // A previously staged installer is dropped: its folder is recreated for this download.
-        if let Some(old) = st.staged.lock().unwrap_or_else(|e| e.into_inner()).take() {
-            old.discard();
-        }
-        let gate = a.state::<net::NetGate>();
-        let now = unix_now();
-        let r = update::install::download(
-            &update::client::GateFetch(&gate),
-            &update::install::Request {
-                anchors: &update::client::pinned_anchors(),
-                installed: env!("CARGO_PKG_VERSION"),
-                expected: &version,
-                now_unix: now,
-                dir: &dir,
-                state_dir: &home,
-            },
-        );
-        match r {
-            Ok(staged) => {
-                *st.staged.lock().unwrap_or_else(|e| e.into_inner()) = Some(staged);
-                Ok(())
-            }
-            Err(f) => {
-                if let Some(s) = f.status.clone() {
-                    st.record(s, now);
-                }
-                Err(from_update_fail(f))
-            }
-        }
-    })
-    .await
-    .map_err(|_| CmdError::new("UPDATE_DOWNLOAD_FAILED", "The download did not finish."))??;
+    tauri::async_runtime::spawn_blocking(move || do_download(&a, &version))
+        .await
+        .map_err(|_| CmdError::new("UPDATE_DOWNLOAD_FAILED", "The download did not finish."))??;
     Ok(update_info(&app))
 }
 
@@ -2756,6 +2829,13 @@ async fn download_update(app: tauri::AppHandle, version: String) -> Result<Updat
 /// the error is returned.
 #[tauri::command]
 async fn install_update(app: tauri::AppHandle, version: String) -> Result<(), CmdError> {
+    if !app
+        .state::<update::client::UpdateState>()
+        .kind()
+        .can_self_update()
+    {
+        return Err(not_self_updatable(&app));
+    }
     let a = app.clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<(), CmdError> {
         let st = a.state::<update::client::UpdateState>();
@@ -3230,6 +3310,11 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner()) = update::client::UpdateMode::load(&dir);
             }
+            *app.state::<update::client::UpdateState>()
+                .kind
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) =
+                update::kind::detect_current(&app.package_info().name);
             // Installers left by a killed download or a finished install are never reused.
             if let Ok(dir) = update_dir(app.handle()) {
                 let _ = os::private_dir::remove(&dir);

@@ -56,6 +56,9 @@ pub enum UpdateMode {
     Off,
     /// Check and tell the user. Nothing is downloaded until the user clicks Download.
     Notify,
+    /// Check, then download and verify in the background (self-updating installs only) and ask
+    /// before installing. Never installs without the user's confirmation.
+    DownloadThenAsk,
 }
 
 impl UpdateMode {
@@ -362,6 +365,8 @@ pub struct UpdateState {
     pub downloading: Mutex<()>,
     /// A verified installer waiting for "Install and restart" (#197).
     pub staged: Mutex<Option<super::install::Staged>>,
+    /// How this copy was installed (#198); only a per-user installer may self-update.
+    pub kind: Mutex<super::kind::InstallKind>,
 }
 
 impl Default for UpdateState {
@@ -372,6 +377,7 @@ impl Default for UpdateState {
             running: Mutex::new(()),
             downloading: Mutex::new(()),
             staged: Mutex::new(None),
+            kind: Mutex::new(super::kind::InstallKind::Unknown),
         }
     }
 }
@@ -380,6 +386,11 @@ impl UpdateState {
     /// Current mode.
     pub fn mode(&self) -> UpdateMode {
         *self.mode.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Install type of this copy (`Unknown` until detected at startup).
+    pub fn kind(&self) -> super::kind::InstallKind {
+        *self.kind.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Records a check result.
