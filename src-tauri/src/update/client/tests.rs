@@ -73,11 +73,24 @@ impl Fx {
         self.feed_on("stable", version, min, expires)
     }
     fn feed_on(&self, channel: &str, version: &str, min: Option<&str>, expires: i64) -> Fake {
+        self.feed_full(channel, version, min, expires, None)
+    }
+    fn feed_full(
+        &self,
+        channel: &str,
+        version: &str,
+        min: Option<&str>,
+        expires: i64,
+        vault_format: Option<u32>,
+    ) -> Fake {
+        let vf = vault_format
+            .map(|f| format!(r#","vault_format":{f}"#))
+            .unwrap_or_default();
         let min = min
             .map(|m| format!(r#","min_supported":"{m}","security":true"#))
             .unwrap_or_default();
         let release = format!(
-            r#"{{"schema":1,"channel":"{channel}","version":"{version}","released_at":"{}"{min},"artifact":{{"target":"windows-x86_64-nsis","url":"https://example.invalid/x.exe","sha256":"{}","size":10}}}}"#,
+            r#"{{"schema":1,"channel":"{channel}","version":"{version}","released_at":"{}"{min}{vf},"artifact":{{"target":"windows-x86_64-nsis","url":"https://example.invalid/x.exe","sha256":"{}","size":10}}}}"#,
             rfc(NOW - 100),
             "0".repeat(64)
         )
@@ -116,7 +129,8 @@ fn reports_available_up_to_date_and_below_min() {
         UpdateStatus::Available {
             version: "0.2.0".into(),
             security: false,
-            below_min_supported: false
+            below_min_supported: false,
+            changes_vault_format: false
         }
     );
     assert_eq!(
@@ -131,9 +145,31 @@ fn reports_available_up_to_date_and_below_min() {
         UpdateStatus::Available {
             version: "0.3.0".into(),
             security: true,
-            below_min_supported: true
+            below_min_supported: true,
+            changes_vault_format: false
         }
     );
+}
+
+#[test]
+fn newer_vault_format_is_flagged_and_lower_or_equal_is_ignored() {
+    use crate::vault::container::FORMAT_VERSION;
+    let fx = Fx::new();
+    let cur = u32::from(FORMAT_VERSION);
+    let flag = |fmt: Option<u32>| {
+        let f = fx.feed_full("stable", "0.2.0", None, NOW + 3600, fmt);
+        match check(&f, &fx.anchors(), "0.1.2", None, NOW) {
+            UpdateStatus::Available {
+                changes_vault_format,
+                ..
+            } => changes_vault_format,
+            other => panic!("{other:?}"),
+        }
+    };
+    assert!(flag(Some(cur + 1)));
+    assert!(!flag(Some(cur)));
+    assert!(!flag(Some(cur - 1)), "a lower feed value is ignored");
+    assert!(!flag(None));
 }
 
 #[test]
@@ -225,7 +261,8 @@ fn deploy_between_requests_is_retried_once() {
         UpdateStatus::Available {
             version: "0.3.0".into(),
             security: false,
-            below_min_supported: false
+            below_min_supported: false,
+            changes_vault_format: false
         }
     );
     assert_eq!(f.calls.get(), 8, "exactly one retry");

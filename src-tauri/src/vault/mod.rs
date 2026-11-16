@@ -404,6 +404,22 @@ impl OpenVault {
         path: &Path,
         other_keys: Option<&VaultKeys>,
     ) -> Result<(), VaultError> {
+        // An older-format file is about to be rewritten: keep it first, and
+        // do not migrate if that copy cannot be made (issue #199).
+        // Only the file this vault was loaded from is kept, never a file a
+        // concurrent writer put there.
+        if !self.is_current_format() {
+            match std::fs::read(path) {
+                Ok(on_disk) => {
+                    if Some(disk_id(&on_disk)) != self.disk_id {
+                        return Err(VaultError::ChangedOnDisk);
+                    }
+                    container::keep_premigration_copy(path, &on_disk)?;
+                }
+                Err(e) if e.kind() == ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
         let bytes = self.to_bytes()?;
         let expected = self.disk_id;
         let index = self.slot.index;
@@ -1185,6 +1201,82 @@ mod tests {
             std::fs::read(container::sibling(&path, "bak")).unwrap(),
             v2,
             "the v2 file is kept as .bak"
+        );
+        assert_eq!(
+            std::fs::read(container::sibling(&path, "v2.bak")).unwrap(),
+            v2,
+            "and as a permanent pre-migration copy"
+        );
+        // Later saves replace .bak with a v3 generation; the v2 copy stays.
+        opened.refresh(&path).unwrap();
+        opened.refresh(&path).unwrap();
+        assert_ne!(std::fs::read(container::sibling(&path, "bak")).unwrap(), v2);
+        assert_eq!(
+            std::fs::read(container::sibling(&path, "v2.bak")).unwrap(),
+            v2
+        );
+    }
+
+    #[test]
+    fn failed_premigration_copy_leaves_the_old_vault_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.shush");
+        let v = OpenVault::create(b"pw", None, FAST).unwrap();
+        let v2 = container::seal(&v.header, &v.keys, &encode_json(v.data()).unwrap()).unwrap();
+        std::fs::write(&path, &v2).unwrap();
+        let mut opened = unlock_file(&path, b"pw").unwrap();
+        // A directory where the temp copy goes makes the copy fail, like a
+        // read-only folder or a full disk would.
+        std::fs::create_dir(container::sibling(&path, "v2.bak.tmp")).unwrap();
+        assert!(opened.refresh(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), v2, "old vault unchanged");
+        assert!(!container::sibling(&path, "v2.bak").exists());
+        assert!(unlock_file(&path, b"pw").is_ok(), "next launch can retry");
+        std::fs::remove_dir(container::sibling(&path, "v2.bak.tmp")).unwrap();
+        opened.refresh(&path).unwrap();
+        assert_eq!(
+            container::read_version(&std::fs::read(&path).unwrap()),
+            FORMAT_VERSION
+        );
+    }
+
+    #[test]
+    fn premigration_copy_is_of_the_loaded_file_and_follows_a_rollback() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.shush");
+        let copy = container::sibling(&path, "v2.bak");
+        let v = OpenVault::create(b"pw", None, FAST).unwrap();
+        let v2 = container::seal(&v.header, &v.keys, &encode_json(v.data()).unwrap()).unwrap();
+        std::fs::write(&path, &v2).unwrap();
+        let mut opened = unlock_file(&path, b"pw").unwrap();
+        // Another writer replaced the file: it is not kept, the save is refused.
+        let mut foreign = v2.clone();
+        let last = foreign.len() - 1;
+        foreign[last] ^= 1;
+        std::fs::write(&path, &foreign).unwrap();
+        assert_eq!(opened.refresh(&path).err(), Some(VaultError::ChangedOnDisk));
+        assert!(!copy.exists());
+        // A copy from an earlier migration (then a rollback) is replaced by the
+        // newer old-format file.
+        std::fs::write(&path, &v2).unwrap();
+        std::fs::write(&copy, b"older generation").unwrap();
+        opened.refresh(&path).unwrap();
+        assert_eq!(std::fs::read(&copy).unwrap(), v2);
+    }
+
+    #[test]
+    fn a_newer_vault_is_refused_by_this_build() {
+        // Rolling back to an older build after an update migrated the vault.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.shush");
+        create_vault_file(&path, b"pw", None, FAST).unwrap();
+        let mut bytes = std::fs::read(&path).unwrap();
+        let newer = (FORMAT_VERSION + 1).to_le_bytes();
+        bytes[5] = newer[0];
+        bytes[6] = newer[1];
+        assert_eq!(
+            OpenVault::unlock(&bytes, b"pw", None).err(),
+            Some(VaultError::UnsupportedVersion(FORMAT_VERSION + 1))
         );
     }
 
