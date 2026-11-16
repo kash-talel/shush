@@ -72,6 +72,8 @@ mod tests {
         s.done(t0, true, JITTER_SECS * 5);
         let day = Duration::from_secs(24 * 3600);
         assert_eq!(s.tick(t0 + day - Duration::from_secs(1), true), Tick::Wait);
+        // Jitter is applied (clamped below JITTER_SECS), not dropped.
+        assert_eq!(s.tick(t0 + day, true), Tick::Wait);
         assert_eq!(
             s.tick(t0 + day + Duration::from_secs(JITTER_SECS), true),
             Tick::Check

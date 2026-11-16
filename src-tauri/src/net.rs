@@ -158,7 +158,6 @@ pub(crate) enum Hop {
     Redirect(String),
 }
 
-/// Pull-based reader over a response: bytes already read past the head first, then the socket.
 /// Tries each address in turn, every attempt capped by what is left of the one shared
 /// `deadline`, so a network that silently drops (say) IPv6 cannot stretch a request to
 /// minutes. The last real error is kept for the user; a gate refusal ends the loop at once.
@@ -185,6 +184,7 @@ fn connect_within<T>(
     Err(last_err)
 }
 
+/// Pull-based reader over a response: bytes already read past the head first, then the socket.
 /// Checks the deadline and the gate before every socket read.
 struct Pull<'a, R> {
     r: &'a mut R,

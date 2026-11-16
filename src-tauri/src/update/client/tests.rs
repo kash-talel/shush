@@ -471,6 +471,17 @@ fn fetch_failure_is_unsettled_and_checks_never_overlap() {
     let fx = Fx::new();
     let r = check(&Fake(HashMap::new()), &fx.anchors(), "0.1.2", None, NOW);
     assert!(!st.record_check(r, NOW));
+    // Unlike an air-gap refusal, a fetch failure is shown to the user.
+    assert!(matches!(
+        st.snapshot(),
+        (
+            UpdateStatus::Failed {
+                code: "UPDATE_FETCH_FAILED",
+                ..
+            },
+            Some(NOW)
+        )
+    ));
     // `running` serialises checks: while one holds it, another cannot take it.
     let held = st.running.lock().unwrap();
     assert!(st.running.try_lock().is_err());
