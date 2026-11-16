@@ -190,7 +190,10 @@ pub fn run_pairing_window(
         let peer = stream.peer().to_owned();
         let result = pairing::respond(&mut stream, code, id, my_name, |p| {
             // A window cancelled meanwhile (vault lock) must not store anything.
-            if cancel.load(Ordering::SeqCst) || !lock(window).accepting(Instant::now()) {
+            if cancel.load(Ordering::SeqCst)
+                || gate.is_air_gapped()
+                || !lock(window).accepting(Instant::now())
+            {
                 return Err(PairError::StoreFailed);
             }
             store(p, &peer)
@@ -200,6 +203,11 @@ pub fn run_pairing_window(
         match result {
             Ok(p) => {
                 w.succeed(p.name, fingerprint(&p.public_key));
+                return;
+            }
+            // Air-gapped mode cut the connection (issue #191): not a wrong code.
+            Err(_) if gate.is_air_gapped() => {
+                w.close(WindowState::Cancelled);
                 return;
             }
             Err(_) => w.fail(),

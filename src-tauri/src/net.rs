@@ -381,6 +381,43 @@ pub struct NetGate {
     air_gapped: AtomicBool,
     /// Sockets the gate has let through (test harness evidence).
     opened: AtomicU64,
+    /// Every socket still open, each with the closure that closes it (issue #191).
+    open: std::sync::Arc<std::sync::Mutex<Registry>>,
+}
+
+type Closer = Box<dyn FnOnce() + Send>;
+
+/// The gate's list of open sockets.
+#[derive(Default)]
+struct Registry {
+    #[cfg_attr(not(feature = "network"), allow(dead_code))]
+    next: u64,
+    closers: std::collections::HashMap<u64, Closer>,
+}
+
+impl std::fmt::Debug for Registry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Registry({} open)", self.closers.len())
+    }
+}
+
+fn lock_registry(r: &std::sync::Mutex<Registry>) -> std::sync::MutexGuard<'_, Registry> {
+    r.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Membership of one socket in the gate's registry. Dropping it removes the entry.
+#[derive(Debug)]
+#[cfg_attr(not(feature = "network"), allow(dead_code))]
+pub(crate) struct Tracked {
+    id: u64,
+    open: std::sync::Arc<std::sync::Mutex<Registry>>,
+}
+
+impl Drop for Tracked {
+    fn drop(&mut self) {
+        let closer = lock_registry(&self.open).closers.remove(&self.id);
+        drop(closer);
+    }
 }
 
 impl Default for NetGate {
@@ -388,6 +425,7 @@ impl Default for NetGate {
         Self {
             air_gapped: AtomicBool::new(true),
             opened: AtomicU64::new(0),
+            open: std::sync::Arc::default(),
         }
     }
 }
@@ -399,8 +437,58 @@ impl NetGate {
     }
 
     /// Opens or closes the gate (in memory only; see `save_and_set`).
+    ///
+    /// Turning air-gapped mode on closes every socket the gate opened (listeners, streams, mDNS
+    /// daemons) and returns only once they are all closed (issue #191). A socket being opened at
+    /// the same moment either lands in the list before the close, or sees the flag when it tries
+    /// to register and closes itself.
     pub fn set_air_gapped(&self, on: bool) {
         self.air_gapped.store(on, Ordering::SeqCst);
+        if on {
+            let closers: Vec<Closer> = lock_registry(&self.open)
+                .closers
+                .drain()
+                .map(|(_, c)| c)
+                .collect();
+            for c in closers {
+                c();
+            }
+        }
+    }
+
+    /// Sockets (and discovery daemons) currently open through the gate.
+    pub fn sockets_open(&self) -> usize {
+        lock_registry(&self.open).closers.len()
+    }
+
+    /// Lists a freshly opened socket with the closure that closes it. Fails (running the closure)
+    /// if air-gapped mode came on since the caller's `check()`.
+    #[cfg(feature = "network")]
+    fn track(&self, closer: Closer) -> Result<Tracked, NetError> {
+        // Counted before the race check: the socket did reach the network.
+        self.opened.fetch_add(1, Ordering::SeqCst);
+        let mut reg = lock_registry(&self.open);
+        if self.is_air_gapped() {
+            drop(reg);
+            closer();
+            return Err(NetError::AirGapped);
+        }
+        reg.next += 1;
+        let id = reg.next;
+        reg.closers.insert(id, closer);
+        Ok(Tracked {
+            id,
+            open: self.open.clone(),
+        })
+    }
+
+    #[cfg(feature = "network")]
+    fn track_stream(&self, s: std::net::TcpStream) -> Result<TrackedStream, NetError> {
+        let clone = s.try_clone().map_err(io_err)?;
+        let t = self.track(Box::new(move || {
+            let _ = clone.shutdown(std::net::Shutdown::Both);
+        }))?;
+        Ok(TrackedStream { inner: s, _t: t })
     }
 
     /// Whether this binary can use the network at all.
@@ -426,37 +514,38 @@ impl NetGate {
 
     /// Binds a TCP listener, or refuses while air-gapped.
     #[cfg(feature = "network")]
-    pub fn tcp_listen(
+    pub(crate) fn tcp_listen(
         &self,
         addr: std::net::SocketAddr,
-    ) -> Result<std::net::TcpListener, NetError> {
+    ) -> Result<TrackedListener, NetError> {
         self.check()?;
-        let l = std::net::TcpListener::bind(addr).map_err(|e| NetError::Io(e.to_string()))?;
-        self.opened.fetch_add(1, Ordering::SeqCst);
-        Ok(l)
+        let l = std::net::TcpListener::bind(addr).map_err(io_err)?;
+        let slot = Shared::new(l);
+        let t = self.track(slot.closer())?;
+        Ok(TrackedListener { slot, _t: t })
     }
 
     /// Connects a TCP stream, or refuses while air-gapped.
     #[cfg(feature = "network")]
-    pub fn tcp_connect(
+    pub(crate) fn tcp_connect(
         &self,
         addr: &std::net::SocketAddr,
         timeout: std::time::Duration,
-    ) -> Result<std::net::TcpStream, NetError> {
+    ) -> Result<TrackedStream, NetError> {
         self.check()?;
-        let s = std::net::TcpStream::connect_timeout(addr, timeout)
-            .map_err(|e| NetError::Io(e.to_string()))?;
-        self.opened.fetch_add(1, Ordering::SeqCst);
-        Ok(s)
+        let s = std::net::TcpStream::connect_timeout(addr, timeout).map_err(io_err)?;
+        self.track_stream(s)
     }
 
-    /// Binds a UDP socket (mDNS discovery), or refuses while air-gapped.
+    /// Binds a UDP socket, or refuses while air-gapped.
     #[cfg(feature = "network")]
-    pub fn udp_bind(&self, addr: std::net::SocketAddr) -> Result<std::net::UdpSocket, NetError> {
+    #[allow(dead_code)]
+    pub(crate) fn udp_bind(&self, addr: std::net::SocketAddr) -> Result<TrackedUdp, NetError> {
         self.check()?;
-        let s = std::net::UdpSocket::bind(addr).map_err(|e| NetError::Io(e.to_string()))?;
-        self.opened.fetch_add(1, Ordering::SeqCst);
-        Ok(s)
+        let s = std::net::UdpSocket::bind(addr).map_err(io_err)?;
+        let slot = Shared::new(s);
+        let t = self.track(slot.closer())?;
+        Ok(TrackedUdp { slot, _t: t })
     }
 
     /// HTTPS GET of `https://<host><path>` through the gate (issue #78): resolves, connects and
@@ -518,9 +607,15 @@ impl NetGate {
                 }
                 // A peer that closes without close_notify: completeness is checked below.
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(io(&e)),
+                Err(e) => {
+                    // Air-gapped mode shuts the socket down mid-read (issue #191).
+                    self.check()?;
+                    return Err(io(&e));
+                }
             }
         }
+        // A shutdown by air-gapped mode can look like a clean end: never return that body.
+        self.check()?;
         parse_http_response(&raw, max_body).map_err(|m| NetError::Io(m.into()))
     }
 
@@ -580,7 +675,7 @@ impl NetGate {
         user_agent: &str,
         timeout: std::time::Duration,
         deadline: std::time::Instant,
-    ) -> Result<rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream>, NetError> {
+    ) -> Result<rustls::StreamOwned<rustls::ClientConnection, TrackedStream>, NetError> {
         use std::io::Write;
         use std::net::ToSocketAddrs;
         use std::sync::Arc;
@@ -610,8 +705,12 @@ impl NetGate {
             }
         }
         let tcp = tcp.ok_or(last_err)?;
-        tcp.set_read_timeout(Some(timeout)).map_err(|e| io(&e))?;
-        tcp.set_write_timeout(Some(timeout)).map_err(|e| io(&e))?;
+        tcp.inner
+            .set_read_timeout(Some(timeout))
+            .map_err(|e| io(&e))?;
+        tcp.inner
+            .set_write_timeout(Some(timeout))
+            .map_err(|e| io(&e))?;
 
         let roots = rustls::RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
@@ -666,7 +765,7 @@ impl NetGate {
     }
 }
 
-// --- LAN sync sockets and discovery (issue #156, docs/spec/lan-sync.md §5) ---
+// --- LAN sync sockets and discovery (issue #156, docs/spec/lan-sync.md Â§5) ---
 
 /// DNS-SD service type of a shush pairing or sync window.
 #[cfg(feature = "network")]
@@ -684,14 +783,94 @@ pub fn discovery_daemons_live() -> usize {
 /// The listening socket of one pairing or sync window. Dropping it closes it.
 #[cfg(feature = "network")]
 pub struct LanListener {
-    inner: std::net::TcpListener,
+    inner: TrackedListener,
 }
 
 /// One LAN connection (accepted or dialled).
 #[cfg(feature = "network")]
 pub struct LanStream {
-    inner: std::net::TcpStream,
+    inner: TrackedStream,
     peer: String,
+}
+
+/// A socket the gate can close from outside: the owner and the gate's closer share it, and
+/// closing drops it.
+#[cfg(feature = "network")]
+#[derive(Debug)]
+struct Shared<T>(std::sync::Arc<std::sync::Mutex<Option<T>>>);
+
+#[cfg(feature = "network")]
+impl<T> Clone for Shared<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+#[cfg(feature = "network")]
+impl<T: Send + 'static> Shared<T> {
+    fn new(v: T) -> Self {
+        Self(std::sync::Arc::new(std::sync::Mutex::new(Some(v))))
+    }
+
+    fn closer(&self) -> Closer {
+        let me = self.clone();
+        Box::new(move || {
+            me.0.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+        })
+    }
+
+    /// Runs `f` on the socket, or `None` if the gate closed it.
+    fn with<R>(&self, f: impl FnOnce(&T) -> R) -> Option<R> {
+        let g = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        g.as_ref().map(f)
+    }
+}
+
+/// A TCP listener the gate can close.
+#[cfg(feature = "network")]
+#[derive(Debug)]
+pub(crate) struct TrackedListener {
+    slot: Shared<std::net::TcpListener>,
+    _t: Tracked,
+}
+
+/// A UDP socket the gate can close.
+#[cfg(feature = "network")]
+#[allow(dead_code)]
+#[derive(Debug)]
+pub(crate) struct TrackedUdp {
+    slot: Shared<std::net::UdpSocket>,
+    _t: Tracked,
+}
+
+/// A TCP stream the gate can shut down (the gate holds a second handle to the same socket).
+#[cfg(feature = "network")]
+#[derive(Debug)]
+pub(crate) struct TrackedStream {
+    inner: std::net::TcpStream,
+    _t: Tracked,
+}
+
+#[cfg(feature = "network")]
+impl std::io::Read for TrackedStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+#[cfg(feature = "network")]
+impl std::io::Write for TrackedStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.inner.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 /// A window found by discovery.
@@ -710,6 +889,7 @@ pub struct Discovered {
 pub struct Advertisement {
     daemon: mdns_sd::ServiceDaemon,
     fullname: String,
+    _t: Tracked,
 }
 
 #[cfg(feature = "network")]
@@ -728,7 +908,11 @@ impl NetGate {
             std::net::Ipv4Addr::UNSPECIFIED
         };
         let inner = self.tcp_listen(std::net::SocketAddr::from((ip, 0)))?;
-        inner.set_nonblocking(true).map_err(io_err)?;
+        inner
+            .slot
+            .with(|l| l.set_nonblocking(true))
+            .ok_or(NetError::AirGapped)?
+            .map_err(io_err)?;
         Ok(LanListener { inner })
     }
 
@@ -753,9 +937,28 @@ impl NetGate {
     fn discovery_daemon(&self, fullname: String) -> Result<Advertisement, NetError> {
         self.check()?;
         let daemon = mdns_sd::ServiceDaemon::new().map_err(io_err)?;
+        let handle = daemon.clone();
+        let t = self.track(Box::new(move || {
+            // A full command queue answers Again: retry rather than leave the daemon running.
+            for _ in 0..50 {
+                match handle.shutdown() {
+                    Ok(rx) => {
+                        let _ = rx.recv_timeout(std::time::Duration::from_secs(1));
+                        return;
+                    }
+                    Err(mdns_sd::Error::Again) => {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(_) => return,
+                }
+            }
+        }))?;
         DISCOVERY_LIVE.fetch_add(1, Ordering::SeqCst);
-        self.opened.fetch_add(1, Ordering::SeqCst);
-        Ok(Advertisement { daemon, fullname })
+        Ok(Advertisement {
+            daemon,
+            fullname,
+            _t: t,
+        })
     }
 
     /// Advertises a window as `<instance>._shush-sync._tcp.local.` on host
@@ -863,7 +1066,10 @@ pub fn lan_addresses() -> Vec<String> {
 impl LanListener {
     /// The port peers dial.
     pub fn port(&self) -> u16 {
-        self.inner.local_addr().map_or(0, |a| a.port())
+        self.inner
+            .slot
+            .with(|l| l.local_addr().map_or(0, |a| a.port()))
+            .unwrap_or(0)
     }
 
     /// Waits for one connection, polling every 100 ms, while `keep_waiting()`
@@ -878,13 +1084,15 @@ impl LanListener {
             if !keep_waiting() {
                 return Ok(None);
             }
-            match self.inner.accept() {
+            let Some(r) = self.inner.slot.with(|l| l.accept()) else {
+                return Err(NetError::AirGapped);
+            };
+            match r {
                 Ok((s, peer)) => {
                     // Accepted sockets inherit non-blocking mode on Windows.
                     s.set_nonblocking(false).map_err(io_err)?;
-                    gate.opened.fetch_add(1, Ordering::SeqCst);
                     return Ok(Some(LanStream {
-                        inner: s,
+                        inner: gate.track_stream(s)?,
                         peer: peer.to_string(),
                     }));
                 }
@@ -906,8 +1114,8 @@ impl LanStream {
 
     /// Read and write timeout for every later operation.
     pub fn set_timeout(&self, d: std::time::Duration) -> Result<(), NetError> {
-        self.inner.set_read_timeout(Some(d)).map_err(io_err)?;
-        self.inner.set_write_timeout(Some(d)).map_err(io_err)
+        self.inner.inner.set_read_timeout(Some(d)).map_err(io_err)?;
+        self.inner.inner.set_write_timeout(Some(d)).map_err(io_err)
     }
 }
 
@@ -950,6 +1158,52 @@ mod tests {
             assert_eq!(g.udp_bind(a).unwrap_err(), NetError::AirGapped);
         }
         assert_eq!(g.sockets_opened(), 0);
+    }
+
+    /// Issue #191: turning air-gapped mode on closes every open socket before it returns.
+    #[cfg(feature = "network")]
+    #[test]
+    fn air_gapped_closes_open_sockets() {
+        use std::io::Read;
+        let d = std::time::Duration::from_secs(2);
+        let g = NetGate::default();
+        g.set_air_gapped(false);
+        let l = g.lan_listen(true).unwrap();
+        let addr = format!("127.0.0.1:{}", l.port());
+        let mut client = g.lan_connect(&addr, d).unwrap();
+        let mut server = l.accept(&g, &mut || true).unwrap().unwrap();
+        client.set_timeout(d).unwrap();
+        server.set_timeout(d).unwrap();
+        let udp = g.udp_bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        assert_eq!(g.sockets_open(), 4);
+
+        g.set_air_gapped(true);
+        assert_eq!(g.sockets_open(), 0);
+        // The listener is gone: nobody can connect.
+        let sa: std::net::SocketAddr = addr.parse().unwrap();
+        assert!(std::net::TcpStream::connect_timeout(&sa, d).is_err());
+        // Both ends of the stream are shut down.
+        let mut b = [0u8; 1];
+        assert!(matches!(client.read(&mut b), Ok(0) | Err(_)));
+        assert!(matches!(server.read(&mut b), Ok(0) | Err(_)));
+        assert!(udp.slot.with(|_| ()).is_none());
+        assert!(l.accept(&g, &mut || true).is_err());
+        // Dropping the dead handles is harmless, and opening stays refused.
+        drop((client, server, l, udp));
+        assert_eq!(g.sockets_open(), 0);
+        assert_eq!(g.lan_listen(true).err(), Some(NetError::AirGapped));
+    }
+
+    /// Dropping a socket takes it off the gate's list.
+    #[cfg(feature = "network")]
+    #[test]
+    fn dropped_sockets_leave_the_list() {
+        let g = NetGate::default();
+        g.set_air_gapped(false);
+        let l = g.lan_listen(true).unwrap();
+        assert_eq!(g.sockets_open(), 1);
+        drop(l);
+        assert_eq!(g.sockets_open(), 0);
     }
 
     #[cfg(feature = "network")]
