@@ -56,7 +56,10 @@
   const unreadable = $derived(vault.error !== null);
   // Keyfile problems are shown in the shared slot but must not blame the password field.
   const passwordError = $derived(
-    error !== null && !error.code.startsWith("KEYFILE") && error.code !== "VAULT_UNREADABLE",
+    error !== null &&
+      !error.code.startsWith("KEYFILE") &&
+      !error.code.startsWith("HELLO_") &&
+      error.code !== "VAULT_UNREADABLE",
   );
   const canSubmit = $derived(
     !busy && !unreadable && password.length > 0 && (!keyfileRequired || keyfile !== null),

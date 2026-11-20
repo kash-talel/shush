@@ -124,9 +124,17 @@ pub enum EvictReason {
     HelloOff,
 }
 
-/// SHA-256 of the vault header bytes (the file's first `HEADER_LEN` bytes).
+/// SHA-256 of the vault's fixed header: MAGIC, version, cipher suite, flags,
+/// Argon2 parameters and KDF salt (the file's first `FIXED_LEN` bytes, the
+/// same in every format version).
+///
+/// Only these bytes identify the credentials and format the session was armed
+/// for. The bytes after them (slot nonce and sealed slot header in v3, nonces,
+/// `SAVE_ID` and payload length in v1/v2) change on every save, including the
+/// re-seal after each unlock, so hashing them would end the session on the
+/// first save. The canary and AEAD tags still prove the keys fit the file.
 pub fn header_hash(file: &[u8]) -> [u8; 32] {
-    let n = file.len().min(super::container::HEADER_LEN);
+    let n = file.len().min(super::container::FIXED_LEN);
     Sha256::digest(&file[..n]).into()
 }
 
@@ -175,8 +183,9 @@ pub struct HelloInfo {
     pub seconds_left: u64,
 }
 
-fn message(vault_id: &str, challenge: &[u8; 32]) -> Vec<u8> {
-    let mut m = Vec::with_capacity(MSG_PREFIX.len() + vault_id.len() + 32);
+/// The signed message. It contains the secret challenge, so it is wiped on drop.
+fn message(vault_id: &str, challenge: &[u8; 32]) -> Zeroizing<Vec<u8>> {
+    let mut m = Zeroizing::new(Vec::with_capacity(MSG_PREFIX.len() + vault_id.len() + 32));
     m.extend_from_slice(MSG_PREFIX);
     m.extend_from_slice(vault_id.as_bytes());
     m.extend_from_slice(challenge);
@@ -215,19 +224,37 @@ impl HelloState {
     }
 
     /// Wipes the session unless it belongs to `vault_id` (vault switch).
+    /// Also cancels an arming prompt that is open right now.
     pub fn evict_unless_vault(&self, vault_id: &str) {
         let mut g = self.guard();
         if g.session.as_ref().is_some_and(|s| s.vault_id != vault_id) {
             Self::evict_locked(&mut g, EvictReason::VaultChanged);
+        } else {
+            // No session to wipe, but an `arm` in progress must not install one.
+            g.generation += 1;
         }
     }
 
     /// Wipes the session if it belongs to `vault_id` (vault removed or deleted).
+    /// Also cancels an arming prompt that is open right now.
     pub fn evict_vault(&self, vault_id: &str) {
         let mut g = self.guard();
         if g.session.as_ref().is_some_and(|s| s.vault_id == vault_id) {
             Self::evict_locked(&mut g, EvictReason::VaultChanged);
+        } else {
+            g.generation += 1;
         }
+    }
+
+    /// Applies a shorter `hello_session_max_hours` to the armed session right
+    /// away (the setting can shorten a session, never lengthen it).
+    pub fn limit_hours(&self, clock: &dyn Clock, hours: u32) {
+        let mut g = self.guard();
+        if let Some(s) = g.session.as_mut() {
+            s.max_secs = s.max_secs.min(u64::from(clamp_hours(hours)) * 3600);
+        }
+        drop(g);
+        self.sweep(clock);
     }
 
     /// Wipes the session if it reached its time limit. Cheap; call it often.
@@ -691,6 +718,84 @@ mod tests {
         tail[last] ^= 1;
         assert_eq!(header_hash(&bytes), header_hash(&tail));
         drop(v);
+    }
+
+    #[test]
+    fn header_hash_survives_saves_but_not_other_credentials() {
+        // Every save (and the re-seal after each unlock) rewrites the slot
+        // nonce and sealed slot header right after the fixed header. A session
+        // must survive that, or Hello would work once per password unlock.
+        let (v, first) = vault();
+        let second = v.to_bytes().unwrap();
+        assert_ne!(
+            first[..crate::vault::container::HEADER_LEN],
+            second[..crate::vault::container::HEADER_LEN]
+        );
+        assert_eq!(header_hash(&first), header_hash(&second));
+        // A different vault (new salt) does not match.
+        let (_, other) = vault();
+        assert_ne!(header_hash(&first), header_hash(&other));
+    }
+
+    #[test]
+    fn hello_unlock_works_again_after_the_vault_is_saved() {
+        let (state, mock, c) = (HelloState::default(), Mock::default(), clock(0));
+        let (v, _, _) = armed(&state, &mock, &c);
+        for _ in 0..3 {
+            let saved = v.to_bytes().unwrap();
+            let keys = state
+                .unlock_keys(&mock, &c, ID, &header_hash(&saved))
+                .unwrap();
+            OpenVault::unlock_with_keys(&saved, keys).unwrap();
+        }
+        assert!(state.is_armed());
+    }
+
+    #[test]
+    fn lowering_the_setting_shortens_the_armed_session() {
+        let (state, mock, c) = (HelloState::default(), Mock::default(), clock(0));
+        armed(&state, &mock, &c);
+        state.limit_hours(&c, 2);
+        assert_eq!(state.info(&c, ID).unwrap().seconds_left, 2 * 3600);
+        // Raising it again does not lengthen the session.
+        state.limit_hours(&c, 8);
+        assert_eq!(state.info(&c, ID).unwrap().seconds_left, 2 * 3600);
+        c.0.store(3 * 3600, Ordering::Relaxed);
+        state.limit_hours(&c, 1);
+        assert!(!state.is_armed());
+        assert_eq!(state.last_eviction(), Some(EvictReason::Expired));
+    }
+
+    #[test]
+    fn vault_switch_or_removal_during_the_arming_prompt_wins() {
+        struct Racing<'a>(&'a HelloState, bool);
+        impl HelloSigner for Racing<'_> {
+            fn sign(&self, msg: &[u8]) -> Result<Zeroizing<Vec<u8>>, SignError> {
+                if self.1 {
+                    self.0.evict_unless_vault("vault-b");
+                } else {
+                    self.0.evict_vault(ID);
+                }
+                Ok(Zeroizing::new(Sha256::digest(msg).to_vec()))
+            }
+            fn verify(&self, _: &[u8], _: &[u8]) -> bool {
+                true
+            }
+        }
+        for switch in [true, false] {
+            let (v, bytes) = vault();
+            let state = HelloState::default();
+            let r = state.arm(
+                &Racing(&state, switch),
+                &clock(0),
+                ID,
+                header_hash(&bytes),
+                &v.keys().export(),
+                8,
+            );
+            assert_eq!(r, Err(HelloError::NoSession));
+            assert!(!state.is_armed());
+        }
     }
 
     #[test]

@@ -720,9 +720,11 @@ async fn delete_vault(
         // Someone may have unlocked during the slow KDF.
         require_locked(&app)?;
 
+        // The id canonicalizes the path, so take it while the file still exists.
+        let hello_id = hello_vault_id(&path);
         delete_vault_files_blocking(&path)?;
         app.state::<vault::hello::HelloState>()
-            .evict_vault(&hello_vault_id(&path));
+            .evict_vault(&hello_id);
         edit_registry(&app, |reg, def| {
             reg.remove(&id)?;
             reg.ensure_safety_net(def);
@@ -1061,6 +1063,9 @@ async fn create_vault(
             }
             Ok(())
         })?;
+        // A new vault is selected: no Hello session carries over (windows-hello.md section 7).
+        app.state::<vault::hello::HelloState>()
+            .evict(vault::hello::EvictReason::VaultChanged);
         let s = summary(&path, &vault, false);
         state
             .finish_unlock(
@@ -1212,6 +1217,9 @@ async fn unlock(
         })?,
         None => selected_vault(&app)?.1,
     };
+    // Selecting another vault here is a vault switch (windows-hello.md section 7).
+    app.state::<vault::hello::HelloState>()
+        .evict_unless_vault(&hello_vault_id(&path));
     blocking(move || {
         let state = app.state::<VaultState>();
         let ticket = state.begin_unlock();
@@ -1462,27 +1470,30 @@ fn hello_error(e: vault::hello::HelloError) -> CmdError {
 /// Arms a Hello session right after a successful password unlock when the
 /// vault has Hello turned on (spec section 6). Never after a Hello unlock.
 fn hello_arm_after_password_unlock(app: &tauri::AppHandle, path: &Path) {
+    let vault_id = hello_vault_id(path);
+    // Unlocking another vault is a vault switch, even when that vault has Hello off.
+    app.state::<vault::hello::HelloState>()
+        .evict_unless_vault(&vault_id);
     let state = app.state::<VaultState>();
-    let Some((enabled, hours, keys)) = state.with(|u| {
+    let Some((enabled, hours)) = state.with(|u| {
         let s = &u.vault.data().settings;
-        (
-            s.enable_windows_hello,
-            s.hello_session_max_hours,
-            u.vault.keys().export(),
-        )
+        (s.enable_windows_hello, s.hello_session_max_hours)
     }) else {
         return;
     };
     if !enabled || !os::win_hello::is_supported() {
         return;
     }
+    let Some(keys) = state.with(|u| u.vault.keys().export()) else {
+        return;
+    };
     let Ok(hh) = file_header_hash(path) else {
         return;
     };
     let _ = app.state::<vault::hello::HelloState>().arm(
         &os::win_hello::WinHelloSigner,
         &vault::hello::SystemClock,
-        &hello_vault_id(path),
+        &vault_id,
         hh,
         &keys,
         hours,
@@ -1565,7 +1576,11 @@ fn hello_set_max_hours(app: tauri::AppHandle, hours: u32) -> Result<(), CmdError
     write(&app, |d| {
         d.settings.hello_session_max_hours = vault::hello::clamp_hours(hours);
         Ok(())
-    })
+    })?;
+    // A shorter setting applies to the armed session at once.
+    app.state::<vault::hello::HelloState>()
+        .limit_hours(&vault::hello::SystemClock, hours);
+    Ok(())
 }
 
 /// Unlocks the selected vault with Windows Hello. Called only from the unlock
@@ -1588,6 +1603,9 @@ async fn hello_unlock(
         })?,
         None => selected_vault(&app)?.1,
     };
+    // Selecting another vault here is a vault switch (windows-hello.md section 7).
+    app.state::<vault::hello::HelloState>()
+        .evict_unless_vault(&hello_vault_id(&path));
     blocking(move || {
         let state = app.state::<VaultState>();
         let ticket = state.begin_unlock();
