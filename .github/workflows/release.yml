@@ -296,17 +296,19 @@ jobs:
 
           Download **shush_x64-setup.exe** (the versioned `shush_<version>_x64-setup.exe` is the same file) and run it. No admin rights needed: it installs for your user only. The `.msi` is for managed / Group Policy deployment; most people want the `.exe`.
 
-          The installer is not yet Authenticode-signed (#165), so Windows SmartScreen may say *Windows protected your PC*. Check the download first with the commands below; the steps, and what the checks do and do not prove, are in [Verify your download](https://github.com/${{ github.repository }}#verify-your-download).
+          The installer is not yet Authenticode-signed (#165), so Windows SmartScreen may say *Windows protected your PC*. Check the download first with the commands below, and only then choose **More info, then Run anyway**. The steps, and what the checks do and do not prove, are in [Verify your download](https://github.com/${{ github.repository }}/blob/__TAG__/README.md#verify-your-download).
 
           Uninstalling keeps your vault (`%APPDATA%\com.shush.vault`) unless you tick *Delete the application data* **and** confirm. Keep an encrypted `.shushbackup` either way.
           '@
+          # Link the README as of this tag: the release body is frozen, the default branch is not.
+          $install = $install.Replace('__TAG__', $env:TAG)
           $verify = @"
           ## Verify
 
           ``````powershell
           gh release verify $($env:TAG) -R ${{ github.repository }}
           gh release verify-asset $($env:TAG) shush_x64-setup.exe -R ${{ github.repository }}
-          gh attestation verify shush_x64-setup.exe -R ${{ github.repository }}
+          gh attestation verify shush_x64-setup.exe -R ${{ github.repository }} --signer-workflow ${{ github.repository }}/.github/workflows/release.yml
           Get-FileHash .\shush_x64-setup.exe -Algorithm SHA256   # compare with SHA256SUMS.txt
           ``````
           "@
