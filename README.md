@@ -37,9 +37,8 @@ holds every secret, and a Svelte 5 window shows only what you ask to see.
 
 Download `shush_x64-setup.exe` from the [latest release](https://github.com/kash-talel/shush/releases/latest)
 and run it. It installs for your user only (no admin), offers a desktop shortcut, and can start
-shush when it finishes. The installer is not code-signed yet: if SmartScreen warns, choose
-**More info → Run anyway** after checking the file against `SHA256SUMS.txt` in the release
-(`Get-FileHash .\shush_x64-setup.exe`). The `.msi` is for managed deployment.
+shush when it finishes. The installer is not code-signed yet, so Windows may warn about it: see
+[Verify your download](#verify-your-download) first. The `.msi` is for managed deployment.
 
 Your vault lives in `%APPDATA%\com.shush.vault` and survives uninstalling. The uninstaller's
 *Delete the application data* box erases it only after a second confirmation.
@@ -51,6 +50,36 @@ Program Files and asks for admin. Use one or the other, not both.
 
 Releases are cut by merging the release PR that release-please keeps open and approving the
 `release` deployment; no tag is pushed by hand. See [docs/RELEASING.md](docs/RELEASING.md).
+
+## Verify your download
+
+1. Download only from the [GitHub release page](https://github.com/kash-talel/shush/releases/latest)
+   (the site's download links point to it). Save `SHA256SUMS.txt` from the same release next to
+   the installer.
+2. In PowerShell, in that folder, compare the file's SHA-256 hash with its line in
+   `SHA256SUMS.txt`. This must print `True`:
+   ```powershell
+   $f = 'shush_x64-setup.exe'   # or the exact name of the file you downloaded (.msi, versioned .exe)
+   $sum = (Select-String "  $([regex]::Escape($f))$" .\SHA256SUMS.txt).Line.Split(' ')[0]
+   (Get-FileHash .\$f -Algorithm SHA256).Hash -eq $sum
+   ```
+3. Recommended, if you have the [GitHub CLI](https://cli.github.com): check that the file is part
+   of the published release and was built by shush's release workflow (use the release's tag,
+   for example `v0.1.2`, and the file name from step 2). Each command must report success:
+   ```powershell
+   gh release verify-asset <tag> .\shush_x64-setup.exe -R kash-talel/shush
+   gh attestation verify .\shush_x64-setup.exe -R kash-talel/shush --signer-workflow kash-talel/shush/.github/workflows/release.yml
+   ```
+
+The checksum catches a corrupted download, or a file swapped by a mirror or a man in the middle.
+It does **not** protect against a compromised GitHub release, because `SHA256SUMS.txt` sits next
+to the installer and would be swapped with it. Step 3 narrows that gap: releases are immutable
+once published, and the attestation proves the file came out of shush's own release workflow on
+GitHub rather than being uploaded by hand.
+
+**About the SmartScreen warning.** shush is open source and not yet code-signed, so Windows has no
+publisher reputation for it and may show *Windows protected your PC*. Choose **More info → Run
+anyway** only after the checks above pass.
 
 ## Build from source
 

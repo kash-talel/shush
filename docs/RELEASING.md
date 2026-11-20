@@ -102,6 +102,10 @@ rotate to release-next, and tell users to reinstall manually from a verified dow
 ```powershell
 gh release verify vX.Y.Z -R kash-talel/shush
 gh release verify-asset vX.Y.Z shush_x64-setup.exe -R kash-talel/shush
-gh attestation verify shush_x64-setup.exe -R kash-talel/shush
+gh attestation verify shush_x64-setup.exe -R kash-talel/shush --signer-workflow kash-talel/shush/.github/workflows/release.yml
 Get-FileHash .\shush_x64-setup.exe -Algorithm SHA256   # compare with SHA256SUMS.txt
 ```
+
+The user-facing steps, and what each check does and does not prove, live in the README's
+[Verify your download](../README.md#verify-your-download) section; keep this list, the release
+body in `release.yml` and that section in step.
