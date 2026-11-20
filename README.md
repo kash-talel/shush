@@ -37,9 +37,8 @@ holds every secret, and a Svelte 5 window shows only what you ask to see.
 
 Download `shush_x64-setup.exe` from the [latest release](https://github.com/kash-talel/shush/releases/latest)
 and run it. It installs for your user only (no admin), offers a desktop shortcut, and can start
-shush when it finishes. The installer is not code-signed yet: if SmartScreen warns, choose
-**More info → Run anyway** after checking the file against `SHA256SUMS.txt` in the release
-(`Get-FileHash .\shush_x64-setup.exe`). The `.msi` is for managed deployment.
+shush when it finishes. The installer is not code-signed yet, so Windows may warn about it: see
+[Verify your download](#verify-your-download) first. The `.msi` is for managed deployment.
 
 Your vault lives in `%APPDATA%\com.shush.vault` and survives uninstalling. The uninstaller's
 *Delete the application data* box erases it only after a second confirmation.
@@ -51,6 +50,27 @@ Program Files and asks for admin. Use one or the other, not both.
 
 Releases are cut by merging the release PR that release-please keeps open and approving the
 `release` deployment; no tag is pushed by hand. See [docs/RELEASING.md](docs/RELEASING.md).
+
+## Verify your download
+
+1. Download only from the [GitHub release page](https://github.com/kash-talel/shush/releases/latest)
+   (the site's download button links there).
+2. Compute the file's hash and compare it with the matching line in `SHA256SUMS.txt` from the same release:
+   ```powershell
+   Get-FileHash .\shush_x64-setup.exe -Algorithm SHA256
+   ```
+3. Optionally, check where the file was built (needs the [GitHub CLI](https://cli.github.com)):
+   ```powershell
+   gh attestation verify .\shush_x64-setup.exe -R kash-talel/shush
+   ```
+
+The checksum catches a corrupted download, or a file swapped by a mirror or a man in the middle.
+It does **not** protect against a compromised GitHub release, because `SHA256SUMS.txt` sits next
+to the installer. The attestation check in step 3 covers that gap.
+
+**About the SmartScreen warning.** shush is open source and not yet code-signed, so Windows has no
+publisher reputation for it and may show *Windows protected your PC*. Choose **More info → Run
+anyway** only after the hash matches.
 
 ## Build from source
 
