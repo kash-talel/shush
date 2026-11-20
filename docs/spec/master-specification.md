@@ -50,10 +50,13 @@ windows-sys = { version = "0.52", features = [
     "Win32_System_DataExchange",
     "Win32_System_RemoteDesktop"
 ] }
+windows = { version = "0.62", features = ["Security_Credentials"] } # WinRT, Windows Hello (full feature list in Cargo.toml)
 ```
 
-> [!NOTE] Crate Versioning & Upgrade Planning
-> Rust crate majors are pinned as specified above for baseline stability. Upgrades to `rand 0.9` (which revises `RngCore` and trait distributions) and the `windows` crate family (for WinRT `KeyCredentialManager` required by Windows Hello) are tracked in issue #91 for Phase 8.
+> [!NOTE] Crate Versioning & Upgrade Planning (issue #91)
+> Rust crate majors are pinned as specified above for baseline stability.
+> - **`rand`**: stays on 0.8 (`rand_core` 0.6) until `spake2`, `argon2`, `aes-gcm`/`chacha20poly1305` and `snow` adopt `rand_core` 0.9. `spake2` is the hard blocker: shush passes it an RNG (the `FixedRng` test double), so `rand` is bumped only together with it. A second `rand` major in the lockfile via transitive dependencies is accepted. The call sites to port, and how, are listed once, in the comment above `rand` in `src-tauri/Cargo.toml`.
+> - **`windows`**: the `windows` crate (0.62, WinRT `KeyCredentialManager`) is already a dependency for Windows Hello (`docs/spec/windows-hello.md`). It coexists with `windows-sys`, which stays for plain Win32 calls. Bumping `windows-sys` past 0.52 is its own PR and a code migration (handles become pointers); see the comment above it in `Cargo.toml`.
 
 ---
 
