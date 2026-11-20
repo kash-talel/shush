@@ -82,6 +82,14 @@ windows-sys = { version = "0.52", features = [
     # Safe memory scanning for memory hygiene regression tests (issue #59).
     "Win32_System_Diagnostics_Debug",
 ] }
+# Windows Hello quick unlock (issue #66, docs/spec/windows-hello.md): WinRT KeyCredentialManager.
+windows = { version = "0.62", features = [
+    "Foundation",
+    "Security_Credentials",
+    "Security_Cryptography",
+    "Security_Cryptography_Core",
+    "Storage_Streams",
+] }
 # --- Additions ---
 thiserror = "2"
 tauri-plugin-dialog = "2"

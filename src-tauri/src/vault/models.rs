@@ -290,6 +290,10 @@ pub struct Folder {
     pub icon: Option<String>,
 }
 
+fn default_hello_session_max_hours() -> u32 {
+    8
+}
+
 /// Per-vault settings (spec §5 defaults).
 #[derive(Clone, PartialEq, Serialize, Deserialize, Zeroize)]
 #[cfg_attr(test, derive(Debug))]
@@ -302,6 +306,9 @@ pub struct VaultSettings {
     pub auto_lock_on_sleep: bool,
     /// Windows Hello quick unlock.
     pub enable_windows_hello: bool,
+    /// Longest Windows Hello session in hours (1-8; 8 is the hard cap).
+    #[serde(default = "default_hello_session_max_hours")]
+    pub hello_session_max_hours: u32,
     /// Disable every network feature. Default true: all network features are opt-in.
     pub air_gapped_mode: bool,
     /// Duress PIN / decoy vault.
@@ -315,6 +322,7 @@ impl Default for VaultSettings {
             auto_lock_idle_minutes: 15,
             auto_lock_on_sleep: true,
             enable_windows_hello: false,
+            hello_session_max_hours: default_hello_session_max_hours(),
             air_gapped_mode: true,
             duress_pin_enabled: false,
         }
@@ -352,6 +360,16 @@ pub fn rfc3339_from_unix(secs: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_from_before_hello_session_setting_default_to_eight_hours() {
+        let old = r#"{"clipboard_clear_seconds":30,"auto_lock_idle_minutes":15,
+            "auto_lock_on_sleep":true,"enable_windows_hello":true,
+            "air_gapped_mode":true,"duress_pin_enabled":false}"#;
+        let s: VaultSettings = serde_json::from_str(old).unwrap();
+        assert_eq!(s.hello_session_max_hours, 8);
+        assert!(s.enable_windows_hello);
+    }
 
     #[test]
     fn rfc3339_known_values() {

@@ -8,7 +8,10 @@
   import {
     describeAutoLock,
     discardVaultSibling,
+    formatHelloLeft,
     formatKdf,
+    helloStatus,
+    helloUnlock,
     toCmdError,
     unlock,
     type AutoLockReason,
@@ -53,7 +56,10 @@
   const unreadable = $derived(vault.error !== null);
   // Keyfile problems are shown in the shared slot but must not blame the password field.
   const passwordError = $derived(
-    error !== null && !error.code.startsWith("KEYFILE") && error.code !== "VAULT_UNREADABLE",
+    error !== null &&
+      !error.code.startsWith("KEYFILE") &&
+      !error.code.startsWith("HELLO_") &&
+      error.code !== "VAULT_UNREADABLE",
   );
   const canSubmit = $derived(
     !busy && !unreadable && password.length > 0 && (!keyfileRequired || keyfile !== null),
@@ -81,6 +87,42 @@
     } catch (e) {
       siblingError = toCmdError(e);
     }
+  }
+
+  // Windows Hello: the button exists only while a session is armed for this vault
+  // (spec section 8). Otherwise the screen does not mention Hello.
+  let helloLeft = $state<number | null>(null);
+
+  async function refreshHello() {
+    try {
+      const h = await helloStatus();
+      helloLeft = h.armed ? h.seconds_left : null;
+    } catch {
+      helloLeft = null;
+    }
+  }
+
+  async function helloSubmit() {
+    if (busy || unreadable || helloLeft === null) return;
+    busy = true;
+    error = null;
+    let summary: VaultSummary | null = null;
+    try {
+      summary = await helloUnlock(vault.id);
+    } catch (e) {
+      error = toCmdError(e);
+    } finally {
+      busy = false;
+    }
+    if (summary) {
+      password = "";
+      onunlocked(summary);
+      return;
+    }
+    // The session may have ended (3 dismissals, key gone): hide the button if so.
+    await refreshHello();
+    await tick();
+    passwordInput?.focus();
   }
 
   async function unseal() {
@@ -134,11 +176,28 @@
     if (e.key === "Escape" && unsealed && !busy) {
       e.preventDefault();
       void reseal();
+    } else if (
+      e.key.toLowerCase() === "f" &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.metaKey &&
+      unsealed &&
+      helloLeft !== null &&
+      !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
+    ) {
+      e.preventDefault();
+      void helloSubmit();
     }
   }
 
   // Enter or Space on the focused case unseals it, so the keyboard path is one key.
-  onMount(() => caseButton?.focus());
+  onMount(() => {
+    caseButton?.focus();
+    void refreshHello();
+    // Keeps the countdown honest and hides the button when the session expires.
+    const t = setInterval(() => void refreshHello(), 30_000);
+    return () => clearInterval(t);
+  });
 </script>
 
 <svelte:window {onkeydown} />
@@ -290,6 +349,12 @@
               UNLOCK VAULT <span class="kbd border-white/25! bg-black/20! text-white/80!">Enter</span>
             {/if}
           </button>
+
+          {#if helloLeft !== null}
+            <button type="button" onclick={helloSubmit} disabled={busy || unreadable} class="key-steel h-10 font-mono text-xs tracking-[0.06em]">
+              UNLOCK WITH WINDOWS HELLO · {formatHelloLeft(helloLeft)} <span class="kbd">F</span>
+            </button>
+          {/if}
 
           <button
             type="button"

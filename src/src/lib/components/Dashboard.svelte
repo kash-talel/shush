@@ -33,11 +33,13 @@
   let {
     summary = null,
     onlock,
+    onlockforget,
     oncopied,
     hotkey = null,
   }: {
     summary?: VaultSummary | null;
     onlock: () => void;
+    onlockforget: () => void;
     oncopied: (seconds: number) => void;
     hotkey?: string | null;
   } = $props();
@@ -213,6 +215,12 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
+    // Lock & forget: locks and wipes the Windows Hello session.
+    if (e.ctrlKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === "l") {
+      e.preventDefault();
+      onlockforget();
+      return;
+    }
     if (!e.ctrlKey || e.altKey || e.shiftKey) return;
     const k = e.key.toLowerCase();
     if (k === "l") {

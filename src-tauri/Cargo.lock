@@ -3676,6 +3676,7 @@ dependencies = [
  "unicode-normalization",
  "url",
  "webpki-roots",
+ "windows",
  "windows-sys 0.52.0",
  "zeroize",
  "zstd",

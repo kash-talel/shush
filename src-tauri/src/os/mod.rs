@@ -11,3 +11,4 @@ pub mod recycle;
 pub mod replace;
 pub mod session;
 pub mod win_context;
+pub mod win_hello;

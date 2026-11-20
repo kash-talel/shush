@@ -209,6 +209,31 @@ export const recoverVaultFromBackup = (id: string, password: string, keyfilePath
   invoke<void>("recover_vault_from_backup", { id, password, keyfilePath });
 export const showInExplorer = (id: string) => invoke<void>("show_in_explorer", { id });
 export const lock = () => invoke<void>("lock");
+/** Locks and wipes the Windows Hello session: the next unlock needs the password. */
+export const lockAndForget = () => invoke<void>("lock_and_forget");
+
+/** Windows Hello quick unlock (docs/spec/windows-hello.md). */
+export interface HelloStatus {
+  /** Hello can be used on this PC; false hides the setting. */
+  supported: boolean;
+  /** For the open vault; null while locked. */
+  enabled: boolean | null;
+  max_hours: number | null;
+  /** A session is armed for the selected vault: show the unlock button. */
+  armed: boolean;
+  seconds_left: number | null;
+}
+export const helloStatus = () => invoke<HelloStatus>("hello_status");
+export const helloSetEnabled = (enabled: boolean) => invoke<void>("hello_set_enabled", { enabled });
+export const helloSetMaxHours = (hours: number) => invoke<void>("hello_set_max_hours", { hours });
+export const helloUnlock = (vaultId: string | null) =>
+  invoke<VaultSummary>("hello_unlock", { vaultId });
+/** `5h 12m` / `42m`, as the unlock screen shows it. */
+export function formatHelloLeft(seconds: number): string {
+  const m = Math.max(0, Math.floor(seconds / 60));
+  const h = Math.floor(m / 60);
+  return h > 0 ? `${h}h ${m % 60}m` : `${m}m`;
+}
 export const showSpotlight = () => invoke<void>("show_spotlight");
 
 /** Why the backend locked the vault on its own (session / power / idle / tray). */

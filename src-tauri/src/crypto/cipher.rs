@@ -7,10 +7,10 @@ use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
-use super::zeroize_guard::{SecretBytes, SecretKey};
+use super::zeroize_guard::{SecretBytes, SecretKey, KEY_LEN};
 use super::{fill_random, CryptoError};
 use crate::os::memory::LockedBox;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 /// AEAD authentication tag length (both suites).
 pub const TAG_LEN: usize = 16;
@@ -140,6 +140,41 @@ impl VaultKeys {
         hk.expand(INFO_ATTACHMENT, block.attachment.as_mut_bytes())
             .expect("valid HKDF length");
         Self(block)
+    }
+
+    /// Length of [`export`](Self::export): VEK, canary key, attachment key.
+    pub const EXPORT_LEN: usize = 3 * KEY_LEN;
+
+    /// The three sub-keys as one wiped-on-drop buffer, for wrapping into a
+    /// Windows Hello session (docs/spec/windows-hello.md section 3).
+    pub fn export(&self) -> Zeroizing<Vec<u8>> {
+        let mut out = Zeroizing::new(Vec::with_capacity(Self::EXPORT_LEN));
+        out.extend_from_slice(self.0.vek.expose());
+        out.extend_from_slice(self.0.canary.expose());
+        out.extend_from_slice(self.0.attachment.expose());
+        out
+    }
+
+    /// Rebuilds the sub-keys from [`export`](Self::export); `None` if the length is wrong.
+    pub fn from_export(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != Self::EXPORT_LEN {
+            return None;
+        }
+        let mut block = LockedBox::new(KeyBlock {
+            vek: SecretKey::zeroed(),
+            canary: SecretKey::zeroed(),
+            attachment: SecretKey::zeroed(),
+        });
+        block.vek.as_mut_bytes().copy_from_slice(&bytes[..KEY_LEN]);
+        block
+            .canary
+            .as_mut_bytes()
+            .copy_from_slice(&bytes[KEY_LEN..2 * KEY_LEN]);
+        block
+            .attachment
+            .as_mut_bytes()
+            .copy_from_slice(&bytes[2 * KEY_LEN..]);
+        Some(Self(block))
     }
 
     /// Key that encrypts the vault payload.
