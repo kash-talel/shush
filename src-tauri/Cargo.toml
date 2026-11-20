@@ -44,13 +44,14 @@ aes-gcm = { version = "0.10", features = ["zeroize"] }
 chacha20poly1305 = "0.10"
 hkdf = "0.12"
 sha2 = "0.10"
-# Upgrade roadmap (issue #91): stay on rand 0.8 / rand_core 0.6 until argon2, aes-gcm,
-# chacha20poly1305 and hkdf (RustCrypto) move to rand_core 0.9, because their `OsRng` / `CryptoRng`
-# traits come from rand_core 0.6. rand 0.9 also sits in the tree via transitive deps (Cargo.lock), which is
+# Upgrade roadmap (issue #91): stay on rand 0.8 / rand_core 0.6 until argon2 (password-hash),
+# aes-gcm / chacha20poly1305 (crypto-common) and spake2 move to rand_core 0.9, because their
+# `RngCore` / `CryptoRng` traits come from rand_core 0.6. rand 0.9 also sits in the tree via transitive deps (Cargo.lock), which is
 # harmless: no shush type crosses that boundary. Call sites to port together (all in src/): crypto/mod.rs
 # (OsRng.fill_bytes), crypto/generator.rs (OsRng + SliceRandom), vault/registry.rs (OsRng.fill_bytes),
 # lib.rs update jitter (thread_rng().gen_range -> rng().random_range), sync/pairing.rs test FixedRng
-# (RngCore/CryptoRng impl, rand::Error). Then use rand::rngs::OsRng via `rand::rngs::OsRng` (TryRngCore).
+# (RngCore/CryptoRng impl, rand::Error; feeds spake2). In 0.9 `rand::rngs::OsRng` is TryRngCore only
+# (needs the `os_rng` feature): key/nonce sites call `OsRng.try_fill_bytes` and fail closed on error.
 rand = "0.8"
 zeroize = { version = "1.7", features = ["derive", "zeroize_derive"] }
 zstd = "0.13"
