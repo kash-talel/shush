@@ -8,6 +8,7 @@
   import { vaultColor } from "../vault-colors";
   import {
     listVaults,
+    restoreDefaultVault,
     selectVault,
     setHideVaultNames,
     showInExplorer,
@@ -74,6 +75,17 @@
     }
   }
 
+  async function restoreDefault() {
+    error = null;
+    try {
+      const status = await restoreDefaultVault();
+      await reload();
+      onswitch(status);
+    } catch (e) {
+      error = toCmdError(e);
+    }
+  }
+
   async function openExplorer() {
     if (!selected) return;
     try {
@@ -127,6 +139,9 @@
         <button type="button" class="act" onclick={() => (dialog = "new")}><Plus aria-hidden="true" /> New vault</button>
       {/if}
       <button type="button" class="act" onclick={() => (dialog = "existing")}><FolderOpen aria-hidden="true" /> Open vault file</button>
+      {#if list.default_hidden}
+        <button type="button" class="act" onclick={restoreDefault}><RotateCcw aria-hidden="true" /> Restore default vault</button>
+      {/if}
       {#if selected}
         <button type="button" class="act" onclick={() => (dialog = "edit")}><Pencil aria-hidden="true" /> Edit</button>
         {#if selected.can_recover}

@@ -456,6 +456,8 @@ struct VaultList {
     colors: Vec<&'static str>,
     max_name_chars: usize,
     hide_names: bool,
+    /// The default vault file exists but is hidden from the shelf (issue #106).
+    default_hidden: bool,
 }
 
 #[tauri::command]
@@ -487,7 +489,26 @@ fn list_vaults(app: tauri::AppHandle) -> Result<VaultList, CmdError> {
         colors: VAULT_COLORS.to_vec(),
         max_name_chars: vault::registry::MAX_NAME_CHARS,
         hide_names,
+        default_hidden: reg.hide_default && def.is_file(),
     })
+}
+
+/// Puts a hidden default vault back on the shelf and selects it (issue #106).
+#[tauri::command]
+fn restore_default_vault(app: tauri::AppHandle) -> Result<VaultStatus, CmdError> {
+    require_locked(&app)?;
+    let (entry, path, hide_names) = edit_registry(&app, |reg, def| {
+        reg.unhide_default(def);
+        match reg.find_path(def).map(|e| e.id.clone()) {
+            Some(id) => reg.select(&id)?,
+            None => return Err(RegistryError::UnknownVault.into()),
+        }
+        let e = reg.selected_entry().cloned();
+        Ok((e, def.to_path_buf(), reg.hide_names))
+    })?;
+    app.state::<vault::hello::HelloState>()
+        .evict_unless_vault(&hello_vault_id(&path));
+    Ok(status_for(entry.as_ref(), &path, false, false, hide_names))
 }
 
 /// Switches the unlock screen to another vault.
@@ -3650,6 +3671,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             select_vault,
             check_new_vault,
             add_existing_vault,
+            restore_default_vault,
             update_vault,
             forget_vault,
             set_hide_vault_names,
