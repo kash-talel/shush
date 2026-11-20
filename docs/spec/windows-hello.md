@@ -1,6 +1,6 @@
 # ADR: Windows Hello quick unlock
 
-Status: **accepted** (design only; not implemented). Issue #7.
+Status: **accepted**, implemented in issue #66 (`vault/hello.rs`, `os/win_hello.rs`). Issue #7.
 This document is normative. Where `master-specification.md`, `architecture-plan.md` or
 `security-model.md` say anything else about Windows Hello, this document wins.
 

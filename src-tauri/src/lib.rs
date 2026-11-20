@@ -501,6 +501,9 @@ fn select_vault(app: tauri::AppHandle, id: String) -> Result<VaultStatus, CmdErr
             reg.hide_names,
         ))
     })?;
+    // A Hello session is bound to one vault (windows-hello.md section 7).
+    app.state::<vault::hello::HelloState>()
+        .evict_unless_vault(&hello_vault_id(&entry.path));
     Ok(status_for(
         Some(&entry),
         &entry.path,
@@ -566,6 +569,13 @@ fn update_vault(
 #[tauri::command]
 fn forget_vault(app: tauri::AppHandle, id: String) -> Result<(), CmdError> {
     require_locked(&app)?;
+    let forgotten = edit_registry(&app, |reg, _| {
+        Ok(reg
+            .get(&id)
+            .ok_or(RegistryError::UnknownVault)?
+            .path
+            .clone())
+    })?;
     edit_registry(&app, |reg, def| {
         let e = reg.get(&id).ok_or(RegistryError::UnknownVault)?;
         let is_default = def.is_file() && vault::registry::same_file(&e.path, def);
@@ -579,6 +589,8 @@ fn forget_vault(app: tauri::AppHandle, id: String) -> Result<(), CmdError> {
         reg.ensure_safety_net(def);
         Ok(())
     })?;
+    app.state::<vault::hello::HelloState>()
+        .evict_vault(&hello_vault_id(&forgotten));
     app.state::<std::sync::Mutex<DeleteThrottle>>()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -709,6 +721,8 @@ async fn delete_vault(
         require_locked(&app)?;
 
         delete_vault_files_blocking(&path)?;
+        app.state::<vault::hello::HelloState>()
+            .evict_vault(&hello_vault_id(&path));
         edit_registry(&app, |reg, def| {
             reg.remove(&id)?;
             reg.ensure_safety_net(def);
@@ -1234,7 +1248,7 @@ async fn unlock(
             .finish_unlock(
                 ticket,
                 Unlocked {
-                    path,
+                    path: path.clone(),
                     vault,
                     lock,
                     read_only,
@@ -1243,6 +1257,8 @@ async fn unlock(
             .map_err(|_| {
                 CmdError::new("LOCKED_DURING_UNLOCK", "Vault was locked while opening.")
             })?;
+        // Best effort: a cancelled Hello prompt only means no quick unlock.
+        hello_arm_after_password_unlock(&app, &path);
         Ok(s)
     })
     .await
@@ -1275,6 +1291,11 @@ async fn reload_vault(
             .with_mut(|u| {
                 let pw_bytes = password.as_ref().map(|p| p.as_bytes());
                 u.vault.reload(&u.path, pw_bytes, digest.as_ref())?;
+                if pw_bytes.is_some() {
+                    // Credentials changed on disk: the wrapped sub-keys are stale.
+                    app.state::<vault::hello::HelloState>()
+                        .evict(vault::hello::EvictReason::KeysChanged);
+                }
                 if !u.read_only && keep_orphans != Some(true) {
                     vault::attachments::gc_orphans(&u.path, u.vault.data());
                 }
@@ -1382,6 +1403,259 @@ async fn clear_duress_password(app: tauri::AppHandle) -> Result<(), CmdError> {
     .await
 }
 
+// ---- Windows Hello quick unlock (issue #66, docs/spec/windows-hello.md) ----------
+
+/// Identity a Hello session is bound to: the vault file path, case-folded.
+fn hello_vault_id(path: &Path) -> String {
+    let p = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    p.to_string_lossy().to_lowercase()
+}
+
+/// SHA-256 of the vault header as it is on disk right now.
+fn file_header_hash(path: &Path) -> Result<[u8; 32], CmdError> {
+    use std::io::Read;
+    let mut head = Vec::with_capacity(vault::container::HEADER_LEN);
+    std::fs::File::open(path)
+        .and_then(|f| {
+            f.take(vault::container::HEADER_LEN as u64)
+                .read_to_end(&mut head)
+        })
+        .map_err(io_err)?;
+    Ok(vault::hello::header_hash(&head))
+}
+
+fn hello_error(e: vault::hello::HelloError) -> CmdError {
+    use vault::hello::HelloError as H;
+    let (code, msg) = match e {
+        H::NoSession => (
+            "HELLO_NO_SESSION",
+            "Windows Hello is not active. Use your master password.",
+        ),
+        H::Prompt => (
+            "HELLO_PROMPT",
+            "Windows Hello did not confirm. Try again or use your master password.",
+        ),
+        H::TooManyFailures => (
+            "HELLO_TOO_MANY",
+            "Windows Hello was dismissed too many times. Use your master password.",
+        ),
+        H::KeyMissing => (
+            "HELLO_KEY_MISSING",
+            "The Windows Hello key is gone. Use your master password and turn Hello on again.",
+        ),
+        H::BadSignature | H::NonDeterministic | H::Crypto => (
+            "HELLO_FAILED",
+            "Windows Hello could not unlock this vault. Use your master password.",
+        ),
+        H::HeaderChanged => (
+            "HELLO_VAULT_CHANGED",
+            "The vault file changed since Hello was set up. Use your master password.",
+        ),
+        H::Expired => (
+            "HELLO_EXPIRED",
+            "The Windows Hello session ended. Use your master password.",
+        ),
+    };
+    CmdError::new(code, msg)
+}
+
+/// Arms a Hello session right after a successful password unlock when the
+/// vault has Hello turned on (spec section 6). Never after a Hello unlock.
+fn hello_arm_after_password_unlock(app: &tauri::AppHandle, path: &Path) {
+    let state = app.state::<VaultState>();
+    let Some((enabled, hours, keys)) = state.with(|u| {
+        let s = &u.vault.data().settings;
+        (
+            s.enable_windows_hello,
+            s.hello_session_max_hours,
+            u.vault.keys().export(),
+        )
+    }) else {
+        return;
+    };
+    if !enabled || !os::win_hello::is_supported() {
+        return;
+    }
+    let Ok(hh) = file_header_hash(path) else {
+        return;
+    };
+    let _ = app.state::<vault::hello::HelloState>().arm(
+        &os::win_hello::WinHelloSigner,
+        &vault::hello::SystemClock,
+        &hello_vault_id(path),
+        hh,
+        &keys,
+        hours,
+    );
+}
+
+#[derive(Debug, Serialize)]
+struct HelloStatus {
+    /// Windows Hello can be used on this machine; false hides the setting.
+    supported: bool,
+    /// For the open vault: Hello is turned on. `None` while locked.
+    enabled: Option<bool>,
+    /// For the open vault: session length setting in hours. `None` while locked.
+    max_hours: Option<u32>,
+    /// A session is armed for the selected vault: the unlock screen may show the button.
+    armed: bool,
+    /// Seconds left on that session.
+    seconds_left: Option<u64>,
+}
+
+#[tauri::command]
+async fn hello_status(app: tauri::AppHandle) -> Result<HelloStatus, CmdError> {
+    blocking(move || {
+        let hello = app.state::<vault::hello::HelloState>();
+        let (_, path) = selected_vault(&app)?;
+        let info = hello.info(&vault::hello::SystemClock, &hello_vault_id(&path));
+        let open = app.state::<VaultState>().with(|u| {
+            let s = &u.vault.data().settings;
+            (s.enable_windows_hello, s.hello_session_max_hours)
+        });
+        Ok(HelloStatus {
+            supported: os::win_hello::is_supported(),
+            enabled: open.map(|o| o.0),
+            max_hours: open.map(|o| o.1),
+            armed: info.is_some(),
+            seconds_left: info.map(|i| i.seconds_left),
+        })
+    })
+    .await
+}
+
+/// Turns Hello on (creates the key pair, prompting once) or off (wipes the
+/// session and deletes the key pair). Needs the vault open and writable.
+#[tauri::command]
+async fn hello_set_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), CmdError> {
+    blocking(move || {
+        let hello = app.state::<vault::hello::HelloState>();
+        if enabled {
+            if !os::win_hello::is_supported() {
+                return Err(CmdError::new(
+                    "HELLO_UNSUPPORTED",
+                    "Windows Hello is not set up on this PC.",
+                ));
+            }
+            os::win_hello::create_key().map_err(|e| match e {
+                vault::hello::SignError::Cancelled => hello_error(vault::hello::HelloError::Prompt),
+                _ => hello_error(vault::hello::HelloError::Crypto),
+            })?;
+            // The session is armed at the next password unlock (spec section 6).
+            write(&app, |d| {
+                d.settings.enable_windows_hello = true;
+                Ok(())
+            })
+        } else {
+            hello.evict(vault::hello::EvictReason::HelloOff);
+            write(&app, |d| {
+                d.settings.enable_windows_hello = false;
+                Ok(())
+            })?;
+            let _ = os::win_hello::delete_key();
+            Ok(())
+        }
+    })
+    .await
+}
+
+/// Sets how long a Hello session may last (1-8 hours; 8 is the hard cap).
+#[tauri::command]
+fn hello_set_max_hours(app: tauri::AppHandle, hours: u32) -> Result<(), CmdError> {
+    write(&app, |d| {
+        d.settings.hello_session_max_hours = vault::hello::clamp_hours(hours);
+        Ok(())
+    })
+}
+
+/// Unlocks the selected vault with Windows Hello. Called only from the unlock
+/// screen's own button or key (spec section 8).
+#[tauri::command]
+async fn hello_unlock(
+    app: tauri::AppHandle,
+    vault_id: Option<String>,
+) -> Result<VaultSummary, CmdError> {
+    require_locked(&app)?;
+    let path = match vault_id {
+        Some(id) => edit_registry(&app, |reg, _| {
+            let p = reg
+                .get(&id)
+                .ok_or(RegistryError::UnknownVault)?
+                .path
+                .clone();
+            reg.select(&id)?;
+            Ok(p)
+        })?,
+        None => selected_vault(&app)?.1,
+    };
+    blocking(move || {
+        let state = app.state::<VaultState>();
+        let ticket = state.begin_unlock();
+        let (lock, read_only) = {
+            let file_ro = std::fs::metadata(&path)
+                .map(|m| m.permissions().readonly())
+                .unwrap_or(false);
+            if file_ro {
+                (None, true)
+            } else {
+                match vault::lock::VaultLock::try_acquire(&path)? {
+                    Some(lock) => (Some(lock), false),
+                    None => (None, true),
+                }
+            }
+        };
+        // The file we check and open is the one we hold the lock on.
+        let bytes = vault::read_vault_file(&path)?;
+        let hh = vault::hello::header_hash(&bytes);
+        let keys = app
+            .state::<vault::hello::HelloState>()
+            .unlock_keys(
+                &os::win_hello::WinHelloSigner,
+                &vault::hello::SystemClock,
+                &hello_vault_id(&path),
+                &hh,
+            )
+            .map_err(hello_error)?;
+        let mut vault = OpenVault::unlock_with_keys(&bytes, keys)?;
+        if !read_only && vault.is_current_format() {
+            let _ = vault.refresh(&path);
+        }
+        if !read_only {
+            vault::attachments::gc_orphans(&path, vault.data());
+        }
+        let s = summary(&path, &vault, read_only);
+        state
+            .finish_unlock(
+                ticket,
+                Unlocked {
+                    path,
+                    vault,
+                    lock,
+                    read_only,
+                },
+            )
+            .map_err(|_| {
+                CmdError::new("LOCKED_DURING_UNLOCK", "Vault was locked while opening.")
+            })?;
+        Ok(s)
+    })
+    .await
+}
+
+/// Lock & forget: locks the vault and wipes the Hello session, so the next
+/// unlock needs the master password.
+fn lock_and_forget_vault(app: &tauri::AppHandle) {
+    app.state::<vault::hello::HelloState>()
+        .evict(vault::hello::EvictReason::LockAndForget);
+    lock_vault(app);
+    os::clipboard::clear_if_ours();
+}
+
+#[tauri::command]
+fn lock_and_forget(app: tauri::AppHandle) {
+    lock_and_forget_vault(&app);
+}
+
 /// Locks the vault and everything derived from it: the bridge drops its
 /// pairing keys and wipes queued plaintext passwords (issue #52).
 fn lock_vault(app: &tauri::AppHandle) {
@@ -1414,6 +1688,9 @@ fn spawn_vault_watcher(app: tauri::AppHandle) {
         let mut watch = vault::watch::DiskWatch::default();
         loop {
             std::thread::sleep(std::time::Duration::from_secs(2));
+            // The 8 h cap holds even while the app sits locked.
+            app.state::<vault::hello::HelloState>()
+                .sweep(&vault::hello::SystemClock);
             if watch.poll(&app.state::<VaultState>()) == vault::watch::Poll::Changed {
                 let _ = app.emit(EVENT_VAULT_DISK_CHANGED, ());
             }
@@ -1423,6 +1700,16 @@ fn spawn_vault_watcher(app: tauri::AppHandle) {
 
 /// Automatic lock from a session / power / idle trigger (issue #15).
 fn auto_lock(app: &tauri::AppHandle, reason: os::session::LockReason) {
+    // Suspend and log-off end the Hello session, bounding what hiberfil.sys or
+    // a stolen sleeping laptop carries. Workstation lock and idle keep it
+    // (windows-hello.md section 7). Not governed by `auto_lock_on_sleep`.
+    if matches!(
+        reason,
+        os::session::LockReason::Suspend | os::session::LockReason::Logoff
+    ) {
+        app.state::<vault::hello::HelloState>()
+            .evict(vault::hello::EvictReason::Suspend);
+    }
     let state = app.state::<VaultState>();
     // Sleep-related triggers honour the vault's `auto_lock_on_sleep` setting;
     // workstation lock, log-off and disconnect always lock.
@@ -1592,6 +1879,13 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let lock_item = MenuItem::with_id(app, "lock", "Lock vault", true, None::<&str>)?;
+    let forget_item = MenuItem::with_id(
+        app,
+        "lock_forget",
+        "Lock && forget Windows Hello",
+        true,
+        Some("Ctrl+Shift+L"),
+    )?;
     let quit = MenuItem::with_id(app, "quit", "Quit shush", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
@@ -1599,6 +1893,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
             &open,
             &spotlight,
             &lock_item,
+            &forget_item,
             &PredefinedMenuItem::separator(app)?,
             &quit,
         ],
@@ -1614,6 +1909,10 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
             "lock" => {
                 lock_vault(app);
                 os::clipboard::clear_if_ours();
+                let _ = app.emit(EVENT_AUTO_LOCKED, "tray");
+            }
+            "lock_forget" => {
+                lock_and_forget_vault(app);
                 let _ = app.emit(EVENT_AUTO_LOCKED, "tray");
             }
             "quit" => {
@@ -3249,6 +3548,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
 
     tauri::Builder::default()
         .manage(VaultState::default())
+        .manage(vault::hello::HelloState::default())
         .manage(bridge::state::BridgeState::default())
         .manage(net::NetGate::default())
         .manage(sync::runtime::SyncRuntime::default())
@@ -3342,6 +3642,11 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             unlock,
             reload_vault,
             lock,
+            lock_and_forget,
+            hello_status,
+            hello_set_enabled,
+            hello_set_max_hours,
+            hello_unlock,
             list_items,
             get_item,
             create_item,

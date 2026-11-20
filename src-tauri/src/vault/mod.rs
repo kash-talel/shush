@@ -13,6 +13,7 @@
 pub mod attachments;
 pub mod backup;
 pub mod container;
+pub mod hello;
 pub mod hlc;
 pub mod importer;
 pub mod items;
@@ -142,6 +143,12 @@ pub struct OpenVault {
     slot: SlotState,
 }
 
+/// A parsed vault file image: a v3 slot file or a legacy single-payload file.
+enum ParsedFile<'a> {
+    Slots(slots::SlotFile<'a>),
+    Single(container::Sealed<'a>),
+}
+
 /// This vault's slot and the opaque bytes of the other slot.
 struct SlotState {
     /// The slot these credentials open.
@@ -240,14 +247,10 @@ impl OpenVault {
             return Err(VaultError::WrongKind(header.kind));
         }
         // Structure is checked before the expensive KDF runs.
-        enum Parsed<'a> {
-            Slots(slots::SlotFile<'a>),
-            Single(container::Sealed<'a>),
-        }
         let parsed = if container::read_version(bytes) == FORMAT_VERSION {
-            Parsed::Slots(slots::parse(bytes)?)
+            ParsedFile::Slots(slots::parse(bytes)?)
         } else {
-            Parsed::Single(container::parse(bytes)?)
+            ParsedFile::Single(container::parse(bytes)?)
         };
         match (header.keyfile_required, keyfile.is_some()) {
             (true, false) => return Err(VaultError::KeyfileRequired),
@@ -256,8 +259,33 @@ impl OpenVault {
         }
         let master = derive_master_key(password, keyfile, &header.salt, &header.kdf)?;
         let keys = VaultKeys::derive(&master);
+        Self::open_parsed(bytes, header, parsed, keys)
+    }
+
+    /// Decrypts a vault file image with already-derived sub-keys (Windows Hello
+    /// quick unlock, docs/spec/windows-hello.md section 5). No Argon2id runs;
+    /// the canary and the slot's AEAD tag prove the keys belong to this file.
+    pub fn unlock_with_keys(bytes: &[u8], keys: VaultKeys) -> Result<Self, VaultError> {
+        let header = Header::parse(bytes)?;
+        if header.kind != FileKind::Vault {
+            return Err(VaultError::WrongKind(header.kind));
+        }
+        let parsed = if container::read_version(bytes) == FORMAT_VERSION {
+            ParsedFile::Slots(slots::parse(bytes)?)
+        } else {
+            ParsedFile::Single(container::parse(bytes)?)
+        };
+        Self::open_parsed(bytes, header, parsed, keys)
+    }
+
+    fn open_parsed(
+        bytes: &[u8],
+        header: Header,
+        parsed: ParsedFile<'_>,
+        keys: VaultKeys,
+    ) -> Result<Self, VaultError> {
         let (plaintext, slot) = match parsed {
-            Parsed::Slots(f) => {
+            ParsedFile::Slots(f) => {
                 let (index, h) = f.find_slot(&keys)?;
                 let plaintext = f.open_payload(index, &h, &keys)?;
                 let slot = SlotState {
@@ -267,7 +295,7 @@ impl OpenVault {
                 };
                 (plaintext, slot)
             }
-            Parsed::Single(s) => {
+            ParsedFile::Single(s) => {
                 s.verify_canary(&keys)?;
                 // The next save upgrades the file to v3 (`.bak` keeps the old one).
                 (s.open_payload(&keys)?, SlotState::fresh()?)

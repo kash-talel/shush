@@ -5,6 +5,7 @@
   import KeyfileAttach from "./KeyfileAttach.svelte";
   import CsvImport from "./CsvImport.svelte";
   import DuressCard from "./DuressCard.svelte";
+  import HelloCard from "./HelloCard.svelte";
   import BrowserCard from "./BrowserCard.svelte";
   import NetworkCard from "./NetworkCard.svelte";
   import SyncCard from "./SyncCard.svelte";
@@ -313,6 +314,7 @@
         {#if !importPath}{@render errorLine(importError)}{/if}
       </div>
       <CsvImport {onimported} />
+      <HelloCard />
       <DuressCard />
     {/if}
 

@@ -9,6 +9,7 @@
   import {
     appInfo,
     lock,
+    lockAndForget,
     vaultStatus,
     AUTO_LOCK_EVENT,
     type AppInfo,
@@ -66,6 +67,14 @@
     await refresh();
   }
 
+  async function doLockForget() {
+    await lockAndForget();
+    summary = null;
+    onboarding = false;
+    clipboardUntil = 0;
+    await refresh();
+  }
+
   async function init() {
     [info] = await Promise.all([appInfo(), refresh()]);
     // A reload of the WebView must not show stale unlocked UI: the Rust side
@@ -98,7 +107,7 @@
   {#if summary && onboarding}
     <OnboardingScreen color={unlockedColor ?? "crimson"} ondone={() => (onboarding = false)} />
   {:else if summary}
-    <Dashboard {summary} hotkey={info?.spotlight_hotkey ?? null} onlock={doLock} oncopied={(secs) => (clipboardUntil = Date.now() + secs * 1000)} />
+    <Dashboard {summary} hotkey={info?.spotlight_hotkey ?? null} onlock={doLock} onlockforget={doLockForget} oncopied={(secs) => (clipboardUntil = Date.now() + secs * 1000)} />
   {:else if newTarget && targetStatus}
     <CreateVaultScreen
       vault={targetStatus}
