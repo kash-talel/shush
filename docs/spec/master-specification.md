@@ -186,7 +186,8 @@ export interface Tombstone {
   deleted_at: string;
   // Deleted logins only (issue #138): hex HMAC-SHA256(identity_key,
   // canonical_host || 0x00 || lower(trim(username))). Never the plaintext host or username.
-  // Lets a CSV import skip a login the user deleted. Per vault, so a sync peer's digests don't match.
+  // Lets a CSV import skip a login the user deleted. A vault with no key takes it from a
+  // Replace restore or a sync peer; two vaults that each made their own key don't match.
   identity?: string;
 }
 

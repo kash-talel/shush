@@ -208,17 +208,31 @@ pub enum SecretField {
     Totp,
 }
 
+/// Lower-case hex, written into a buffer sized up front so no partial copy
+/// is left behind by a reallocation (the identity key goes through here).
 fn to_hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut s = String::with_capacity(b.len() * 2);
+    for x in b {
+        s.push(HEX[usize::from(x >> 4)] as char);
+        s.push(HEX[usize::from(x & 0x0f)] as char);
+    }
+    s
 }
 
-fn unhex(s: &str) -> Vec<u8> {
-    if s.len() % 2 != 0 || !s.is_ascii() {
-        return Vec::new();
+/// Decodes a 32-byte hex key into a wiped fixed buffer; `None` if malformed.
+fn key_from_hex(s: &str) -> Option<Zeroizing<[u8; 32]>> {
+    let raw = s.as_bytes();
+    if raw.len() != 64 {
+        return None;
     }
-    (0..s.len() / 2)
-        .map_while(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok())
-        .collect()
+    let mut key = Zeroizing::new([0u8; 32]);
+    for (i, pair) in raw.chunks_exact(2).enumerate() {
+        let hi = (pair[0] as char).to_digit(16)?;
+        let lo = (pair[1] as char).to_digit(16)?;
+        key[i] = (hi * 16 + lo) as u8;
+    }
+    Some(key)
 }
 
 /// Random UUID v4 (RFC 9562) from the OS CSPRNG.
@@ -567,21 +581,34 @@ impl VaultData {
         if host.is_empty() {
             return None;
         }
-        let mut key = unhex(&self.identity_key);
-        if key.len() != 32 {
-            if !create {
-                return None;
+        let key = match key_from_hex(&self.identity_key) {
+            Some(k) => k,
+            None if create => {
+                let mut k = Zeroizing::new([0u8; 32]);
+                fill_random(&mut k[..]).expect("OS RNG unavailable");
+                self.identity_key.zeroize();
+                self.identity_key = to_hex(&k[..]);
+                k
             }
-            key = vec![0u8; 32];
-            fill_random(&mut key).expect("OS RNG unavailable");
-            self.identity_key = to_hex(&key);
-        }
-        let mut m = Hmac::<sha2::Sha256>::new_from_slice(&key).expect("any key length");
-        key.zeroize();
+            None => return None,
+        };
+        let mut m = Hmac::<sha2::Sha256>::new_from_slice(&key[..]).expect("any key length");
+        drop(key);
         m.update(host.as_bytes());
         m.update(&[0]);
         m.update(username.trim().to_ascii_lowercase().as_bytes());
         Some(to_hex(&m.finalize().into_bytes()))
+    }
+
+    /// Takes over another copy of this vault's identity key (a restored
+    /// backup or a sync peer) when this one has none yet, so the deleted-login
+    /// digests in tombstones copied from it still match (issue #138).
+    pub fn adopt_identity_key(&mut self, other: &VaultData) {
+        if key_from_hex(&self.identity_key).is_none() && key_from_hex(&other.identity_key).is_some()
+        {
+            self.identity_key.zeroize();
+            self.identity_key = other.identity_key.clone();
+        }
     }
 
     /// Whether a login with this canonical host and username was deleted

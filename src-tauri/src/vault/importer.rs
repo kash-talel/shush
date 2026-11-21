@@ -559,6 +559,35 @@ Other,https://other.com,bob,pw2
     }
 
     #[test]
+    fn deleted_login_survives_restore_and_sync() {
+        use crate::vault::backup::{apply, ImportMode, Manifest};
+        let csv = "name,url,username,password\nGH,https://github.com,alice,pw\n";
+        let mut v = VaultData::new();
+        import(&mut v, csv.as_bytes(), true, false).unwrap();
+        let id = v.summaries()[0].id.clone();
+        v.delete_item(&id).unwrap();
+
+        // Replace restore of a backup into a fresh vault keeps the key.
+        let manifest = Manifest {
+            backup_version: 1,
+            exported_at: "2026-11-01T00:00:00Z".into(),
+            app_version: "0".into(),
+            items_count: 0,
+            vault_data: v.clone(),
+        };
+        let mut restored = VaultData::new();
+        apply(&mut restored, &manifest, ImportMode::Replace);
+        let p = import(&mut restored.clone(), csv.as_bytes(), false, false).unwrap();
+        assert_eq!((p.deleted_locally, p.new_items), (1, 0));
+
+        // A new sync peer takes the key with the tombstones.
+        let mut peer = VaultData::new();
+        crate::vault::sync_merge::merge_peer(&mut peer, &v, crate::vault::hlc::now_ms());
+        let p = import(&mut peer.clone(), csv.as_bytes(), false, false).unwrap();
+        assert_eq!((p.deleted_locally, p.new_items), (1, 0));
+    }
+
+    #[test]
     fn preview_does_not_modify() {
         let mut v = VaultData::new();
         let s = import(

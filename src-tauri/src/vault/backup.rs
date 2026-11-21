@@ -241,6 +241,8 @@ pub fn apply(current: &mut VaultData, manifest: &Manifest, mode: ImportMode) -> 
             current.folders = manifest.vault_data.folders.clone();
             current.settings = manifest.vault_data.settings.clone();
             // Keep both sides' deletion history, minus what was just restored.
+            // The backup's deleted-login digests need its key (issue #138).
+            current.adopt_identity_key(&manifest.vault_data);
             for t in &manifest.vault_data.tombstones {
                 if !current.is_tombstoned(&t.id) {
                     current.tombstones.push(t.clone());
