@@ -5,7 +5,9 @@
 //! never equal their ASCII twin), default ports made explicit, and a single
 //! trailing dot removed. There is no suffix or "registrable domain" matching:
 //! `github.com.evil.test`, `evil-github.com` and `http://github.com` never
-//! match `https://github.com`.
+//! match `https://github.com`. The one exception is a login that opted in to
+//! subdomains (issue #152, [`item_matches_subdomains`]): it also matches
+//! whole-label subdomains of its own host, same scheme and port.
 
 use url::{Host, Url};
 
@@ -76,6 +78,34 @@ pub fn item_matches(item_url: &str, tab: &Origin) -> bool {
     Origin::parse_item(item_url).is_some_and(|o| &o == tab)
 }
 
+/// Like [`item_matches`], but the tab may also be a subdomain of the item's
+/// host (issue #152). Scheme and port must still be equal; the item host must
+/// be a DNS name with at least one dot (never an IP address or a bare label
+/// such as `com`), and the match is on a whole label boundary, so
+/// `evil-github.com` and `github.com.evil.test` still fail.
+pub fn item_matches_subdomains(item_url: &str, tab: &Origin) -> bool {
+    let Some(o) = Origin::parse_item(item_url) else {
+        return false;
+    };
+    if o == *tab {
+        return true;
+    }
+    // An IPv4 literal ends in a numeric label; a DNS name's TLD never does.
+    let is_name = o.host.contains('.')
+        && !o.host.starts_with('[')
+        && o.host
+            .rsplit('.')
+            .next()
+            .is_some_and(|tld| tld.chars().any(|c| !c.is_ascii_digit()));
+    is_name
+        && o.scheme == tab.scheme
+        && o.port == tab.port
+        && tab
+            .host
+            .strip_suffix(o.host.as_str())
+            .is_some_and(|rest| rest.ends_with('.') && rest.len() > 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,6 +138,39 @@ mod tests {
         ];
         for (item, want) in cases {
             assert_eq!(item_matches(item, &gh), *want, "{item}");
+        }
+    }
+
+    #[test]
+    fn subdomain_opt_in_table() {
+        let cases: &[(&str, &str, bool)] = &[
+            ("github.com", "https://gist.github.com/x", true),
+            ("github.com", "https://a.b.github.com", true),
+            ("github.com", "https://github.com", true),
+            ("https://github.com", "http://gist.github.com", false),
+            ("github.com", "https://gist.github.com:8443", false),
+            ("github.com", "https://evil-github.com", false),
+            ("github.com", "https://github.com.evil.test", false),
+            ("github.com", "https://xgithub.com", false),
+            ("github.com", "https://.github.com", false),
+            ("com", "https://evil.com", false),
+            ("localhost", "https://a.localhost", false),
+            ("10.0.0.1", "https://1.10.0.0.1", false),
+            ("gist.github.com", "https://github.com", false),
+        ];
+        for (item, t, want) in cases {
+            let tb = match Origin::parse_tab(t) {
+                Some(o) => o,
+                None => {
+                    assert!(!*want, "{t}");
+                    continue;
+                }
+            };
+            assert_eq!(item_matches_subdomains(item, &tb), *want, "{item} vs {t}");
+            // Exact matching never widens.
+            if *item == "github.com" && *t == "https://gist.github.com/x" {
+                assert!(!item_matches(item, &tb));
+            }
         }
     }
 

@@ -371,6 +371,7 @@ pub fn import(
             favorite: row.favorite,
             tags: row.tags.clone(),
             folder_id: None, // CSV folders are carried over as tags
+            match_subdomains: None,
         };
         if apply {
             match data.create_item(row.kind, &draft) {

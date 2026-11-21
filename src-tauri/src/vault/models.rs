@@ -219,6 +219,14 @@ pub struct LoginItem {
     pub totp_secret: Option<String>,
     /// Previous / archived passwords.
     pub password_history: Vec<PasswordHistoryEntry>,
+    /// Also match subdomains of the saved host in the browser bridge (issue
+    /// #152). Off by default; absent in older vaults, which read as off.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub match_subdomains: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// A Markdown secure note.
@@ -411,6 +419,7 @@ mod tests {
             url: "https://github.com".into(),
             totp_secret: None,
             password_history: vec![],
+            match_subdomains: false,
         }));
         let json: serde_json::Value = serde_json::to_value(&data).unwrap();
         let item = &json["items"][0];
@@ -418,7 +427,17 @@ mod tests {
         assert_eq!(item["title"], "GitHub"); // base fields are flattened
         assert_eq!(item["password"], "hunter2");
         assert_eq!(json["settings"]["clipboard_clear_seconds"], 30);
+        // Off is not written, so the shape older vaults have reads back as off.
+        assert!(item.get("match_subdomains").is_none());
 
+        let back: VaultData = serde_json::from_value(json).unwrap();
+        assert_eq!(back, data);
+
+        if let VaultItem::Login(l) = &mut data.items[0] {
+            l.match_subdomains = true;
+        }
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(json["items"][0]["match_subdomains"], true);
         let back: VaultData = serde_json::from_value(json).unwrap();
         assert_eq!(back, data);
     }

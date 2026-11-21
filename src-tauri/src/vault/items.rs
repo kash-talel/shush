@@ -72,6 +72,9 @@ pub struct ItemDraft {
     /// Folder id, or `None` for no folder.
     #[serde(default)]
     pub folder_id: Option<String>,
+    /// Browser bridge subdomain opt-in (issue #152). `None` keeps the current value.
+    #[serde(default)]
+    pub match_subdomains: Option<bool>,
 }
 
 /// A secret string received from the UI, wiped when dropped.
@@ -173,6 +176,8 @@ pub struct ItemDetail {
     pub has_totp: bool,
     /// Number of archived passwords.
     pub history_count: usize,
+    /// Whether the browser bridge also matches subdomains of the URL.
+    pub match_subdomains: bool,
     /// Attached files (metadata only).
     pub attachments: Vec<AttachmentInfo>,
     /// Creation time.
@@ -407,6 +412,7 @@ impl VaultData {
                 url: d.url.trim().to_string(),
                 totp_secret: non_empty(d.totp.as_ref().map(SecretInput::as_str)),
                 password_history: vec![],
+                match_subdomains: d.match_subdomains.unwrap_or(false),
             }),
             ItemKind::SecureNote => VaultItem::SecureNote(SecureNoteItem {
                 base,
@@ -456,6 +462,9 @@ impl VaultData {
                 }
                 if let Some(t) = &d.totp {
                     l.totp_secret = non_empty(Some(t.as_str()));
+                }
+                if let Some(m) = d.match_subdomains {
+                    l.match_subdomains = m;
                 }
             }
             VaultItem::SecureNote(n) => n.content = d.content.clone(),
@@ -753,6 +762,7 @@ impl VaultData {
             has_password: false,
             has_totp: false,
             history_count: 0,
+            match_subdomains: false,
             attachments: b
                 .attachments
                 .iter()
@@ -774,6 +784,7 @@ impl VaultData {
                 d.has_password = !l.password.is_empty();
                 d.has_totp = l.totp_secret.is_some();
                 d.history_count = l.password_history.len();
+                d.match_subdomains = l.match_subdomains;
             }
             VaultItem::SecureNote(n) => d.content = n.content.clone(),
         }

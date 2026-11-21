@@ -41,6 +41,7 @@
   let title = $state(initial?.title ?? "");
   let username = $state(initial?.username ?? "");
   let url = $state(initial?.url ?? "");
+  let matchSubdomains = $state(initial?.match_subdomains ?? false);
   let notes = $state(initial?.notes ?? "");
   let content = $state(initial?.content ?? "");
   let tags = $state(initial?.tags.join(", ") ?? "");
@@ -80,6 +81,7 @@
       folder_id: folderId,
       password: isLogin && passwordTouched ? password : null,
       totp: isLogin && totpTouched ? totp : null,
+      match_subdomains: isLogin ? matchSubdomains : undefined,
     };
   }
 
@@ -120,6 +122,7 @@
           if (diskItem.title !== initial.title) diffs.push("title");
           if (diskItem.username !== initial.username) diffs.push("username");
           if (diskItem.url !== initial.url) diffs.push("URL");
+          if (diskItem.match_subdomains !== initial.match_subdomains) diffs.push("subdomain matching");
           if (diskItem.notes !== initial.notes) diffs.push("notes");
           if (diskItem.content !== initial.content) diffs.push("content");
           if (diskItem.folder_id !== initial.folder_id) diffs.push("folder");
@@ -163,6 +166,7 @@
     title = conflictItem.title;
     username = conflictItem.username;
     url = conflictItem.url;
+    matchSubdomains = conflictItem.match_subdomains;
     notes = conflictItem.notes;
     content = conflictItem.content;
     tags = conflictItem.tags.join(", ");
@@ -308,6 +312,10 @@
           placeholder="https://"
           class="well h-10 w-full px-3 font-mono text-[13px] text-zinc-100 outline-none"
         />
+        <label class="mt-2 flex items-start gap-2 text-xs text-zinc-400">
+          <input id="f-subdomains" type="checkbox" bind:checked={matchSubdomains} class="mt-0.5" />
+          <span>Also fill on subdomains of this site (browser extension). Off by default: only the exact site matches.</span>
+        </label>
       </div>
 
       <div>
