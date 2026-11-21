@@ -19,6 +19,7 @@
   let preview = $state.raw<CsvSummary | null>(null);
   let done = $state.raw<CsvSummary | null>(null);
   let shredded = $state(false);
+  let readdDeleted = $state(false);
   let busy = $state(false);
   let error = $state<CmdError | null>(null);
 
@@ -32,6 +33,7 @@
     if (typeof picked !== "string") return;
     path = picked;
     preview = done = null;
+    readdDeleted = false;
     shredded = false;
     error = null;
     busy = true;
@@ -44,12 +46,29 @@
     }
   }
 
+  async function setReadd(on: boolean) {
+    if (!path || busy) return;
+    // busy disables Import, the file picker and this box until the matching
+    // preview is back, so a late answer can never replace a newer state.
+    readdDeleted = on;
+    busy = true;
+    error = null;
+    try {
+      preview = await previewCsv(path, on);
+    } catch (e) {
+      readdDeleted = !on; // keep the box, the counts and the import flag in step
+      error = toCmdError(e);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function run() {
     if (!path) return;
     busy = true;
     error = null;
     try {
-      done = await importCsv(path);
+      done = await importCsv(path, readdDeleted);
       preview = null;
       onimported();
     } catch (e) {
@@ -126,6 +145,23 @@
         </div>
       {/each}
     </dl>
+    {#if preview.deleted_locally || readdDeleted}
+      <label class="flex items-start gap-2 text-xs leading-5 text-zinc-300">
+        <input
+          type="checkbox"
+          class="mt-1"
+          checked={readdDeleted}
+          disabled={busy}
+          onchange={(e) => setReadd(e.currentTarget.checked)}
+        />
+        <span>
+          {preview.deleted_locally
+            ? `${preview.deleted_locally} login${preview.deleted_locally === 1 ? " was" : "s were"} deleted from this vault and will be skipped.`
+            : "Logins deleted from this vault will be added back."}
+          {readdDeleted ? "Untick to skip them." : "Tick to add them back anyway."}
+        </span>
+      </label>
+    {/if}
     <button
       type="button"
       onclick={run}
@@ -141,7 +177,9 @@
     <p class="text-xs text-uv" role="status">
       Imported {done.new_items} item{done.new_items === 1 ? "" : "s"}{done.conflicts
         ? `; ${done.conflicts} different password${done.conflicts === 1 ? "" : "s"} archived in history`
-        : ""}{done.invalid_totp ? `; ${done.invalid_totp} invalid 2FA secret${done.invalid_totp === 1 ? "" : "s"} dropped` : ""}.
+        : ""}{done.invalid_totp ? `; ${done.invalid_totp} invalid 2FA secret${done.invalid_totp === 1 ? "" : "s"} dropped` : ""}{done.deleted_locally
+        ? `; ${done.deleted_locally} login${done.deleted_locally === 1 ? "" : "s"} you deleted skipped`
+        : ""}.
     </p>
     {#if shredded}
       <p class="text-xs text-uv" role="status">The CSV file was overwritten and deleted.</p>

@@ -29,6 +29,10 @@ pub struct VaultData {
     /// Absent in vaults written before tombstones existed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tombstones: Vec<Tombstone>,
+    /// Random 32-byte key (hex) for the login-identity digests kept in
+    /// tombstones (issue #138). Empty until the first login is deleted.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub identity_key: String,
     /// Browser-extension pairings (issue #52). Inside the encrypted payload so
     /// revocations and replay counters survive restarts. Absent in older vaults.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -142,6 +146,7 @@ impl VaultData {
             folders: Vec::new(),
             settings: VaultSettings::default(),
             tombstones: Vec::new(),
+            identity_key: String::new(),
             browser_pairings: Vec::new(),
             device_id: String::new(),
             last_hlc: None,
@@ -275,6 +280,11 @@ pub struct Tombstone {
     /// Clock of the deletion (issue #137); lets sync order it against edits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hlc: Option<Hlc>,
+    /// Keyed digest of a deleted login's identity (issue #138), so a CSV
+    /// re-import can tell the user "you deleted this". Hex HMAC-SHA256 over
+    /// canonical host and lower-cased username; never the plaintext.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
 }
 
 /// A folder.

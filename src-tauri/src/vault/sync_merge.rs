@@ -72,6 +72,9 @@ pub fn merge_peer(local: &mut VaultData, peer: &VaultData, now_ms: u64) -> Merge
     let mut r = MergeReport::default();
     let plausible = |h: &Option<Hlc>| h.as_ref().map_or(true, |h| h.is_plausible(now_ms));
 
+    // A device without a deleted-login key takes its peer's, so the digests
+    // in merged tombstones match on both sides (issue #138).
+    local.adopt_identity_key(peer);
     // Tombstones first, so item decisions see the unioned set.
     for t in &peer.tombstones {
         if !plausible(&t.hlc) {

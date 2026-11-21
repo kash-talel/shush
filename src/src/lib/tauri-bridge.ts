@@ -460,6 +460,7 @@ export interface CsvSummary {
   new_items: number;
   identical: number;
   conflicts: number;
+  deleted_locally: number;
   skipped: number;
   invalid_totp: number;
 }
@@ -474,8 +475,10 @@ export const CSV_FORMAT_LABEL: Record<CsvFormat, string> = {
   generic: "Generic CSV",
 };
 
-export const previewCsv = (path: string) => invoke<CsvSummary>("preview_csv", { path });
-export const importCsv = (path: string) => invoke<CsvSummary>("import_csv", { path });
+export const previewCsv = (path: string, readdDeleted = false) =>
+  invoke<CsvSummary>("preview_csv", { path, readdDeleted });
+export const importCsv = (path: string, readdDeleted = false) =>
+  invoke<CsvSummary>("import_csv", { path, readdDeleted });
 export const shredCsv = (path: string) => invoke<void>("shred_csv", { path });
 
 // ---- Onboarding (Phase 7a) ------------------------------------------------------

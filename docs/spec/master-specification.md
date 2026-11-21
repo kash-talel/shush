@@ -176,6 +176,7 @@ export interface VaultData {
   folders: Folder[];
   settings: VaultSettings;
   tombstones?: Tombstone[]; // deleted item ids (issue #19); omitted when empty
+  identity_key?: string; // random 32-byte key, hex, for Tombstone.identity (issue #138); created at the first login deletion
 }
 
 // Left by a deleted item so no merge resurrects it. No item contents.
@@ -183,6 +184,11 @@ export interface VaultData {
 export interface Tombstone {
   id: string; // the deleted item's id
   deleted_at: string;
+  // Deleted logins only (issue #138): hex HMAC-SHA256(identity_key,
+  // canonical_host || 0x00 || lower(trim(username))). Never the plaintext host or username.
+  // Lets a CSV import skip a login the user deleted. A vault with no key takes it from a
+  // Replace restore or a sync peer; two vaults that each made their own key don't match.
+  identity?: string;
 }
 
 export type ItemType = 'login' | 'secure_note';
@@ -556,6 +562,7 @@ LAN sync (`lan-sync.md` §8) must not reintroduce wall-clock ordering. Its merge
 ### 9.3 Third-Party Migration (CSV Importer)
 - Supports importing unencrypted CSV exports from **Bitwarden**, **1Password**, **KeePass**, and **Chrome/Firefox**.
 - Parses fields into standard `LoginItem` and `SecureNoteItem` models.
+- A row matching a login the user deleted from this vault (by the tombstone's `identity` digest, issue #138) is counted as "deleted locally" in the preview and skipped, unless the user ticks "add them back anyway" for that import.
 - Immediately zeroes the imported plaintext buffer from memory upon completion.
 
 ---

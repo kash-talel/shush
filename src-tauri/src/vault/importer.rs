@@ -251,6 +251,9 @@ pub struct CsvSummary {
     pub identical: usize,
     /// Rows whose password differs from an existing login (archived).
     pub conflicts: usize,
+    /// Rows for a login the user deleted from this vault (issue #138). Skipped
+    /// unless the import opts in to re-adding them.
+    pub deleted_locally: usize,
     /// Rows without enough data, or malformed.
     pub skipped: usize,
     /// TOTP values that were invalid and dropped.
@@ -281,11 +284,19 @@ pub fn read_csv(path: &Path) -> Result<Zeroizing<Vec<u8>>, ImportError> {
     Ok(buf)
 }
 
+/// `readd_deleted` re-adds logins the user deleted (issue #138); by default
+/// they are skipped and counted in `deleted_locally`.
+///
 /// Previews (`apply = false`) or performs (`apply = true`) a CSV import.
 ///
 /// Limitation (issue #6): the `csv` crate and `String` fields keep unwiped
 /// copies of plaintext rows in freed memory; the source buffer is wiped.
-pub fn import(data: &mut VaultData, bytes: &[u8], apply: bool) -> Result<CsvSummary, ImportError> {
+pub fn import(
+    data: &mut VaultData,
+    bytes: &[u8],
+    apply: bool,
+    readd_deleted: bool,
+) -> Result<CsvSummary, ImportError> {
     let (format, rows, skipped) = parse(bytes)?;
     let mut s = CsvSummary {
         format: Some(format),
@@ -325,6 +336,14 @@ pub fn import(data: &mut VaultData, bytes: &[u8], apply: bool) -> Result<CsvSumm
                     cur.password_history.drain(..excess);
                 }
             }
+            continue;
+        }
+
+        if !readd_deleted
+            && row.kind == ItemKind::Login
+            && data.is_login_deleted(&host, &row.username)
+        {
+            s.deleted_locally += 1;
             continue;
         }
 
@@ -406,7 +425,7 @@ mod tests {
 
     fn run(csv: &str) -> (VaultData, CsvSummary) {
         let mut v = VaultData::new();
-        let s = import(&mut v, csv.as_bytes(), true).unwrap();
+        let s = import(&mut v, csv.as_bytes(), true, false).unwrap();
         (v, s)
     }
 
@@ -479,13 +498,13 @@ mod tests {
         let csv1 = "name,url,username,password\ngithub.com,https://github.com,octo,current\n";
         let csv2 = "name,url,username,password\ngithub.com,https://www.github.com/x,OCTO,other-browser-pw\n";
         let mut v = VaultData::new();
-        import(&mut v, csv1.as_bytes(), true).unwrap();
+        import(&mut v, csv1.as_bytes(), true, false).unwrap();
         let id = v.summaries()[0].id.clone();
 
-        let preview = import(&mut v.clone(), csv2.as_bytes(), false).unwrap();
+        let preview = import(&mut v.clone(), csv2.as_bytes(), false, false).unwrap();
         assert_eq!((preview.new_items, preview.conflicts), (0, 1));
 
-        let s = import(&mut v, csv2.as_bytes(), true).unwrap();
+        let s = import(&mut v, csv2.as_bytes(), true, false).unwrap();
         assert_eq!((s.new_items, s.conflicts), (0, 1));
         assert_eq!(
             &*v.secret(&id, SecretField::Password).unwrap(),
@@ -501,7 +520,7 @@ mod tests {
             Some("Imported from Chrome / Edge (CSV)")
         );
 
-        let again = import(&mut v, csv2.as_bytes(), true).unwrap();
+        let again = import(&mut v, csv2.as_bytes(), true, false).unwrap();
         assert_eq!(
             (again.new_items, again.conflicts, again.identical),
             (0, 0, 1)
@@ -510,11 +529,71 @@ mod tests {
     }
 
     #[test]
+    fn deleted_login_is_not_readded_unless_opted_in() {
+        let csv = "name,url,username,password
+GH,https://github.com/login,Alice,pw1
+Other,https://other.com,bob,pw2
+";
+        let mut v = VaultData::new();
+        import(&mut v, csv.as_bytes(), true, false).unwrap();
+        let id = v
+            .items
+            .iter()
+            .find_map(|i| match i {
+                VaultItem::Login(l) if l.url.contains("github") => Some(l.base.id.clone()),
+                _ => None,
+            })
+            .unwrap();
+        v.delete_item(&id).unwrap();
+        let json = serde_json::to_string(&v.tombstones).unwrap();
+        assert!(!json.contains("github") && !json.contains("alice"));
+
+        let p = import(&mut v.clone(), csv.as_bytes(), false, false).unwrap();
+        assert_eq!((p.deleted_locally, p.new_items, p.identical), (1, 0, 1));
+        let s = import(&mut v, csv.as_bytes(), true, false).unwrap();
+        assert_eq!((s.deleted_locally, s.new_items), (1, 0));
+        assert_eq!(v.items.len(), 1);
+        let s = import(&mut v, csv.as_bytes(), true, true).unwrap();
+        assert_eq!((s.deleted_locally, s.new_items), (0, 1));
+        assert_eq!(v.items.len(), 2);
+    }
+
+    #[test]
+    fn deleted_login_survives_restore_and_sync() {
+        use crate::vault::backup::{apply, ImportMode, Manifest};
+        let csv = "name,url,username,password\nGH,https://github.com,alice,pw\n";
+        let mut v = VaultData::new();
+        import(&mut v, csv.as_bytes(), true, false).unwrap();
+        let id = v.summaries()[0].id.clone();
+        v.delete_item(&id).unwrap();
+
+        // Replace restore of a backup into a fresh vault keeps the key.
+        let manifest = Manifest {
+            backup_version: 1,
+            exported_at: "2026-11-01T00:00:00Z".into(),
+            app_version: "0".into(),
+            items_count: 0,
+            vault_data: v.clone(),
+        };
+        let mut restored = VaultData::new();
+        apply(&mut restored, &manifest, ImportMode::Replace);
+        let p = import(&mut restored.clone(), csv.as_bytes(), false, false).unwrap();
+        assert_eq!((p.deleted_locally, p.new_items), (1, 0));
+
+        // A new sync peer takes the key with the tombstones.
+        let mut peer = VaultData::new();
+        crate::vault::sync_merge::merge_peer(&mut peer, &v, crate::vault::hlc::now_ms());
+        let p = import(&mut peer.clone(), csv.as_bytes(), false, false).unwrap();
+        assert_eq!((p.deleted_locally, p.new_items), (1, 0));
+    }
+
+    #[test]
     fn preview_does_not_modify() {
         let mut v = VaultData::new();
         let s = import(
             &mut v,
             b"name,url,username,password\na,https://a.io,u,p\n",
+            false,
             false,
         )
         .unwrap();
@@ -528,11 +607,11 @@ mod tests {
         assert_eq!((s.total, s.skipped), (1, 1));
         let mut v = VaultData::new();
         assert_eq!(
-            import(&mut v, b"a,b,c\n1,2,3\n", false).unwrap_err(),
+            import(&mut v, b"a,b,c\n1,2,3\n", false, false).unwrap_err(),
             ImportError::Unrecognised
         );
         assert_eq!(
-            import(&mut v, &[0xff, 0xfe, 0x00], false).unwrap_err(),
+            import(&mut v, &[0xff, 0xfe, 0x00], false, false).unwrap_err(),
             ImportError::Malformed
         );
     }
