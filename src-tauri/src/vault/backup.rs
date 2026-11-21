@@ -494,6 +494,7 @@ mod tests {
             id: keep.clone(),
             deleted_at: now_rfc3339(),
             hlc: None,
+            identity: None,
         });
         let manifest = Manifest {
             backup_version: 1,

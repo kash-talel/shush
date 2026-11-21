@@ -2436,12 +2436,19 @@ impl From<vault::importer::ImportError> for CmdError {
 async fn preview_csv(
     app: tauri::AppHandle,
     path: String,
+    readd_deleted: Option<bool>,
 ) -> Result<vault::importer::CsvSummary, CmdError> {
+    let readd = readd_deleted.unwrap_or(false);
     blocking(move || {
         let bytes = vault::importer::read_csv(Path::new(&path))?;
         // Preview runs on a copy: nothing is changed or saved.
         read(&app, |d| {
-            Ok(vault::importer::import(&mut d.clone(), &bytes, false)?)
+            Ok(vault::importer::import(
+                &mut d.clone(),
+                &bytes,
+                false,
+                readd,
+            )?)
         })
     })
     .await
@@ -2451,10 +2458,14 @@ async fn preview_csv(
 async fn import_csv(
     app: tauri::AppHandle,
     path: String,
+    readd_deleted: Option<bool>,
 ) -> Result<vault::importer::CsvSummary, CmdError> {
+    let readd = readd_deleted.unwrap_or(false);
     blocking(move || {
         let bytes = vault::importer::read_csv(Path::new(&path))?;
-        write(&app, |d| Ok(vault::importer::import(d, &bytes, true)?))
+        write(&app, |d| {
+            Ok(vault::importer::import(d, &bytes, true, readd)?)
+        })
     })
     .await
 }

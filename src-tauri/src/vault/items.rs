@@ -208,6 +208,19 @@ pub enum SecretField {
     Totp,
 }
 
+fn to_hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn unhex(s: &str) -> Vec<u8> {
+    if s.len() % 2 != 0 || !s.is_ascii() {
+        return Vec::new();
+    }
+    (0..s.len() / 2)
+        .map_while(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok())
+        .collect()
+}
+
 /// Random UUID v4 (RFC 9562) from the OS CSPRNG.
 pub fn new_id() -> String {
     let mut b = [0u8; 16];
@@ -520,11 +533,18 @@ impl VaultData {
     /// Removes an item and leaves a tombstone, so a later merge of an older
     /// backup (or a sync peer) cannot bring it back (issue #19).
     pub fn delete_item(&mut self, id: &str) -> Result<(), ItemError> {
+        let login = self.items.iter().find_map(|i| match i {
+            VaultItem::Login(l) if l.base.id == id => {
+                Some((canonical_host(&l.url), l.username.clone()))
+            }
+            _ => None,
+        });
         let before = self.items.len();
         self.items.retain(|i| base(i).id != id);
         if self.items.len() == before {
             return Err(ItemError::NotFound);
         }
+        let identity = login.and_then(|(h, u)| self.identity_digest(&h, &u, true));
         let now = now_rfc3339();
         let clock = self.next_hlc();
         self.tombstones.retain(|t| t.id != id);
@@ -532,10 +552,54 @@ impl VaultData {
             id: id.to_string(),
             deleted_at: now.clone(),
             hlc: Some(clock),
+            identity,
         });
         self.gc_tombstones();
         self.updated_at = now;
         Ok(())
+    }
+
+    /// Keyed digest of a login identity (issue #138): hex
+    /// `HMAC-SHA256(identity_key, host || 0x00 || lower(username))`. `None`
+    /// without a host, or without a key when `create` is false.
+    fn identity_digest(&mut self, host: &str, username: &str, create: bool) -> Option<String> {
+        use hmac::{Hmac, Mac};
+        if host.is_empty() {
+            return None;
+        }
+        let mut key = unhex(&self.identity_key);
+        if key.len() != 32 {
+            if !create {
+                return None;
+            }
+            key = vec![0u8; 32];
+            fill_random(&mut key).expect("OS RNG unavailable");
+            self.identity_key = to_hex(&key);
+        }
+        let mut m = Hmac::<sha2::Sha256>::new_from_slice(&key).expect("any key length");
+        key.zeroize();
+        m.update(host.as_bytes());
+        m.update(&[0]);
+        m.update(username.trim().to_ascii_lowercase().as_bytes());
+        Some(to_hex(&m.finalize().into_bytes()))
+    }
+
+    /// Whether a login with this canonical host and username was deleted
+    /// from this vault (matched by keyed digest, issue #138).
+    pub fn is_login_deleted(&self, host: &str, username: &str) -> bool {
+        if self.tombstones.iter().all(|t| t.identity.is_none()) {
+            return false;
+        }
+        // Digest needs `&mut` only to create a key; work on a throwaway view.
+        let mut probe = Self::new();
+        probe.identity_key = self.identity_key.clone();
+        match probe.identity_digest(host, username, false) {
+            Some(d) => self
+                .tombstones
+                .iter()
+                .any(|t| t.identity.as_deref() == Some(&d)),
+            None => false,
+        }
     }
 
     /// Issues the next hybrid logical clock value for a local change.
@@ -998,6 +1062,7 @@ mod tests {
             id: "old".into(),
             deleted_at: "2000-01-01T00:00:00Z".into(),
             hlc: None,
+            identity: None,
         });
         v.gc_tombstones();
         assert!(!v.is_tombstoned("old"));
@@ -1010,12 +1075,14 @@ mod tests {
                 id: format!("t{n}"),
                 deleted_at: now.clone(),
                 hlc: None,
+                identity: None,
             });
         }
         v.tombstones.push(Tombstone {
             id: "future".into(),
             deleted_at: "2999-01-01T00:00:00Z".into(),
             hlc: None,
+            identity: None,
         });
         v.gc_tombstones();
         assert_eq!(v.tombstones.len(), MAX_TOMBSTONES);

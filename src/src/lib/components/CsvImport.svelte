@@ -19,6 +19,7 @@
   let preview = $state.raw<CsvSummary | null>(null);
   let done = $state.raw<CsvSummary | null>(null);
   let shredded = $state(false);
+  let readdDeleted = $state(false);
   let busy = $state(false);
   let error = $state<CmdError | null>(null);
 
@@ -32,6 +33,7 @@
     if (typeof picked !== "string") return;
     path = picked;
     preview = done = null;
+    readdDeleted = false;
     shredded = false;
     error = null;
     busy = true;
@@ -44,12 +46,22 @@
     }
   }
 
+  async function setReadd(on: boolean) {
+    if (!path) return;
+    readdDeleted = on;
+    try {
+      preview = await previewCsv(path, on);
+    } catch (e) {
+      error = toCmdError(e);
+    }
+  }
+
   async function run() {
     if (!path) return;
     busy = true;
     error = null;
     try {
-      done = await importCsv(path);
+      done = await importCsv(path, readdDeleted);
       preview = null;
       onimported();
     } catch (e) {
@@ -126,6 +138,23 @@
         </div>
       {/each}
     </dl>
+    {#if preview.deleted_locally || readdDeleted}
+      <label class="flex items-start gap-2 text-xs leading-5 text-zinc-300">
+        <input
+          type="checkbox"
+          class="mt-1"
+          checked={readdDeleted}
+          disabled={busy}
+          onchange={(e) => setReadd(e.currentTarget.checked)}
+        />
+        <span>
+          {preview.deleted_locally
+            ? `${preview.deleted_locally} login${preview.deleted_locally === 1 ? " was" : "s were"} deleted from this vault and will be skipped.`
+            : "Re-adding logins deleted from this vault."}
+          Tick to add them back anyway.
+        </span>
+      </label>
+    {/if}
     <button
       type="button"
       onclick={run}
