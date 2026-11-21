@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.2.0](https://github.com/kash-talel/shush/compare/v0.1.2...v0.2.0) (2026-11-21)
+
+
+### Features
+
+* **#78:** notify-only update client behind the network gate ([#195](https://github.com/kash-talel/shush/issues/195)) ([2e116d8](https://github.com/kash-talel/shush/commit/2e116d85d0d7eba9b60be89d1a494c143c73b955))
+
+
+### Bug Fixes
+
+* **#106:** Restore default vault action when hidden ([#250](https://github.com/kash-talel/shush/issues/250)) ([6028794](https://github.com/kash-talel/shush/commit/6028794e28e6497888058f816e5fe0742bb54bf0))
+* **#113:** reload or notify when the vault file changes on disk ([#210](https://github.com/kash-talel/shush/issues/210)) ([aecc616](https://github.com/kash-talel/shush/commit/aecc6166765e6d219c655bc980412b6165034a65))
+* **#137:** per-item hybrid logical clock and peer merge with tombstone exchange ([#214](https://github.com/kash-talel/shush/issues/214)) ([286cac2](https://github.com/kash-talel/shush/commit/286cac216d9c5381d32bab5a398de2df2c848e55))
+* **#143:** record keyfile recovery decision, warn to back up keyfile ([#222](https://github.com/kash-talel/shush/issues/222)) ([79ce238](https://github.com/kash-talel/shush/commit/79ce23869d7a050eef120185dfc11c25c5f37c2d))
+* **#153:** e2e test for pipe image check, rate limit, connection cap, squat warning ([#225](https://github.com/kash-talel/shush/issues/225)) ([d586c6f](https://github.com/kash-talel/shush/commit/d586c6f05ff511cfda7d424388f7dc8c3f585f0d))
+* **#155:** extension-verified auto-type from Quick search ([#226](https://github.com/kash-talel/shush/issues/226)) ([6bf9850](https://github.com/kash-talel/shush/commit/6bf985052616dec70c41fd3d46b110b5fd22ac2c))
+* **#156:** LAN sync pairing (SPAKE2 + Noise XXpsk3), pinned peers, Noise XX sessions, windowed discovery ([#230](https://github.com/kash-talel/shush/issues/230)) ([e26e6d0](https://github.com/kash-talel/shush/commit/e26e6d0661e853a4206d5e8043587f1d57e82716))
+* **#157:** air-gapped mode with a single network gate ([#190](https://github.com/kash-talel/shush/issues/190)) ([ae8c32a](https://github.com/kash-talel/shush/commit/ae8c32a659d49cd78fd0cb462f9b04d15ba156ba))
+* **#170:** recover a damaged vault from vault.shush.bak ([#231](https://github.com/kash-talel/shush/issues/231)) ([6ad6dd3](https://github.com/kash-talel/shush/commit/6ad6dd33efe313c0c4f4cbec1802200a6673f730))
+* **#175:** beta installs also check the stable feed ([#233](https://github.com/kash-talel/shush/issues/233)) ([f2ac698](https://github.com/kash-talel/shush/commit/f2ac6985027f751a34db786a72ddccff04612712))
+* **#191:** air-gapped mode closes every socket the gate opened ([#234](https://github.com/kash-talel/shush/issues/234)) ([a428093](https://github.com/kash-talel/shush/commit/a428093c289ab9e8fb6ba13a47cfd466db76b298))
+* **#197:** verified update download and passive install with lock-before-install ([#205](https://github.com/kash-talel/shush/issues/205)) ([65fabb4](https://github.com/kash-talel/shush/commit/65fabb46f9e32f03c03b756c65d2c7ce82ce0e18))
+* **#198:** install-type detection and download-then-ask update mode ([#236](https://github.com/kash-talel/shush/issues/236)) ([e4bda42](https://github.com/kash-talel/shush/commit/e4bda42adf7b97fa31049d6f998d332e65ad9b44))
+* **#199:** pre-migration vault copy and format-change warning ([#237](https://github.com/kash-talel/shush/issues/237)) ([757e74c](https://github.com/kash-talel/shush/commit/757e74c39dce673af686d305bb9bec7ad7e0a901))
+* **#200:** update scheduler clock and phase 2 regression tests ([#241](https://github.com/kash-talel/shush/issues/241)) ([30d1c61](https://github.com/kash-talel/shush/commit/30d1c61bdb2511c773c2580bbc1fbb561b00001a))
+* **#221:** recovery key slot design ([#244](https://github.com/kash-talel/shush/issues/244)) ([c5f70d6](https://github.com/kash-talel/shush/commit/c5f70d61bbdd54d7d4dc75f1a5a8b09bad1170b0))
+* **#66:** Windows Hello quick unlock ([#245](https://github.com/kash-talel/shush/issues/245)) ([2f5e23b](https://github.com/kash-talel/shush/commit/2f5e23b81bd05764989b0a6437df46179032b848))
+* **#72:** document download verification and SmartScreen ([#248](https://github.com/kash-talel/shush/issues/248)) ([f297b4c](https://github.com/kash-talel/shush/commit/f297b4c2c29c8a79da10468552c4d8eb404af91a))
+* **#91:** document rand 0.9 and windows crate upgrade path ([#249](https://github.com/kash-talel/shush/issues/249)) ([439d6a3](https://github.com/kash-talel/shush/commit/439d6a3d2c694b75960cbc599537ba7eee3a0006))
+* **issue:** finished agents no longer leave their worktree locked ([#217](https://github.com/kash-talel/shush/issues/217)) ([a7cc430](https://github.com/kash-talel/shush/commit/a7cc4305ba8c1278183235368be0a55c0276a015))
+* **test:** memory scanner ignores its own read buffer (flaky CI) ([#203](https://github.com/kash-talel/shush/issues/203)) ([03eda58](https://github.com/kash-talel/shush/commit/03eda587e02f2e971a8104a3c3842cd3ef957352))
+* **test:** private-dir ACL test accepts Windows' alias for the user's SID ([#207](https://github.com/kash-talel/shush/issues/207)) ([3a6d495](https://github.com/kash-talel/shush/commit/3a6d495d8022c8ac1fd38b5a5438788cee94f540))
+
 ## [0.1.2](https://github.com/kash-talel/shush/compare/v0.1.1...v0.1.2) (2026-11-14)
 
 
