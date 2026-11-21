@@ -1,7 +1,8 @@
 // Phase 8b LAN sync pairing E2E (issue #156). Launch two debug builds beside each
 // other, each with its own scratch vault, SHUSH_NO_SINGLE_INSTANCE=1 and its own CDP
 // port (A: 10156, B: 10157), plus `npx vite --port 1420` in src/. Create a vault in
-// each instance with the passwords below (`create_vault`), then run
+// each instance with the passwords below (through the create screen; `create_vault`
+// takes only the binary frame from `encodeSecretFrame`, not JSON args), then run
 // `node docs/testing/phase8b/pair-e2e.mjs`.
 //
 // Two debug instances over CDP (A: CDP 10156, B: CDP 10157). Drives Tauri IPC
