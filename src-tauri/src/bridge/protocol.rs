@@ -219,8 +219,6 @@ pub struct Bridge {
     sealed: bool,
     /// Recent successful fills: `(pair_id, when, item_id)`, oldest first.
     recent_fills: Vec<(String, Instant, String)>,
-    /// Pairings paused by the bulk-fill throttle until the user confirms.
-    paused: std::collections::HashSet<String>,
     /// Pairings or counters changed since the last [`Bridge::take_dirty`].
     dirty: bool,
 }
@@ -307,7 +305,7 @@ impl Bridge {
                 (
                     p.id().to_string(),
                     p.last_used_at().map(str::to_string),
-                    self.paused.contains(p.id()),
+                    p.is_paused(),
                 )
             })
             .collect()
@@ -315,17 +313,22 @@ impl Bridge {
 
     /// The user confirmed in shush that a paused pairing may fill again.
     pub fn resume(&mut self, pair_id: &str) {
-        self.paused.remove(pair_id);
+        if let Some(p) = self.pairings.iter_mut().find(|p| p.id() == pair_id) {
+            if p.is_paused() {
+                p.set_paused(false);
+                self.dirty = true;
+            }
+        }
         self.recent_fills.retain(|(id, _, _)| id != pair_id);
     }
 
     /// Bulk-fill throttle. `Err("PAUSED")` when the pairing is paused or this
     /// fill (for a login not filled in the last window) reaches the burst limit.
     fn throttle_fill(&mut self, i: usize, item_id: &str, now: Instant) -> Result<(), &'static str> {
-        let pid = self.pairings[i].id().to_string();
-        if self.paused.contains(&pid) {
+        if self.pairings[i].is_paused() {
             return Err("PAUSED");
         }
+        let pid = self.pairings[i].id().to_string();
         self.recent_fills
             .retain(|(_, t, _)| now.duration_since(*t) < FILL_WINDOW);
         // Refilling one login is normal use; only its latest time is kept.
@@ -340,7 +343,10 @@ impl Bridge {
             .map(|(_, _, item)| item.as_str())
             .collect();
         if distinct.len() > FILL_BURST {
-            self.paused.insert(pid);
+            // Stored with the pairing, so only the user lifts it (not a lock).
+            self.pairings[i].set_paused(true);
+            self.recent_fills.retain(|(id, _, _)| *id != pid);
+            self.dirty = true;
             return Err("PAUSED");
         }
         Ok(())
@@ -350,6 +356,7 @@ impl Bridge {
     pub fn revoke(&mut self, pair_id: &str) {
         let before = self.pairings.len();
         self.pairings.retain(|p| p.id() != pair_id);
+        self.recent_fills.retain(|(id, _, _)| id != pair_id);
         self.dirty |= self.pairings.len() != before;
     }
 
@@ -384,7 +391,6 @@ impl Bridge {
         self.autotype = None;
         self.pairings.clear();
         self.recent_fills.clear();
-        self.paused.clear();
         self.offer = None;
         self.sealed = true;
         self.dirty = false;
@@ -630,7 +636,8 @@ impl Bridge {
             }
             Request::Revoke => {
                 let i = paired.ok_or("NOT_PAIRED")?;
-                self.pairings.remove(i);
+                let gone = self.pairings.remove(i);
+                self.recent_fills.retain(|(id, _, _)| id != gone.id());
                 self.dirty = true;
                 Ok(json!({}))
             }
@@ -1006,7 +1013,41 @@ mod tests {
     }
 
     #[test]
-    fn a_fill_records_last_used_and_lock_drops_the_pause() {
+    fn a_pause_survives_lock_and_unlock_until_the_user_resumes() {
+        let v = many_logins(FILL_BURST + 1);
+        let mut b = Bridge::default();
+        let mut e = paired(&mut b);
+        for i in 0..=FILL_BURST {
+            let _ = fill(&mut b, &mut e, &format!("i{i}"), &v);
+        }
+        assert!(b.take_dirty(), "the pause must reach the vault");
+        let stored = b.export_pairings();
+        assert!(stored[0].paused);
+        b.on_vault_locked();
+        b.load_pairings(&stored);
+        assert!(b.pairing_infos()[0].2, "a lock does not lift the pause");
+        assert_eq!(fill(&mut b, &mut e, "i0", &v)["error"], "PAUSED");
+        b.take_dirty();
+        b.resume(&e.pair_id);
+        assert!(b.take_dirty(), "resuming must reach the vault");
+        assert!(!b.export_pairings()[0].paused);
+        assert_eq!(fill(&mut b, &mut e, "i0", &v)["ok"], true);
+    }
+
+    #[test]
+    fn old_vault_pairings_load_unpaused() {
+        let p: StoredPairing =
+            serde_json::from_str(r#"{"id":"ab","key":"AAAA","last_counter":3}"#).unwrap();
+        assert!(!p.paused && p.last_used_at.is_none());
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(
+            !json.contains("paused"),
+            "unpaused pairings keep the old shape"
+        );
+    }
+
+    #[test]
+    fn a_fill_records_last_used() {
         let v = many_logins(1);
         let mut b = Bridge::default();
         let mut e = paired(&mut b);

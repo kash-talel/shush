@@ -137,6 +137,10 @@ pub struct StoredPairing {
     /// When a login was last released to this browser (RFC 3339), if ever (issue #159).
     #[serde(default)]
     pub last_used_at: Option<String>,
+    /// Paused by the bulk-fill throttle until the user allows it again in
+    /// Settings (issue #159). Stored so a lock and unlock does not lift it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub paused: bool,
 }
 
 impl VaultData {

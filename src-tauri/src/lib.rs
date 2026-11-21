@@ -2752,6 +2752,7 @@ fn bridge_resume_pairing(app: tauri::AppHandle, id: String) -> Result<(), CmdErr
     app.state::<bridge::state::BridgeState>()
         .bridge()
         .resume(&id);
+    persist_pairings(&app);
     Ok(())
 }
 

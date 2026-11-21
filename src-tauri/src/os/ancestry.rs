@@ -4,11 +4,21 @@
 //! the user could start the host itself. The host therefore refuses to relay
 //! unless it was started by a browser: its parent is `chrome.exe`,
 //! `msedge.exe` or `firefox.exe`, or `cmd.exe` whose parent is one of those
-//! (Chromium starts native hosts through `cmd.exe`). Parent-PID spoofing can
-//! still beat this, so it filters commodity tooling and is not a boundary.
-//! Verifying the browser image's Authenticode publisher is tracked separately.
+//! (Chromium starts native hosts through `cmd.exe`). Brave, Vivaldi and Opera
+//! read Chrome's host registration too, so they are allowed as well.
+//! Only the image file name is compared: a program renamed to `chrome.exe`
+//! or parent-PID spoofing beats this, so it filters commodity tooling and is
+//! not a boundary. Verifying the browser image's Authenticode publisher is
+//! tracked separately (#260).
 
-const BROWSERS: [&str; 3] = ["chrome.exe", "msedge.exe", "firefox.exe"];
+const BROWSERS: [&str; 6] = [
+    "chrome.exe",
+    "msedge.exe",
+    "firefox.exe",
+    "brave.exe",
+    "vivaldi.exe",
+    "opera.exe",
+];
 
 fn is_browser(name: &str) -> bool {
     BROWSERS.iter().any(|b| name.eq_ignore_ascii_case(b))
@@ -103,6 +113,7 @@ mod tests {
         assert!(chain_allowed("firefox.exe", None));
         assert!(chain_allowed("cmd.exe", Some("chrome.exe")));
         assert!(chain_allowed("CMD.EXE", Some("msedge.exe")));
+        assert!(chain_allowed("cmd.exe", Some("brave.exe")));
     }
 
     #[test]
