@@ -225,6 +225,22 @@ impl Registry {
         self.ensure_safety_net(default_vault);
     }
 
+    /// Unhides the default vault, puts it back on the shelf and selects it
+    /// ("Restore default vault", issue #106). Fails with `UnknownVault` when
+    /// the default file is not on disk, leaving it hidden.
+    pub fn restore_default(&mut self, default_vault: &Path) -> Result<VaultEntry, RegistryError> {
+        if !default_vault.is_file() {
+            return Err(RegistryError::UnknownVault);
+        }
+        self.unhide_default(default_vault);
+        let id = self
+            .find_path(default_vault)
+            .map(|e| e.id.clone())
+            .ok_or(RegistryError::UnknownVault)?;
+        self.select(&id)?;
+        Ok(self.get(&id).cloned().expect("just selected"))
+    }
+
     /// [`Registry::load`], then writes the result back if loading changed it
     /// (default vault added, entries repaired), so ids stay stable between calls.
     pub fn load_persisted(dir: &Path, default_vault: &Path) -> Result<Self, RegistryError> {
@@ -914,6 +930,50 @@ mod tests {
         reloaded.unhide_default(&def);
         assert!(!reloaded.hide_default);
         assert!(reloaded.find_path(&def).is_some());
+    }
+
+    #[test]
+    fn restore_default_reshelves_and_selects_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let def = dir.path().join("vault.shush");
+        touch(&def);
+        let work = dir.path().join("work.shush");
+        touch(&work);
+
+        let mut reg = Registry::load(dir.path(), &def);
+        let work_id = reg.add(work.clone(), "Work", None).unwrap().id;
+        let def_id = reg.find_path(&def).unwrap().id.clone();
+        reg.hide_default = true;
+        reg.remove(&def_id).unwrap();
+        reg.select(&work_id).unwrap();
+        reg.save(dir.path()).unwrap();
+
+        let mut reloaded = Registry::load(dir.path(), &def);
+        assert!(reloaded.hide_default);
+        assert!(reloaded.find_path(&def).is_none());
+        let entry = reloaded.restore_default(&def).unwrap();
+        assert!(!reloaded.hide_default);
+        assert!(same_file(&entry.path, &def));
+        assert_eq!(reloaded.selected.as_deref(), Some(entry.id.as_str()));
+        assert!(reloaded.get(&work_id).is_some(), "other vaults stay");
+    }
+
+    #[test]
+    fn restore_default_refuses_missing_file_and_keeps_it_hidden() {
+        let dir = tempfile::tempdir().unwrap();
+        let def = dir.path().join("vault.shush");
+        let work = dir.path().join("work.shush");
+        touch(&work);
+
+        let mut reg = Registry::load(dir.path(), &def);
+        reg.add(work, "Work", None).unwrap();
+        reg.hide_default = true;
+        let before = reg.clone();
+        assert!(matches!(
+            reg.restore_default(&def),
+            Err(RegistryError::UnknownVault)
+        ));
+        assert_eq!(reg, before);
     }
 
     #[test]

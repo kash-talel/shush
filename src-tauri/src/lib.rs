@@ -456,6 +456,8 @@ struct VaultList {
     colors: Vec<&'static str>,
     max_name_chars: usize,
     hide_names: bool,
+    /// The default vault file exists but is hidden from the shelf (issue #106).
+    default_hidden: bool,
 }
 
 #[tauri::command]
@@ -487,7 +489,34 @@ fn list_vaults(app: tauri::AppHandle) -> Result<VaultList, CmdError> {
         colors: VAULT_COLORS.to_vec(),
         max_name_chars: vault::registry::MAX_NAME_CHARS,
         hide_names,
+        default_hidden: reg.hide_default && def.is_file(),
     })
+}
+
+/// Puts a hidden default vault back on the shelf and selects it (issue #106).
+#[tauri::command]
+fn restore_default_vault(app: tauri::AppHandle) -> Result<VaultStatus, CmdError> {
+    require_locked(&app)?;
+    let (entry, hide_names) = edit_registry(&app, |reg, def| {
+        if !def.is_file() {
+            return Err(CmdError::new(
+                "VAULT_MISSING",
+                "The default vault file is no longer there, so it cannot be restored.",
+            ));
+        }
+        let e = reg.restore_default(def)?;
+        Ok((e, reg.hide_names))
+    })?;
+    // A Hello session is bound to one vault (windows-hello.md section 7).
+    app.state::<vault::hello::HelloState>()
+        .evict_unless_vault(&hello_vault_id(&entry.path));
+    Ok(status_for(
+        Some(&entry),
+        &entry.path,
+        false,
+        false,
+        hide_names,
+    ))
 }
 
 /// Switches the unlock screen to another vault.
@@ -3650,6 +3679,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             select_vault,
             check_new_vault,
             add_existing_vault,
+            restore_default_vault,
             update_vault,
             forget_vault,
             set_hide_vault_names,

@@ -183,6 +183,8 @@ export interface VaultList {
   colors: VaultColor[];
   max_name_chars: number;
   hide_names: boolean;
+  /** The default vault file exists but is hidden from the shelf. */
+  default_hidden: boolean;
 }
 
 /** Where and under which name to create an additional vault. */
@@ -198,6 +200,7 @@ export const selectVault = (id: string) => invoke<VaultStatus>("select_vault", {
 export const checkNewVault = (path: string, name: string) => invoke<string>("check_new_vault", { path, name });
 export const addExistingVault = (path: string, name: string, color: VaultColor | null) =>
   invoke<VaultStatus>("add_existing_vault", { path, name, color });
+export const restoreDefaultVault = () => invoke<VaultStatus>("restore_default_vault");
 export const updateVault = (id: string, name: string, color: VaultColor) =>
   invoke<void>("update_vault", { id, name, color });
 export const forgetVault = (id: string) => invoke<void>("forget_vault", { id });

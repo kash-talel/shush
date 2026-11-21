@@ -15,6 +15,7 @@
     "allow-select-vault",
     "allow-check-new-vault",
     "allow-add-existing-vault",
+    "allow-restore-default-vault",
     "allow-update-vault",
     "allow-forget-vault",
     "allow-set-hide-vault-names",
