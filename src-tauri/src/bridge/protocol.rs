@@ -162,7 +162,10 @@ pub fn apply_save(
     let tab = Origin::parse_tab(&p.origin);
     let existing = tab.and_then(|tab| {
         logins(d)
-            .find(|l| l.username == p.username && login_matches(l, &tab))
+            // Exact origin only, even for subdomain opt-ins: the save prompt
+            // shows just the tab origin, so a save on a subdomain must never
+            // silently overwrite the parent site's password (issue #152).
+            .find(|l| l.username == p.username && item_matches(&l.url, &tab))
             .map(|l| {
                 (
                     l.base.id.clone(),
@@ -1105,6 +1108,90 @@ mod tests {
         let l = logins(&d).find(|l| l.base.id == id).unwrap();
         assert_eq!(l.password, "pw2");
         assert_eq!(l.password_history.len(), 1);
+    }
+
+    #[test]
+    fn subdomains_match_only_for_opted_in_logins() {
+        let mut b = Bridge::default();
+        let mut ext = paired(&mut b);
+        let mut d = vault();
+        let ids = |r: &Value| -> Vec<Value> {
+            r["result"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|h| h["id"].clone())
+                .collect()
+        };
+        let sub = "https://gist.github.com";
+
+        // Default (off): a subdomain tab gets neither a match nor a fill.
+        let r = signed(
+            &mut b,
+            &mut ext,
+            json!({"type":"match","tab_origin":sub}),
+            Some(&d),
+        );
+        assert!(!ids(&r).contains(&json!("gh")));
+        let r = signed(
+            &mut b,
+            &mut ext,
+            json!({"type":"fill","id":"gh","tab_origin":sub}),
+            Some(&d),
+        );
+        assert_eq!(r["error"], "ORIGIN_MISMATCH");
+
+        // Opted in: the subdomain matches and fills; look-alikes still fail.
+        if let VaultItem::Login(l) = &mut d.items[0] {
+            l.match_subdomains = true;
+        }
+        let r = signed(
+            &mut b,
+            &mut ext,
+            json!({"type":"match","tab_origin":sub}),
+            Some(&d),
+        );
+        assert!(ids(&r).contains(&json!("gh")));
+        let r = signed(
+            &mut b,
+            &mut ext,
+            json!({"type":"fill","id":"gh","tab_origin":sub}),
+            Some(&d),
+        );
+        assert_eq!(r["result"]["password"], "current-pw");
+        for o in ["https://github.com.evil.test", "http://gist.github.com"] {
+            let r = signed(
+                &mut b,
+                &mut ext,
+                json!({"type":"fill","id":"gh","tab_origin":o}),
+                Some(&d),
+            );
+            assert_eq!(r["error"], "ORIGIN_MISMATCH", "{o}");
+        }
+
+        // A save from the subdomain never overwrites the opted-in parent login:
+        // it becomes a new login.
+        let save = PendingSave {
+            origin: sub.into(),
+            username: "octo".into(),
+            password: "new-pw".into(),
+        };
+        let id = apply_save(&mut d, &save).unwrap();
+        assert_ne!(id, "gh");
+        let l = logins(&d).find(|l| l.base.id == "gh").unwrap();
+        assert_eq!(l.password, "current-pw");
+        assert!(l.match_subdomains);
+
+        // A save on the exact origin updates it and keeps the flag.
+        let save = PendingSave {
+            origin: "https://github.com".into(),
+            username: "octo".into(),
+            password: "newer-pw".into(),
+        };
+        assert_eq!(apply_save(&mut d, &save).unwrap(), "gh");
+        let l = logins(&d).find(|l| l.base.id == "gh").unwrap();
+        assert_eq!(l.password, "newer-pw");
+        assert!(l.match_subdomains);
     }
 
     #[test]

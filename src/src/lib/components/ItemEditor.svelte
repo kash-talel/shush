@@ -122,6 +122,7 @@
           if (diskItem.title !== initial.title) diffs.push("title");
           if (diskItem.username !== initial.username) diffs.push("username");
           if (diskItem.url !== initial.url) diffs.push("URL");
+          if (diskItem.match_subdomains !== initial.match_subdomains) diffs.push("subdomain matching");
           if (diskItem.notes !== initial.notes) diffs.push("notes");
           if (diskItem.content !== initial.content) diffs.push("content");
           if (diskItem.folder_id !== initial.folder_id) diffs.push("folder");
@@ -165,6 +166,7 @@
     title = conflictItem.title;
     username = conflictItem.username;
     url = conflictItem.url;
+    matchSubdomains = conflictItem.match_subdomains;
     notes = conflictItem.notes;
     content = conflictItem.content;
     tags = conflictItem.tags.join(", ");

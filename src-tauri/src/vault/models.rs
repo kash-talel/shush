@@ -427,7 +427,17 @@ mod tests {
         assert_eq!(item["title"], "GitHub"); // base fields are flattened
         assert_eq!(item["password"], "hunter2");
         assert_eq!(json["settings"]["clipboard_clear_seconds"], 30);
+        // Off is not written, so the shape older vaults have reads back as off.
+        assert!(item.get("match_subdomains").is_none());
 
+        let back: VaultData = serde_json::from_value(json).unwrap();
+        assert_eq!(back, data);
+
+        if let VaultItem::Login(l) = &mut data.items[0] {
+            l.match_subdomains = true;
+        }
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(json["items"][0]["match_subdomains"], true);
         let back: VaultData = serde_json::from_value(json).unwrap();
         assert_eq!(back, data);
     }

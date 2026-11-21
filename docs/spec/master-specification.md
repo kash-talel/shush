@@ -223,6 +223,7 @@ export interface LoginItem extends BaseItem {
   url: string;
   totp_secret: string | null; // Base32 TOTP secret key
   password_history: PasswordHistoryEntry[];
+  match_subdomains?: boolean; // Browser bridge also matches subdomains of url; omitted (= false) by default
 }
 
 export interface SecureNoteItem extends BaseItem {

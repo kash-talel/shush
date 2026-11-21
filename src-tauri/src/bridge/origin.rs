@@ -5,7 +5,9 @@
 //! never equal their ASCII twin), default ports made explicit, and a single
 //! trailing dot removed. There is no suffix or "registrable domain" matching:
 //! `github.com.evil.test`, `evil-github.com` and `http://github.com` never
-//! match `https://github.com`.
+//! match `https://github.com`. The one exception is a login that opted in to
+//! subdomains (issue #152, [`item_matches_subdomains`]): it also matches
+//! whole-label subdomains of its own host, same scheme and port.
 
 use url::{Host, Url};
 
