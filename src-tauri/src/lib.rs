@@ -2582,6 +2582,10 @@ fn generate_password(
 #[derive(Serialize)]
 struct PairedBrowser {
     id: String,
+    /// When a login was last released to this browser (RFC 3339).
+    last_used_at: Option<String>,
+    /// Paused by the bulk-fill throttle until the user confirms (issue #159).
+    paused: bool,
 }
 
 /// A save the extension offered, waiting for approval. Never includes the password.
@@ -2675,9 +2679,13 @@ fn bridge_state(app: tauri::AppHandle) -> Result<BridgeInfo, CmdError> {
         serving,
         warning,
         pairings: b
-            .pairing_ids()
+            .pairing_infos()
             .into_iter()
-            .map(|id| PairedBrowser { id })
+            .map(|(id, last_used_at, paused)| PairedBrowser {
+                id,
+                last_used_at,
+                paused,
+            })
             .collect(),
         pending: b
             .pending_saves()
@@ -2732,6 +2740,18 @@ fn bridge_revoke(app: tauri::AppHandle, id: String) -> Result<(), CmdError> {
         .bridge()
         .revoke(&id);
     persist_pairings(&app);
+    Ok(())
+}
+
+/// The user confirmed in shush that a pairing paused by the bulk-fill throttle may fill again.
+#[tauri::command]
+fn bridge_resume_pairing(app: tauri::AppHandle, id: String) -> Result<(), CmdError> {
+    if !app.state::<VaultState>().is_unlocked() {
+        return Err(locked());
+    }
+    app.state::<bridge::state::BridgeState>()
+        .bridge()
+        .resume(&id);
     Ok(())
 }
 
@@ -3825,6 +3845,7 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             bridge_start_pairing,
             bridge_cancel_pairing,
             bridge_revoke,
+            bridge_resume_pairing,
             bridge_approve_save,
             bridge_reject_save,
             bridge_autotype,

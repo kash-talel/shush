@@ -134,6 +134,9 @@ pub struct StoredPairing {
     pub key: String,
     /// Highest request counter accepted so far.
     pub last_counter: u64,
+    /// When a login was last released to this browser (RFC 3339), if ever (issue #159).
+    #[serde(default)]
+    pub last_used_at: Option<String>,
 }
 
 impl VaultData {
