@@ -55,7 +55,9 @@ function reader(stream) {
 
 /** A shush-host.exe child: send() writes one frame and waits for its reply. */
 function host() {
-  const p = spawn(hostExe, ["chrome-extension://kmcbplfcpijmfohfojkajnmejadkcipe/"], { stdio: ["pipe", "pipe", "pipe"] });
+  // Node is not a browser: the ancestry check (#159) is skipped only in debug builds,
+  // so these probes need a debug shush-host.exe.
+  const p = spawn(hostExe, ["chrome-extension://kmcbplfcpijmfohfojkajnmejadkcipe/"], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, SHUSH_HOST_SKIP_ANCESTRY: "1" } });
   const r = reader(p.stdout);
   let stderr = "";
   p.stderr.on("data", (d) => (stderr += d));

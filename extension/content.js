@@ -24,6 +24,7 @@
     LOCKED: "shush is locked. Unlock it, then try again.",
     NOT_PAIRED: "Pair this browser from the shush toolbar button.",
     NOT_CONNECTED: "Start shush and enable browser support in its settings.",
+    PAUSED: "shush paused this browser after many fills. Allow it again in shush Settings, Paired browsers.",
   };
 
   const visible = (el) => {

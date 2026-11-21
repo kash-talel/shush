@@ -245,6 +245,8 @@ impl PairingOffer {
                 id: id.iter().map(|b| format!("{b:02x}")).collect(),
                 key: final_pair_key,
                 last_counter: 0,
+                last_used_at: None,
+                paused: false,
             })
         } else {
             self.attempts_left -= 1;
@@ -267,6 +269,10 @@ pub struct Pairing {
     id: String,
     key: [u8; 32],
     last_counter: u64,
+    /// When a login was last released to this browser (RFC 3339).
+    last_used_at: Option<String>,
+    /// Paused by the bulk-fill throttle until the user allows it again.
+    paused: bool,
 }
 
 impl Pairing {
@@ -289,6 +295,26 @@ impl Pairing {
         Ok(())
     }
 
+    /// When a login was last released through this pairing (RFC 3339).
+    pub fn last_used_at(&self) -> Option<&str> {
+        self.last_used_at.as_deref()
+    }
+
+    /// Records that a login was released through this pairing just now.
+    pub fn mark_used(&mut self) {
+        self.last_used_at = Some(crate::vault::models::now_rfc3339());
+    }
+
+    /// Whether the bulk-fill throttle paused this pairing (issue #159).
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Pauses or resumes fills through this pairing.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+    }
+
     /// MAC for a response to the request with `counter`, so the extension can
     /// tell answers really come from shush.
     pub fn sign(&self, counter: u64, body: &[u8]) -> [u8; 32] {
@@ -308,6 +334,8 @@ impl Pairing {
             id: self.id.clone(),
             key: base64::engine::general_purpose::STANDARD.encode(self.key),
             last_counter: self.last_counter,
+            last_used_at: self.last_used_at.clone(),
+            paused: self.paused,
         }
     }
 
@@ -323,6 +351,8 @@ impl Pairing {
             id: s.id.clone(),
             key,
             last_counter: s.last_counter,
+            last_used_at: s.last_used_at.clone(),
+            paused: s.paused,
         })
     }
 

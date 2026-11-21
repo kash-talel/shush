@@ -10,6 +10,7 @@ fn main() {
     use shush_lib::os::pipe::pipe_name;
 
     let result = (|| -> Result<(), String> {
+        shush_lib::os::ancestry::require_browser_parent()?;
         let name = pipe_name().map_err(|e| format!("cannot name the pipe: {e}"))?;
         let mut pipe = connect_verified(&name).map_err(|e| e.to_string())?;
         relay(

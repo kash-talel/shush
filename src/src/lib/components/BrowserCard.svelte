@@ -3,6 +3,7 @@
   import {
     bridgeApproveSave,
     bridgeRejectSave,
+    bridgeResumePairing,
     bridgeRevoke,
     bridgeStartPairing,
     bridgeState,
@@ -110,9 +111,23 @@
     <h4 class="text-xs font-semibold text-zinc-300">Paired browsers</h4>
     <ul class="flex flex-col gap-1.5">
       {#each info.pairings as p (p.id)}
-        <li class="flex items-center justify-between gap-2 text-xs text-zinc-300">
-          <span class="font-mono">{p.id.slice(0, 8)}…</span>
-          <button type="button" class="key-steel h-7 px-2 text-[11px] text-ruby!" disabled={busy} onclick={() => run(() => bridgeRevoke(p.id))}>REVOKE</button>
+        <li class="flex flex-col gap-1.5 text-xs text-zinc-300">
+          <span class="flex items-center justify-between gap-2">
+            <span class="flex flex-col">
+              <span class="font-mono">{p.id.slice(0, 8)}…</span>
+              <span class="text-[11px] text-zinc-400">
+                {p.last_used_at ? `Last used ${new Date(p.last_used_at).toLocaleString()}` : "Never used"}
+              </span>
+            </span>
+            <button type="button" class="key-steel h-7 px-2 text-[11px] text-ruby!" disabled={busy} onclick={() => run(() => bridgeRevoke(p.id))}>REVOKE</button>
+          </span>
+          {#if p.paused}
+            <span class="flex items-start gap-1.5 text-caution" role="alert">
+              <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <span>This browser asked for many different logins in a short time, so shush paused it. Only allow it if you did that.</span>
+            </span>
+            <button type="button" class="key h-7 text-[11px]" disabled={busy} onclick={() => run(() => bridgeResumePairing(p.id))}>ALLOW AGAIN</button>
+          {/if}
         </li>
       {/each}
     </ul>

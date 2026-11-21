@@ -64,6 +64,7 @@ const COMMANDS: &[&str] = &[
     "bridge_start_pairing",
     "bridge_cancel_pairing",
     "bridge_revoke",
+    "bridge_resume_pairing",
     "bridge_approve_save",
     "bridge_reject_save",
     "bridge_autotype",

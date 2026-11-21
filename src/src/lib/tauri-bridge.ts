@@ -545,7 +545,8 @@ export interface BridgeInfo {
   serving: boolean;
   /** Plain-words reason when it is not (e.g. the pipe name is squatted). */
   warning: string | null;
-  pairings: { id: string }[];
+  /** `last_used_at` is when a login was last filled (RFC 3339); `paused` = held by the bulk-fill throttle. */
+  pairings: { id: string; last_used_at: string | null; paused: boolean }[];
   /** Saves offered by the extension; passwords never reach the UI. */
   pending: { origin: string; username: string }[];
   code: BridgePairing | null;
@@ -554,6 +555,8 @@ export const bridgeState = () => invoke<BridgeInfo>("bridge_state");
 export const bridgeStartPairing = () => invoke<BridgePairing>("bridge_start_pairing");
 export const bridgeCancelPairing = () => invoke<void>("bridge_cancel_pairing");
 export const bridgeRevoke = (id: string) => invoke<void>("bridge_revoke", { id });
+/** Confirms a pairing paused by the bulk-fill throttle may fill again. */
+export const bridgeResumePairing = (id: string) => invoke<void>("bridge_resume_pairing", { id });
 /** Writes the pending save into the vault (new login, or password update). */
 export const bridgeApproveSave = (origin: string, username: string) =>
   invoke<string>("bridge_approve_save", { origin, username });

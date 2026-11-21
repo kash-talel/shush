@@ -68,6 +68,7 @@
     "allow-bridge-start-pairing",
     "allow-bridge-cancel-pairing",
     "allow-bridge-revoke",
+    "allow-bridge-resume-pairing",
     "allow-bridge-approve-save",
     "allow-bridge-reject-save",
     "allow-bridge-autotype",

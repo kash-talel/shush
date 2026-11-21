@@ -11,6 +11,7 @@ const MESSAGES = {
   WRONG_PAIRING_CODE: "That code is wrong. Check it and try again.",
   NOT_PAIRED: "This browser is not paired any more. Pair it again.",
   LOCKED: "shush is locked. Unlock it first.",
+  PAUSED: "shush paused this browser after many fills. Allow it again in shush Settings, Paired browsers.",
   TIMEOUT: "shush did not answer in time.",
   BAD_ORIGIN: "This page cannot be filled.",
   BAD_ANSWER_MAC: "The answer from shush could not be verified. Pair again.",
