@@ -497,18 +497,26 @@ fn list_vaults(app: tauri::AppHandle) -> Result<VaultList, CmdError> {
 #[tauri::command]
 fn restore_default_vault(app: tauri::AppHandle) -> Result<VaultStatus, CmdError> {
     require_locked(&app)?;
-    let (entry, path, hide_names) = edit_registry(&app, |reg, def| {
-        reg.unhide_default(def);
-        match reg.find_path(def).map(|e| e.id.clone()) {
-            Some(id) => reg.select(&id)?,
-            None => return Err(RegistryError::UnknownVault.into()),
+    let (entry, hide_names) = edit_registry(&app, |reg, def| {
+        if !def.is_file() {
+            return Err(CmdError::new(
+                "VAULT_MISSING",
+                "The default vault file is no longer there, so it cannot be restored.",
+            ));
         }
-        let e = reg.selected_entry().cloned();
-        Ok((e, def.to_path_buf(), reg.hide_names))
+        let e = reg.restore_default(def)?;
+        Ok((e, reg.hide_names))
     })?;
+    // A Hello session is bound to one vault (windows-hello.md section 7).
     app.state::<vault::hello::HelloState>()
-        .evict_unless_vault(&hello_vault_id(&path));
-    Ok(status_for(entry.as_ref(), &path, false, false, hide_names))
+        .evict_unless_vault(&hello_vault_id(&entry.path));
+    Ok(status_for(
+        Some(&entry),
+        &entry.path,
+        false,
+        false,
+        hide_names,
+    ))
 }
 
 /// Switches the unlock screen to another vault.

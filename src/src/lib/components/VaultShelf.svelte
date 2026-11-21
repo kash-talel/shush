@@ -78,11 +78,17 @@
   async function restoreDefault() {
     error = null;
     try {
-      const status = await restoreDefaultVault();
-      await reload();
-      onswitch(status);
+      await restoreDefaultVault();
+      // vaultStatus (not the command's reply) so sibling warnings show too.
+      onswitch(await vaultStatus());
     } catch (e) {
       error = toCmdError(e);
+    }
+    // Refresh even on failure, so a stale "Restore" button disappears.
+    try {
+      await reload();
+    } catch (e) {
+      error ??= toCmdError(e);
     }
   }
 
