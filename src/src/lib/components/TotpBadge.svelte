@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Copy } from "@lucide/svelte";
+  import { CircleHelp, Copy } from "@lucide/svelte";
   import { totpCode, toCmdError, type TotpCode } from "../tauri-bridge";
 
   // Live 2FA code with a circular countdown ring (spec §7.2.2).
@@ -12,6 +12,7 @@
   let fetched = $state.raw<(TotpCode & { for: string }) | null>(null);
   const current = $derived(fetched?.for === id ? fetched : null);
   let error = $state<string | null>(null);
+  let showHint = $state(false);
 
   // One tick per second of the period, clockwise from 12 o'clock.
   const period = $derived(current?.period ?? 30);
@@ -81,4 +82,23 @@
       <Copy class="size-3.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true" />
     </button>
   {/if}
+  <!-- Offline hint (#145): shush makes no network calls, so it cannot check the clock itself.
+       The hint is only a pointer for when a site rejects a code. -->
+  <button
+    type="button"
+    onclick={() => (showHint = !showHint)}
+    class="shrink-0 rounded-[3px] p-1 text-zinc-500 transition hover:text-zinc-300 focus-visible:text-zinc-300"
+    aria-label="Code rejected? Check your clock"
+    aria-expanded={showHint}
+    title="Code rejected? Check your clock"
+  >
+    <CircleHelp class="size-3.5" aria-hidden="true" />
+  </button>
 </div>
+{#if showHint}
+  <p class="mt-2 text-xs text-zinc-400" role="note">
+    Codes are calculated from this device's clock. If a site rejects a code, turn on automatic time
+    in Windows (Settings, Time &amp; language, Date &amp; time, Set time automatically) and sync
+    now. shush never goes online to check it for you.
+  </p>
+{/if}
