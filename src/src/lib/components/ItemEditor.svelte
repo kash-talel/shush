@@ -41,6 +41,7 @@
   let title = $state(initial?.title ?? "");
   let username = $state(initial?.username ?? "");
   let url = $state(initial?.url ?? "");
+  let matchSubdomains = $state(initial?.match_subdomains ?? false);
   let notes = $state(initial?.notes ?? "");
   let content = $state(initial?.content ?? "");
   let tags = $state(initial?.tags.join(", ") ?? "");
@@ -80,6 +81,7 @@
       folder_id: folderId,
       password: isLogin && passwordTouched ? password : null,
       totp: isLogin && totpTouched ? totp : null,
+      match_subdomains: isLogin ? matchSubdomains : undefined,
     };
   }
 
@@ -308,6 +310,10 @@
           placeholder="https://"
           class="well h-10 w-full px-3 font-mono text-[13px] text-zinc-100 outline-none"
         />
+        <label class="mt-2 flex items-start gap-2 text-xs text-zinc-400">
+          <input id="f-subdomains" type="checkbox" bind:checked={matchSubdomains} class="mt-0.5" />
+          <span>Also fill on subdomains of this site (browser extension). Off by default: only the exact site matches.</span>
+        </label>
       </div>
 
       <div>

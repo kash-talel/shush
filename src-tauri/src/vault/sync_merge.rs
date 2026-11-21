@@ -173,6 +173,7 @@ pub fn merge_peer(local: &mut VaultData, peer: &VaultData, now_ms: u64) -> Merge
                 // Non-secret fields only; password and TOTP secret stay ours.
                 c.username = i.username.clone();
                 c.url = i.url.clone();
+                c.match_subdomains = i.match_subdomains;
                 if c.totp_secret.is_none() {
                     c.totp_secret = i.totp_secret.clone();
                 }

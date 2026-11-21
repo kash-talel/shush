@@ -361,6 +361,7 @@ export interface ItemDetail {
   has_password: boolean;
   has_totp: boolean;
   history_count: number;
+  match_subdomains: boolean;
   attachments: AttachmentInfo[];
   created_at: string;
   updated_at: string;
@@ -386,6 +387,8 @@ export interface ItemDraft {
   favorite: boolean;
   tags: string[];
   folder_id: string | null;
+  /** Browser bridge also matches subdomains of the URL. */
+  match_subdomains?: boolean;
 }
 
 export interface TotpCode {

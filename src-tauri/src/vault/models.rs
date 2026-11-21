@@ -219,6 +219,14 @@ pub struct LoginItem {
     pub totp_secret: Option<String>,
     /// Previous / archived passwords.
     pub password_history: Vec<PasswordHistoryEntry>,
+    /// Also match subdomains of the saved host in the browser bridge (issue
+    /// #152). Off by default; absent in older vaults, which read as off.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub match_subdomains: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// A Markdown secure note.
@@ -411,6 +419,7 @@ mod tests {
             url: "https://github.com".into(),
             totp_secret: None,
             password_history: vec![],
+            match_subdomains: false,
         }));
         let json: serde_json::Value = serde_json::to_value(&data).unwrap();
         let item = &json["items"][0];
