@@ -98,7 +98,43 @@ export const createVault = (
   keyfile: KeyfileChoice,
   cipherId: number,
   target: NewVaultTarget | null = null,
-) => invoke<VaultSummary>("create_vault", { password, keyfile, cipherId, target });
+) => invokeWithSecrets<VaultSummary>("create_vault", { keyfile, cipherId, target }, [password]);
+
+/**
+ * Binary framing for commands that carry passwords (issue #115), all lengths u32 LE:
+ * [meta length][meta JSON, no secrets][secret length][secret UTF-8] repeated per secret.
+ *
+ * Sent as a raw byte array so Tauri hands the backend `InvokeBody::Raw`, which it copies to
+ * locked memory and wipes at once, instead of a JSON string that lingers on the heap.
+ */
+export function encodeSecretFrame(meta: unknown, secrets: string[]): Uint8Array {
+  const enc = new TextEncoder();
+  const m = enc.encode(JSON.stringify(meta));
+  const s = secrets.map((x) => enc.encode(x));
+  const buf = new Uint8Array(4 + m.length + s.reduce((n, x) => n + 4 + x.length, 0));
+  const view = new DataView(buf.buffer);
+  let off = 0;
+  view.setUint32(off, m.length, true);
+  buf.set(m, (off += 4));
+  off += m.length;
+  for (const x of s) {
+    view.setUint32(off, x.length, true);
+    buf.set(x, (off += 4));
+    off += x.length;
+    x.fill(0);
+  }
+  return buf;
+}
+
+/** Invokes `cmd` with a secret frame and zeroes the frame once the call settles. */
+async function invokeWithSecrets<T>(cmd: string, meta: unknown, secrets: string[]): Promise<T> {
+  const frame = encodeSecretFrame(meta, secrets);
+  try {
+    return await invoke<T>(cmd, frame);
+  } finally {
+    frame.fill(0);
+  }
+}
 
 /**
  * Binary framing for unlock payload:
@@ -207,7 +243,7 @@ export const forgetVault = (id: string) => invoke<void>("forget_vault", { id });
 export const setHideVaultNames = (hide: boolean) =>
   invoke<VaultStatus>("set_hide_vault_names", { hide });
 export const deleteVault = (id: string, password: string, keyfilePath: string | null, confirmName: string) =>
-  invoke<void>("delete_vault", { id, password, keyfilePath, confirmName });
+  invokeWithSecrets<void>("delete_vault", { id, keyfilePath, confirmName }, [password]);
 export const recoverVaultFromBackup = (id: string, password: string, keyfilePath: string | null) =>
   invoke<void>("recover_vault_from_backup", { id, password, keyfilePath });
 export const showInExplorer = (id: string) => invoke<void>("show_in_explorer", { id });
@@ -486,7 +522,7 @@ export const setDuressPassword = (
   currentPassword: string,
   password: string,
   keyfilePath: string | null,
-) => invoke<void>("set_duress_password", { currentPassword, password, keyfilePath });
+) => invokeWithSecrets<void>("set_duress_password", { keyfilePath }, [currentPassword, password]);
 /** Whether the vault file lies in a known cloud-sync folder (version history risk). */
 export const vaultInSyncFolder = () => invoke<boolean>("vault_in_sync_folder");
 /** Destroys the decoy vault. */

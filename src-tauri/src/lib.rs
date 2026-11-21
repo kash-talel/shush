@@ -690,15 +690,80 @@ fn delete_vault_files_blocking(path: &Path) -> Result<(), CmdError> {
     })
 }
 
+/// Splits a secret-carrying IPC body into its non-secret JSON metadata and
+/// `n` secrets (issue #115). Frame, all lengths u32 LE:
+/// `[meta_len][meta JSON][secret_len][secret] x n`.
+///
+/// Each secret is copied into locked memory and the incoming buffer is
+/// wiped in place, so no password passes through a serde `String` or stays
+/// in Tauri's intermediate heap (same scheme as `unlock`, issue #59). Only
+/// raw bodies are accepted: a JSON body would put the password back in a
+/// heap string.
+fn parse_secret_frame<M: serde::de::DeserializeOwned>(
+    body: &tauri::ipc::InvokeBody,
+    n: usize,
+) -> Result<(M, Vec<os::memory::LockedBytes>), CmdError> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = body else {
+        return Err(CmdError::new(
+            "INVALID_INPUT",
+            "Secrets must be sent as a raw binary payload.",
+        ));
+    };
+    let result = split_secret_frame::<M>(bytes.as_slice(), n);
+    os::memory::wipe_ipc_buffer(bytes);
+    result
+}
+
+fn split_secret_frame<M: serde::de::DeserializeOwned>(
+    slice: &[u8],
+    n: usize,
+) -> Result<(M, Vec<os::memory::LockedBytes>), CmdError> {
+    let bad = || CmdError::new("INVALID_INPUT", "Malformed secret payload.");
+    let take = |off: &mut usize| -> Result<&[u8], CmdError> {
+        let end = off
+            .checked_add(4)
+            .filter(|e| *e <= slice.len())
+            .ok_or_else(bad)?;
+        let len = u32::from_le_bytes(slice[*off..end].try_into().unwrap()) as usize;
+        let stop = end
+            .checked_add(len)
+            .filter(|e| *e <= slice.len())
+            .ok_or_else(bad)?;
+        *off = stop;
+        Ok(&slice[end..stop])
+    };
+    let mut off = 0usize;
+    let meta: M = serde_json::from_slice(take(&mut off)?)
+        .map_err(|e| CmdError::new("INVALID_INPUT", e.to_string()))?;
+    let mut secrets = Vec::with_capacity(n);
+    for _ in 0..n {
+        secrets.push(os::memory::LockedBytes::from_slice(take(&mut off)?));
+    }
+    if off != slice.len() {
+        return Err(bad());
+    }
+    Ok((meta, secrets))
+}
+
 #[tauri::command]
 async fn delete_vault(
     app: tauri::AppHandle,
-    id: String,
-    password: String,
-    keyfile_path: Option<String>,
-    confirm_name: String,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<(), CmdError> {
-    let password = Zeroizing::new(password);
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Meta {
+        id: String,
+        keyfile_path: Option<String>,
+        confirm_name: String,
+    }
+    let (meta, mut secrets) = parse_secret_frame::<Meta>(request.body(), 1)?;
+    let Meta {
+        id,
+        keyfile_path,
+        confirm_name,
+    } = meta;
+    let password = secrets.remove(0);
     require_locked(&app)?;
     let entry = edit_registry(&app, |reg, _| {
         Ok(reg.get(&id).cloned().ok_or(RegistryError::UnknownVault)?)
@@ -723,7 +788,7 @@ async fn delete_vault(
     blocking(move || {
         let path = entry.path.clone();
         let throttle = app.state::<std::sync::Mutex<DeleteThrottle>>();
-        match authenticate_for_delete_blocking(&path, password.as_bytes(), keyfile_path.as_deref())
+        match authenticate_for_delete_blocking(&path, password.as_slice(), keyfile_path.as_deref())
         {
             Ok(()) => {
                 throttle
@@ -1041,13 +1106,24 @@ struct NewVaultTarget {
 #[tauri::command]
 async fn create_vault(
     app: tauri::AppHandle,
-    password: String,
-    keyfile: KeyfileChoice,
-    cipher_id: u8,
-    target: Option<NewVaultTarget>,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<VaultSummary, CmdError> {
-    // Move the IPC-owned string into a wiped buffer immediately (issue #6).
-    let password = Zeroizing::new(password);
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Meta {
+        keyfile: KeyfileChoice,
+        cipher_id: u8,
+        target: Option<NewVaultTarget>,
+    }
+    // The password arrives as raw bytes, copied to locked memory and the IPC
+    // buffer wiped at once (issues #6, #115).
+    let (meta, mut secrets) = parse_secret_frame::<Meta>(request.body(), 1)?;
+    let Meta {
+        keyfile,
+        cipher_id,
+        target,
+    } = meta;
+    let password = secrets.remove(0);
     require_locked(&app)?;
     // A chosen location is validated now; without one, this is the first-run
     // vault at the selected (default) location.
@@ -1067,7 +1143,7 @@ async fn create_vault(
         let lock = vault::lock::VaultLock::acquire(&path)?;
         let vault = create_vault_blocking(
             &path,
-            password.as_bytes(),
+            password.as_slice(),
             &keyfile,
             cipher_id,
             KdfParams::default(),
@@ -1387,15 +1463,21 @@ fn path_in_sync_folder(path: &Path) -> bool {
 #[tauri::command]
 async fn set_duress_password(
     app: tauri::AppHandle,
-    current_password: String,
-    password: String,
-    keyfile_path: Option<String>,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<(), CmdError> {
-    let password = Zeroizing::new(password);
-    let current_password = Zeroizing::new(current_password);
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Meta {
+        keyfile_path: Option<String>,
+    }
+    let (meta, mut secrets) = parse_secret_frame::<Meta>(request.body(), 2)?;
+    let keyfile_path = meta.keyfile_path;
+    // Frame order: current password, then the new duress password.
+    let password = secrets.pop().expect("two secrets");
+    let current_password = secrets.pop().expect("two secrets");
     blocking(move || {
         let normalized =
-            crypto::kdf::normalize_password(password.as_bytes()).map_err(VaultError::from)?;
+            crypto::kdf::normalize_password(password.as_slice()).map_err(VaultError::from)?;
         if normalized.chars().count() < MIN_PASSWORD_CHARS {
             return Err(CmdError::new(
                 "WEAK_PASSWORD",
@@ -1413,8 +1495,8 @@ async fn set_duress_password(
                 let path = u.path.clone();
                 Ok(u.vault.set_duress(
                     &path,
-                    current_password.as_bytes(),
-                    password.as_bytes(),
+                    current_password.as_slice(),
+                    password.as_slice(),
                     digest.as_ref(),
                 )?)
             })
@@ -3758,6 +3840,53 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn frame(meta: &str, secrets: &[&[u8]]) -> Vec<u8> {
+        let mut v = (meta.len() as u32).to_le_bytes().to_vec();
+        v.extend_from_slice(meta.as_bytes());
+        for s in secrets {
+            v.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            v.extend_from_slice(s);
+        }
+        v
+    }
+
+    #[test]
+    fn secret_frame_roundtrip_and_wipe() {
+        #[derive(Deserialize)]
+        struct M {
+            a: u8,
+        }
+        let body =
+            tauri::ipc::InvokeBody::Raw(frame(r#"{"a":7}"#, &[b"one", "pässword".as_bytes()]));
+        let (m, s) = parse_secret_frame::<M>(&body, 2).unwrap();
+        assert_eq!(m.a, 7);
+        assert_eq!(s[0].as_slice(), b"one");
+        assert_eq!(s[1].as_slice(), "pässword".as_bytes());
+        let tauri::ipc::InvokeBody::Raw(raw) = &body else {
+            unreachable!()
+        };
+        assert!(raw.iter().all(|b| *b == 0), "IPC buffer must be wiped");
+    }
+
+    #[test]
+    fn secret_frame_rejects_malformed() {
+        #[derive(Deserialize)]
+        struct M {}
+        let ok = frame("{}", &[b"x"]);
+        let mut trailing = ok.clone();
+        trailing.push(0);
+        let truncated = ok[..ok.len() - 1].to_vec();
+        for raw in [trailing, truncated, vec![], vec![9, 9, 9, 9, 1]] {
+            let body = tauri::ipc::InvokeBody::Raw(raw);
+            assert!(parse_secret_frame::<M>(&body, 1).is_err());
+        }
+        let json = tauri::ipc::InvokeBody::Json(serde_json::json!({"password": "x"}));
+        assert!(parse_secret_frame::<M>(&json, 1).is_err());
+        // Too few secrets in the frame.
+        let body = tauri::ipc::InvokeBody::Raw(frame("{}", &[b"x"]));
+        assert!(parse_secret_frame::<M>(&body, 2).is_err());
+    }
 
     #[test]
     fn sync_folder_detection() {
