@@ -8,6 +8,7 @@
 # Outcomes:
 #   DONE      issue closed by a merged PR            -> worktrees removed
 #   ESCALATE  PR open with needs-review              -> worktrees removed, owner question shown
+#   PENDING_MERGE  PR open, reviewer APPROVE, not merged -> not labelled; merge command shown
 #   BLOCKED   runner said BLOCKED                     -> issue labelled blocked + comment
 #   FAILED    anything else                           -> issue labelled agent-failed + comment
 # FAILED/BLOCKED worktrees are kept unless their work is fully pushed (then the PR holds it).
@@ -63,6 +64,7 @@ $prLabels = if ($pr) { @($pr.labels | ForEach-Object { $_.name }) } else { @() }
 $outcome =
     if ($issue.state -eq 'CLOSED' -and ((@($issue.closedByPullRequestsReferences).Count -gt 0) -or ($pr -and $pr.state -eq 'MERGED'))) { 'DONE' }
     elseif ($pr -and $pr.state -eq 'OPEN' -and $prLabels -contains 'needs-review') { 'ESCALATE' }
+    elseif ($pr -and $pr.state -eq 'OPEN' -and $status -eq 'APPROVE') { 'PENDING_MERGE' }   # reviewer approved, merge not done yet
     elseif ($status -eq 'BLOCKED') { 'BLOCKED' }
     else { 'FAILED' }
 
@@ -141,6 +143,11 @@ switch ($outcome) {
         $lines += "$(E 0x1F517) PR: $url"
         $lines += "$(E 0x1F5E3)$(E 0xFE0F) $($f['QUESTION'])"
         $lines += "$(E 0x1F449) Reply here with your answer, or merge as is: gh pr merge $($pr.number) --squash --delete-branch"
+    }
+    'PENDING_MERGE' {
+        $lines += "$(E 0x23F3) APPROVED, NOT MERGED: Issue #$Number (""$t"") by $Runner/$Target, reviewed and approved by claude/opus; PR still open. Not labelled failed."
+        $lines += "$(E 0x1F517) PR: $url"
+        $lines += "$(E 0x1F449) Merge it: powershell -NoProfile -File .claude/scripts/merge-pr.ps1 -Pr $($pr.number) -Reviewed"
     }
     default {
         $lines += "$(E 0x26A0)$(E 0xFE0F) Issue #$Number (""$t"") was not completed by $Runner/${Target}: $outcome, labelled $(if ($outcome -eq 'BLOCKED') { 'blocked' } else { 'agent-failed' })."
