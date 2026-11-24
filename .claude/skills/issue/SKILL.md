@@ -14,7 +14,7 @@ The owner's main checkout is never switched, stashed, or edited.
 Input arguments: $ARGUMENTS
 
 **One issue per session.** If this conversation already contains a `COMPLETED`,
-`YOUR DECISION NEEDED` or `was not completed` banner, do nothing except tell the user to type
+`YOUR DECISION NEEDED`, `APPROVED, NOT MERGED` or `was not completed` banner, do nothing except tell the user to type
 `/clear` first.
 
 ## Step 1: Pick

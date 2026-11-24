@@ -8,7 +8,7 @@
 # Outcomes:
 #   DONE      issue closed by a merged PR            -> worktrees removed
 #   ESCALATE  PR open with needs-review              -> worktrees removed, owner question shown
-#   PENDING_MERGE  PR open, reviewer APPROVE, not merged -> not labelled; merge command shown
+#   PENDING_MERGE  PR open, reviewer APPROVE, not merged -> issue not labelled; PR ai-review -> needs-review; merge command shown
 #   BLOCKED   runner said BLOCKED                     -> issue labelled blocked + comment
 #   FAILED    anything else                           -> issue labelled agent-failed + comment
 # FAILED/BLOCKED worktrees are kept unless their work is fully pushed (then the PR holds it).
@@ -78,6 +78,11 @@ if ($outcome -eq 'BLOCKED' -or $outcome -eq 'FAILED') {
     & gh issue comment $Number --body-file $body | Out-Null
     Remove-Item $body -ErrorAction SilentlyContinue
 }
+# An approved PR left open waits for the owner's merge: needs-review parks it (issue-next.ps1), so the
+# next /issue does not send it back to the reviewer again with ai-review (e.g. a refused merge, #254).
+if ($outcome -eq 'PENDING_MERGE') {
+    & gh pr edit $pr.number --remove-label ai-review --add-label needs-review | Out-Null
+}
 
 # --- worktrees ---
 # From here on the work is best effort and every native call is judged by its exit code: 'Continue'
@@ -145,9 +150,12 @@ switch ($outcome) {
         $lines += "$(E 0x1F449) Reply here with your answer, or merge as is: gh pr merge $($pr.number) --squash --delete-branch"
     }
     'PENDING_MERGE' {
-        $lines += "$(E 0x23F3) APPROVED, NOT MERGED: Issue #$Number (""$t"") by $Runner/$Target, reviewed and approved by claude/opus; PR still open. Not labelled failed."
+        $lines += "$(E 0x23F3) APPROVED, NOT MERGED: Issue #$Number (""$t"") by $Runner/$Target, reviewed and approved by claude/opus; PR still open, now labelled needs-review (waits for you). Not labelled failed."
         $lines += "$(E 0x1F517) PR: $url"
-        $lines += "$(E 0x1F449) Merge it: powershell -NoProfile -File .claude/scripts/merge-pr.ps1 -Pr $($pr.number) -Reviewed"
+        $lines += "$(E 0x1F50E) Not tested: $(if ($f['NOT TESTED']) { $f['NOT TESTED'] } else { 'none' })"
+        # A kept worktree holds unpushed or uncommitted work (e.g. reviewer fixes): merging now would skip it.
+        if ($kept.Count -gt 0) { $lines += "$(E 0x26A0)$(E 0xFE0F) Do not merge yet: unpushed work was kept in $($kept -join ', '). Push it to the PR branch first, then run: powershell -NoProfile -File .claude/scripts/merge-pr.ps1 -Pr $($pr.number) -Reviewed" }
+        else { $lines += "$(E 0x1F449) Merge it: powershell -NoProfile -File .claude/scripts/merge-pr.ps1 -Pr $($pr.number) -Reviewed" }
     }
     default {
         $lines += "$(E 0x26A0)$(E 0xFE0F) Issue #$Number (""$t"") was not completed by $Runner/${Target}: $outcome, labelled $(if ($outcome -eq 'BLOCKED') { 'blocked' } else { 'agent-failed' })."
