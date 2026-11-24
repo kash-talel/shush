@@ -415,6 +415,11 @@ pub fn harden_process() {
 /// Returns the number of occurrences found outside the memory occupied by `needle` itself.
 /// Used by memory-hygiene regression tests to verify that secrets do not linger in heap.
 pub fn count_occurrences_in_process_memory(needle: &[u8]) -> usize {
+    // Scans run one at a time: a concurrent scan's 8 KiB read buffer holds copies of
+    // whatever pages it just read (including other tests' canary literals), and the
+    // other scan would count those copies as leaks.
+    static SCAN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = SCAN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     sys::count_occurrences_in_process_memory(needle)
 }
 
@@ -565,6 +570,8 @@ mod sys {
             }
             address = next_addr;
         }
+        // Leave no copy of scanned pages behind on this stack.
+        zeroize::Zeroize::zeroize(&mut chunk[..]);
         count
     }
 }
