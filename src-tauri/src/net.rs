@@ -798,6 +798,10 @@ pub struct LanListener {
 pub struct LanStream {
     inner: TrackedStream,
     peer: String,
+    /// Whole-connection deadline set by [`LanStream::set_timeout`]: a peer
+    /// trickling one byte at a time cannot keep the connection (and the
+    /// window's listener, code and identity) alive past it.
+    deadline: Option<std::time::Instant>,
 }
 
 /// A socket the gate can close from outside: the owner and the gate's closer share it, and
@@ -937,6 +941,7 @@ impl NetGate {
         Ok(LanStream {
             inner,
             peer: sa.to_string(),
+            deadline: None,
         })
     }
 
@@ -1101,6 +1106,7 @@ impl LanListener {
                     return Ok(Some(LanStream {
                         inner: gate.track_stream(s)?,
                         peer: peer.to_string(),
+                        deadline: None,
                     }));
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -1119,24 +1125,67 @@ impl LanStream {
         &self.peer
     }
 
-    /// Read and write timeout for every later operation.
-    pub fn set_timeout(&self, d: std::time::Duration) -> Result<(), NetError> {
+    /// Limits the whole rest of the connection to `d`: every later read or
+    /// write fails with `TimedOut` once `d` has passed, however the peer
+    /// paces its bytes.
+    pub fn set_timeout(&mut self, d: std::time::Duration) -> Result<(), NetError> {
         self.inner.inner.set_read_timeout(Some(d)).map_err(io_err)?;
-        self.inner.inner.set_write_timeout(Some(d)).map_err(io_err)
+        self.inner
+            .inner
+            .set_write_timeout(Some(d))
+            .map_err(io_err)?;
+        // A duration too large for an `Instant` means no deadline beyond the
+        // socket timeouts, not a panic.
+        self.deadline = std::time::Instant::now().checked_add(d);
+        Ok(())
+    }
+
+    /// Time left before the deadline, or `TimedOut` once it passed.
+    fn left(&self) -> std::io::Result<Option<std::time::Duration>> {
+        let Some(deadline) = self.deadline else {
+            return Ok(None);
+        };
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "connection deadline passed",
+            ));
+        }
+        Ok(Some(left))
+    }
+
+    /// A socket timeout under a deadline reports `TimedOut` on every platform
+    /// (Unix reports the expired receive/send timeout as `WouldBlock`).
+    fn deadline_err<T>(&self, r: std::io::Result<T>) -> std::io::Result<T> {
+        match r {
+            Err(e) if self.deadline.is_some() && e.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(std::io::Error::new(std::io::ErrorKind::TimedOut, e))
+            }
+            r => r,
+        }
     }
 }
 
 #[cfg(feature = "network")]
 impl std::io::Read for LanStream {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.inner.read(buf)
+        if let Some(left) = self.left()? {
+            self.inner.inner.set_read_timeout(Some(left))?;
+        }
+        let r = self.inner.read(buf);
+        self.deadline_err(r)
     }
 }
 
 #[cfg(feature = "network")]
 impl std::io::Write for LanStream {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.inner.write(buf)
+        if let Some(left) = self.left()? {
+            self.inner.inner.set_write_timeout(Some(left))?;
+        }
+        let r = self.inner.write(buf);
+        self.deadline_err(r)
     }
     fn flush(&mut self) -> std::io::Result<()> {
         self.inner.flush()
@@ -1533,6 +1582,42 @@ mod tests {
         assert!(g
             .lan_connect("not an address", std::time::Duration::from_millis(10))
             .is_err());
+    }
+
+    /// A peer trickling one byte at a time cannot hold a connection past its
+    /// deadline (each read would otherwise restart the per-read timeout).
+    #[cfg(feature = "network")]
+    #[test]
+    fn lan_stream_deadline_covers_the_whole_connection() {
+        use std::io::{Read, Write};
+        let g = NetGate::default();
+        g.set_air_gapped(false);
+        let l = g.lan_listen(true).unwrap();
+        let addr = format!("127.0.0.1:{}", l.port());
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let mut c = g
+                    .lan_connect(&addr, std::time::Duration::from_secs(5))
+                    .unwrap();
+                for _ in 0..40 {
+                    if c.write_all(&[0]).is_err() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            });
+            let mut stream = l.accept(&g, &mut || true).unwrap().unwrap();
+            stream
+                .set_timeout(std::time::Duration::from_millis(400))
+                .unwrap();
+            let started = std::time::Instant::now();
+            let mut buf = [0u8; 64];
+            let err = stream.read_exact(&mut buf).unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+            assert!(started.elapsed() < std::time::Duration::from_millis(1500));
+            // A duration past what an `Instant` can hold must not panic.
+            stream.set_timeout(std::time::Duration::MAX).unwrap();
+        });
     }
 
     /// Live check of advertise + browse on this machine's network (multicast
