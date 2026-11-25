@@ -155,9 +155,25 @@ Step "Building the release installer (first run is slow; later runs are incremen
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $buildStart = Get-Date
 # Run from the repo root; beforeBuildCommand builds the frontend in src/ (cwd in tauri.conf.json).
+# Refs from before #184 still have the string-form hook, which would run `npm run build` at the
+# repo root (no package.json): for those, build the frontend here and blank the hook instead.
+$tauriArgs = @('build', '--bundles', 'nsis')
+$conf = Get-Content -LiteralPath (Join-Path $wt 'src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json
+$cfg = Join-Path $state 'build-override.json'
+Remove-Item -LiteralPath $cfg -ErrorAction SilentlyContinue
+if ($conf.build.beforeBuildCommand -is [string]) {
+    Note 'old-style beforeBuildCommand: building the frontend first'
+    Push-Location (Join-Path $wt 'src')
+    try {
+        & npm.cmd run build
+        if ($LASTEXITCODE -ne 0) { throw 'frontend build failed' }
+    } finally { Pop-Location }
+    Set-Content -LiteralPath $cfg -Value '{"build":{"beforeBuildCommand":""}}' -Encoding ascii
+    $tauriArgs += @('--config', $cfg)
+}
 Push-Location $wt
 try {
-    & (Join-Path $wt 'src\node_modules\.bin\tauri.cmd') build --bundles nsis
+    & (Join-Path $wt 'src\node_modules\.bin\tauri.cmd') @tauriArgs
     if ($LASTEXITCODE -ne 0) { throw 'tauri build failed' }
 } finally { Pop-Location }
 Note ("built in {0:mm\:ss}" -f $sw.Elapsed)
