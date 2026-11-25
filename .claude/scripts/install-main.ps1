@@ -176,6 +176,7 @@ Note $setup.FullName
 
 # --- 4. Close the running app ------------------------------------------------------------------
 $running = Get-RunningApp $(if ($installed) { $installed.Dir } else { $null })
+$closedApp = $false
 if ($running.Count -gt 0) {
     if (-not $CloseApp) {
         Write-Host ''
@@ -184,6 +185,7 @@ if ($running.Count -gt 0) {
         exit 2
     }
     Step "Closing shush"
+    $closedApp = $true
     foreach ($p in $running) { [void]$p.CloseMainWindow() }
     $deadline = (Get-Date).AddSeconds(5)
     while ((Get-RunningApp $installed.Dir).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
@@ -237,10 +239,14 @@ if ($proc.ExitCode -eq 2 -and $installed -and $CloseApp) {
     $proc = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait -PassThru
 }
 if ($proc.ExitCode -ne 0) {
-    # Never leave the owner with shush closed after a failed install.
-    if ($Launch -and $installed -and (Test-Path -LiteralPath $installed.Exe) -and -not (Get-RunningApp $installed.Dir)) {
+    # Never leave the owner with shush closed after a failed install: relaunch with -Launch,
+    # or when this run closed the app itself.
+    if (($Launch -or $closedApp) -and $installed -and (Test-Path -LiteralPath $installed.Exe) -and -not (Get-RunningApp $installed.Dir)) {
         Note 'install failed; relaunching the previous shush'
         Start-Process -FilePath $installed.Exe
+    }
+    if ($proc.ExitCode -eq 2 -and -not $CloseApp) {
+        Note 'exit 2 usually means a shush process (often shush-host.exe, held by a browser) still runs; rerun with -CloseApp'
     }
     throw "installer exited with code $($proc.ExitCode)"
 }
