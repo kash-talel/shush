@@ -60,6 +60,7 @@ jobs:
         with:
           node-version: 22
           # No npm cache: this job holds TIMESTAMP_SIGNING_KEY.
+          package-manager-cache: false
 
       - name: Install tauri CLI (signer)
         if: steps.gate.outputs.enabled == 'true'

@@ -39,9 +39,9 @@ jobs:
       - id: app
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
-          # Legacy fallback until RELEASE_APP_CLIENT_ID is set; app-id is deprecated.
-          app-id: ${{ vars.RELEASE_APP_CLIENT_ID == '' && vars.RELEASE_APP_ID || '' }}
+          # Falls back to the legacy numeric App ID until RELEASE_APP_CLIENT_ID is set; the
+          # action and GitHub's JWT `iss` accept either. No deprecated `app-id` key, so no warning.
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID || vars.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
       - id: rp
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
@@ -224,6 +224,7 @@ jobs:
         with:
           node-version: 22
           # No npm cache: this job holds RELEASE_SIGNING_KEY.
+          package-manager-cache: false
 
       - name: Install tauri CLI
         run: npm ci --prefix src --ignore-scripts
@@ -258,7 +259,8 @@ jobs:
 
       # Build provenance (#72 step 3): proves the files came from this workflow run.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        # actions/attest with no sbom/predicate input produces SLSA build provenance.
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
             attest-only/shush.exe
