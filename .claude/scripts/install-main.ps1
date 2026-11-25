@@ -68,6 +68,29 @@ function Get-RunningApp([string]$dir) {
     })
 }
 
+# shush.exe plus the native-messaging bridge (shush-host.exe) a browser may hold open: the
+# installer aborts (exit 2) while either still runs from the install dir.
+function Get-InstallProcs([string]$dir) {
+    if (-not $dir) { return @() }
+    $prefix = $dir.TrimEnd('') + ''
+    return @(Get-Process shush, shush-host -ErrorAction SilentlyContinue | Where-Object {
+        $_.Path -and $_.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+    })
+}
+
+# Force-stop everything under $dir and wait until it is really gone (up to ~15 s).
+function Stop-InstallProcs([string]$dir) {
+    $deadline = (Get-Date).AddSeconds(15)
+    do {
+        $procs = Get-InstallProcs $dir
+        if ($procs.Count -eq 0) { break }
+        $procs | Stop-Process -Force -ErrorAction SilentlyContinue
+        $procs | Wait-Process -Timeout 5 -ErrorAction SilentlyContinue
+    } while ((Get-Date) -lt $deadline)
+    Start-Sleep -Milliseconds 500   # let Windows release file handles on the exe
+    return (Get-InstallProcs $dir).Count -eq 0
+}
+
 $installed = Get-Installed
 $last = Get-LastInstall
 
@@ -165,8 +188,11 @@ if ($running.Count -gt 0) {
     $deadline = (Get-Date).AddSeconds(5)
     while ((Get-RunningApp $installed.Dir).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
     # shush minimizes to the tray, so closing the window is usually not enough.
-    Get-RunningApp $installed.Dir | Stop-Process -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Milliseconds 500
+    if (-not (Stop-InstallProcs $installed.Dir)) { Note 'warning: some shush processes are still running; the installer may abort' }
+}
+elseif ($installed -and $CloseApp) {
+    # No window, but a browser may hold the native-messaging bridge open.
+    [void](Stop-InstallProcs $installed.Dir)
 }
 
 # --- 5. Back up vault files --------------------------------------------------------------------
@@ -204,7 +230,20 @@ if ($files.Count -gt 0) {
 # --- 6. Install --------------------------------------------------------------------------------
 Step "Installing $($setup.Name) silently"
 $proc = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait -PassThru
-if ($proc.ExitCode -ne 0) { throw "installer exited with code $($proc.ExitCode)" }
+if ($proc.ExitCode -eq 2 -and $installed -and $CloseApp) {
+    # NSIS exit 2 = aborted, typically a process still held the install dir. Stop again, retry once.
+    Note 'installer aborted (exit 2); stopping leftover shush processes and retrying once'
+    [void](Stop-InstallProcs $installed.Dir)
+    $proc = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait -PassThru
+}
+if ($proc.ExitCode -ne 0) {
+    # Never leave the owner with shush closed after a failed install.
+    if ($Launch -and $installed -and (Test-Path -LiteralPath $installed.Exe) -and -not (Get-RunningApp $installed.Dir)) {
+        Note 'install failed; relaunching the previous shush'
+        Start-Process -FilePath $installed.Exe
+    }
+    throw "installer exited with code $($proc.ExitCode)"
+}
 $after = Get-Installed
 if (-not $after -or -not (Test-Path -LiteralPath $after.Exe)) { throw 'installer finished but shush.exe is missing' }
 # (Tauri rewrites target\release\shush.exe after bundling, so compare times, not hashes.)
