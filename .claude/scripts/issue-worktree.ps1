@@ -235,7 +235,12 @@ function Unlock-AgentWorktree([string]$wt, [bool]$OnlyIfStale) {
     if ($null -eq $reason) { return $true }
     $one = ($reason -replace '\s+', ' ').Trim()
     if ($one -notmatch '^claude agent .*\(pid (?<pid>\d+)\)$') { return $false }
-    if ($OnlyIfStale -and (Get-Process -Id ([int]$Matches['pid']) -ErrorAction SilentlyContinue)) { return $false }
+    # Windows reuses PIDs: a live process that is not Claude Code (claude.exe / node.exe) under the
+    # lock's PID means the agent is gone (seen: an Intel graphics service holding a dead agent's PID).
+    if ($OnlyIfStale) {
+        $proc = Get-Process -Id ([int]$Matches['pid']) -ErrorAction SilentlyContinue
+        if ($proc -and $proc.ProcessName -match '^(claude|node)$') { return $false }
+    }
     if ((Invoke-Native { git -C $main worktree unlock $wt }) -ne 0) { return $false }
     Write-Host "note: released Claude agent lock on $wt ($one)"
     return $true
@@ -290,8 +295,18 @@ if ($Prune) {
         $safe = $unpushed.Count -eq 0
         if (-not $safe) {
             $sha = (& git -C $wt rev-parse HEAD).Trim()
-            $prs = (& gh pr list --state all --search $sha --json state --jq '[.[] | select(.state != "OPEN")] | length' 2>$null)
-            $safe = ([int]"0$prs") -gt 0
+            # Filter in PowerShell, not --jq: Windows PowerShell 5.1 strips the inner double quotes
+            # of a native argument, so a jq string literal reached gh as `select(.state != OPEN)` and
+            # failed ("function not defined: OPEN/0"). Under 'Stop' that aborted the whole prune, and
+            # every worktree after this one kept its cargo slot. A gh failure here means "keep it".
+            # 'Continue' locally: a gh stderr notice must not throw when gh exits 0 with valid JSON.
+            $closed = 0
+            $oldEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            try {
+                $json = (& gh pr list --state all --search $sha --json state 2>$null)
+                if ($LASTEXITCODE -eq 0 -and $json) { $closed = @(($json | ConvertFrom-Json) | Where-Object { $_.state -ne 'OPEN' }).Count }
+            } catch { $closed = 0 } finally { $ErrorActionPreference = $oldEap }
+            $safe = $closed -gt 0
         }
         if ($safe) {
             try { Remove-Worktree $wt $true } catch { [Console]::Error.WriteLine("prune: could not remove ${wt}: $_"); $kept++ }
