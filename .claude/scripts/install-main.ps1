@@ -154,18 +154,10 @@ if (Test-Path -LiteralPath $bundleDir) { Get-ChildItem -LiteralPath $bundleDir -
 Step "Building the release installer (first run is slow; later runs are incremental)"
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $buildStart = Get-Date
-# Build the frontend ourselves, then run the CLI from the repo root (where it finds src-tauri)
-# with beforeBuildCommand disabled: from the root, its `npm run build` finds no package.json.
-Push-Location (Join-Path $wt 'src')
-try {
-    & npm.cmd run build
-    if ($LASTEXITCODE -ne 0) { throw 'frontend build failed' }
-} finally { Pop-Location }
-$cfg = Join-Path $state 'build-override.json'
-Set-Content -LiteralPath $cfg -Value '{"build":{"beforeBuildCommand":""}}' -Encoding ascii
+# Run from the repo root; beforeBuildCommand builds the frontend in src/ (cwd in tauri.conf.json).
 Push-Location $wt
 try {
-    & (Join-Path $wt 'src\node_modules\.bin\tauri.cmd') build --bundles nsis --config $cfg
+    & (Join-Path $wt 'src\node_modules\.bin\tauri.cmd') build --bundles nsis
     if ($LASTEXITCODE -ne 0) { throw 'tauri build failed' }
 } finally { Pop-Location }
 Note ("built in {0:mm\:ss}" -f $sw.Elapsed)

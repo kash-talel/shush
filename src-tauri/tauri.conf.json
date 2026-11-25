@@ -4,9 +4,9 @@
   "version": "0.2.0",
   "identifier": "com.shush.vault",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": {"script": "npm run dev", "cwd": "../src"},
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": {"script": "npm run build", "cwd": "../src"},
     "frontendDist": "../src/dist"
   },
   "app": {
