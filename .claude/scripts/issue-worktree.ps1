@@ -299,11 +299,13 @@ if ($Prune) {
             # of a native argument, so a jq string literal reached gh as `select(.state != OPEN)` and
             # failed ("function not defined: OPEN/0"). Under 'Stop' that aborted the whole prune, and
             # every worktree after this one kept its cargo slot. A gh failure here means "keep it".
+            # 'Continue' locally: a gh stderr notice must not throw when gh exits 0 with valid JSON.
             $closed = 0
+            $oldEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
             try {
                 $json = (& gh pr list --state all --search $sha --json state 2>$null)
                 if ($LASTEXITCODE -eq 0 -and $json) { $closed = @(($json | ConvertFrom-Json) | Where-Object { $_.state -ne 'OPEN' }).Count }
-            } catch { $closed = 0 }
+            } catch { $closed = 0 } finally { $ErrorActionPreference = $oldEap }
             $safe = $closed -gt 0
         }
         if ($safe) {

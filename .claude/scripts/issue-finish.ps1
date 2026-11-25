@@ -69,7 +69,11 @@ $outcome =
     elseif ($pr -and $pr.state -eq 'OPEN' -and $status -eq 'APPROVE') { 'PENDING_MERGE' }   # reviewer approved, merge not done yet
     elseif ($status -eq 'BLOCKED') { 'BLOCKED' }
     # A run that never got a build slot says nothing about the issue: do not park it (#184 was).
-    elseif (-not $pr -and ($status -eq 'SETUP' -or $reportText -match 'cargo target slots (are|were) (all )?leased|all \d+ cargo target slots')) { 'SETUP' }
+    # Only an OPEN PR counts (a closed PR from an earlier attempt must not turn SETUP into FAILED), and
+    # the slot-text fallback applies only to a report with no STATUS/VERDICT line: a runner that said
+    # FAILED after getting a slot on retry must still be parked, or /issue would loop on it.
+    elseif (-not ($pr -and $pr.state -eq 'OPEN') -and ($status -eq 'SETUP' -or
+            (-not $f['STATUS'] -and -not $f['VERDICT'] -and $reportText -match 'cargo target slots (are|were) (all )?leased|all \d+ cargo target slots'))) { 'SETUP' }
     else { 'FAILED' }
 
 # --- park a non-success so the next /issue moves on ---
