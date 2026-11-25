@@ -67,7 +67,7 @@ date" until the fix ships, so ship `X.Y.Z+1` quickly and then remove the yank li
 |---|---|---|
 | `RELEASE_SIGNING_KEY`, `RELEASE_SIGNING_KEY_PASSWORD` | `release` | signs installer `.sig` and `release.json` |
 | `TIMESTAMP_SIGNING_KEY`, `TIMESTAMP_SIGNING_KEY_PASSWORD` | `feed` | signs `freshness.json` only |
-| `RELEASE_APP_ID` (variable), `RELEASE_APP_PRIVATE_KEY` | repository | GitHub App that opens the release PR and creates the tag |
+| `RELEASE_APP_CLIENT_ID` (variable; legacy `RELEASE_APP_ID` still works), `RELEASE_APP_PRIVATE_KEY` | repository | GitHub App that opens the release PR and creates the tag |
 | SignPath token (#165, blocked) | `codesign` | Authenticode signing, not yet wired |
 
 Generate keys with `npx --prefix src tauri signer generate -w <file> -p <password>`: one each for
@@ -92,7 +92,7 @@ rotate to release-next, and tell users to reinstall manually from a verified dow
 ## One-time repository setup (needs the owner, cannot be done by a workflow)
 
 - Settings, General, Releases: enable **immutable releases**.
-- Create the GitHub App (contents + pull requests, this repo only) and set `RELEASE_APP_ID` / `RELEASE_APP_PRIVATE_KEY`. Until `RELEASE_APP_ID` exists the release-please job is skipped, so pushes to `main` do not fail.
+- Create the GitHub App (contents + pull requests, this repo only) and set `RELEASE_APP_CLIENT_ID` (the App's Client ID, not its numeric ID) / `RELEASE_APP_PRIVATE_KEY`. Until `RELEASE_APP_CLIENT_ID` (or the legacy `RELEASE_APP_ID`) exists the release-please job is skipped, so pushes to `main` do not fail.
 - Environments: `release` (required reviewer, deployment rule `v*` tags only is not possible for a branch-run job: restrict to `main`), `feed` (`main` only), `github-pages`.
 - Rulesets: `refs/tags/v*` (only the release App may create; update and delete blocked, admin bypass for emergencies); `main` (require CI and the `PR title (Conventional Commits)` check from `pr-title.yml`).
 - Generate the three keys and store the secrets as in the table above.
