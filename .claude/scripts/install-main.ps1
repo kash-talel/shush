@@ -72,7 +72,7 @@ function Get-RunningApp([string]$dir) {
 # installer aborts (exit 2) while either still runs from the install dir.
 function Get-InstallProcs([string]$dir) {
     if (-not $dir) { return @() }
-    $prefix = $dir.TrimEnd('') + ''
+    $prefix = $dir.TrimEnd('\') + '\'
     return @(Get-Process shush, shush-host -ErrorAction SilentlyContinue | Where-Object {
         $_.Path -and $_.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
     })
