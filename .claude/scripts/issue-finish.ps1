@@ -10,6 +10,8 @@
 #   ESCALATE  PR open with needs-review              -> worktrees removed, owner question shown
 #   PENDING_MERGE  PR open, reviewer APPROVE, not merged -> issue not labelled; PR ai-review -> needs-review; merge command shown
 #   BLOCKED   runner said BLOCKED                     -> issue labelled blocked + comment
+#   SETUP     runner said SETUP (or hit full cargo slots) -> NOT labelled (pipeline problem, not the
+#             issue's), comment + banner name the fix, so the next /issue picks the issue again
 #   FAILED    anything else                           -> issue labelled agent-failed + comment
 # FAILED/BLOCKED worktrees are kept unless their work is fully pushed (then the PR holds it).
 # A Claude Code agent lock a finished agent left behind is released by issue-worktree.ps1 -Remove.
@@ -66,6 +68,8 @@ $outcome =
     elseif ($pr -and $pr.state -eq 'OPEN' -and $prLabels -contains 'needs-review') { 'ESCALATE' }
     elseif ($pr -and $pr.state -eq 'OPEN' -and $status -eq 'APPROVE') { 'PENDING_MERGE' }   # reviewer approved, merge not done yet
     elseif ($status -eq 'BLOCKED') { 'BLOCKED' }
+    # A run that never got a build slot says nothing about the issue: do not park it (#184 was).
+    elseif (-not $pr -and ($status -eq 'SETUP' -or $reportText -match 'cargo target slots (are|were) (all )?leased|all \d+ cargo target slots')) { 'SETUP' }
     else { 'FAILED' }
 
 # --- park a non-success so the next /issue moves on ---
@@ -75,6 +79,12 @@ if ($outcome -eq 'BLOCKED' -or $outcome -eq 'FAILED') {
     $body = Write-BodyFile ("**/issue run $($outcome.ToLower())** ($Runner/$Target, status ``$status``).`n`n$why`n`n" +
         "Remove the ``$label`` label to let ``/issue`` pick this issue up again.")
     & gh issue edit $Number --add-label $label | Out-Null
+    & gh issue comment $Number --body-file $body | Out-Null
+    Remove-Item $body -ErrorAction SilentlyContinue
+}
+if ($outcome -eq 'SETUP') {
+    $why = if ($f['SUMMARY']) { $f['SUMMARY'] } else { 'the runner could not set up its worktree' }
+    $body = Write-BodyFile ("**/issue run hit a setup problem** ($Runner/$Target, status ``$status``). This is not a failure of this issue, so it was **not** labelled ``agent-failed``; the next ``/issue`` will pick it up again.`n`n$why")
     & gh issue comment $Number --body-file $body | Out-Null
     Remove-Item $body -ErrorAction SilentlyContinue
 }
@@ -156,6 +166,15 @@ switch ($outcome) {
         # A kept worktree holds unpushed or uncommitted work (e.g. reviewer fixes): merging now would skip it.
         if ($kept.Count -gt 0) { $lines += "$(E 0x26A0)$(E 0xFE0F) Do not merge yet: unpushed work was kept in $($kept -join ', '). Push it to the PR branch first, then run: powershell -NoProfile -File .claude/scripts/merge-pr.ps1 -Pr $($pr.number) -Reviewed" }
         else { $lines += "$(E 0x1F449) Merge it: powershell -NoProfile -File .claude/scripts/merge-pr.ps1 -Pr $($pr.number) -Reviewed" }
+    }
+    'SETUP' {
+        $lines += "$(E 0x1F6E0)$(E 0xFE0F) SETUP PROBLEM: Issue #$Number (""$t"") was not worked on by $Runner/${Target}: the pipeline could not set up a worktree. Not labelled failed; /issue will pick it again."
+        $lines += ''
+        $lines += $reportText.TrimEnd()
+        $lines += ''
+        $slots = @(& powershell -NoProfile -File (Join-Path $PSScriptRoot 'issue-worktree.ps1') -Status 2>$null)
+        if ($slots.Count) { $lines += "$(E 0x1F4E6) Build slots now:"; $slots | ForEach-Object { $lines += "   $_" } }
+        $lines += "$(E 0x1F449) Before the next /issue, ask Claude to free a slot (a leased worktree it can check is merged or abandoned, removed with issue-worktree.ps1 -Remove)."
     }
     default {
         $lines += "$(E 0x26A0)$(E 0xFE0F) Issue #$Number (""$t"") was not completed by $Runner/${Target}: $outcome, labelled $(if ($outcome -eq 'BLOCKED') { 'blocked' } else { 'agent-failed' })."

@@ -62,7 +62,8 @@ You are in an isolated git worktree. Never `git checkout main`, never touch the 
    It gives this worktree its own cargo target slot and main's `src/node_modules` read-only:
    never `npm install/ci/update` through it; if the issue changes `src/package*.json`, run
    `issue-worktree.ps1 -OwnNodeModules` first. If `-Link` says all slots are leased, run
-   `issue-worktree.ps1 -Prune` and retry once; still full → `STATUS: FAILED`.
+   `issue-worktree.ps1 -Prune` and retry once; still full → `STATUS: SETUP` (a pipeline problem, not
+   the issue's: the issue is not parked, and the banner tells the owner to free a slot).
 3. Implement. For builds, app launches and CDP tests, start the PowerShell command with
    `. .claude/scripts/issue-env.ps1;` (own `CDP_PORT`, scratch `SHUSH_VAULT_PATH`; use `$env:CDP_PORT`, not 9222).
 4. Verify: `powershell -NoProfile -File .claude/scripts/verify.ps1` (fmt, clippy, tests, svelte-check;
@@ -96,7 +97,7 @@ Do not switch branches or clean up the worktree; the dispatcher does that.
 ## Final report
 Your last message goes back to the dispatcher. Make it exactly this, with nothing after it:
 ```
-STATUS: DONE | REVIEW | BLOCKED | FAILED
+STATUS: DONE | REVIEW | BLOCKED | SETUP | FAILED
 ISSUE: #<NUMBER> "<TITLE>"
 WORKTREE: <output of `git rev-parse --show-toplevel`>
 PR: <url or none>

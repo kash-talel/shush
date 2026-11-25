@@ -24,6 +24,12 @@ $ErrorActionPreference = 'Stop'
 # stops, and Windows PowerShell 5.1 turns native stderr into a terminating error under 'Stop'.
 $ErrorActionPreference = 'Continue'
 & powershell -NoProfile -File (Join-Path $PSScriptRoot 'issue-worktree.ps1') -Prune 2>$null | Out-Null
+# Warn up front when prune could not free a cargo slot: a build-needing run would end in SETUP.
+$slotNote = ''
+$slots = @(& powershell -NoProfile -File (Join-Path $PSScriptRoot 'issue-worktree.ps1') -Status 2>$null)
+if ($slots.Count -and -not ($slots | Where-Object { $_ -match ': (free|stale)' })) {
+    $slotNote = "WARNING: all $($slots.Count) cargo build slots are leased; a run that builds will stop with SETUP. Free one first (issue-worktree.ps1 -Status / -Remove)"
+}
 $ErrorActionPreference = 'Stop'
 
 function Out-Result($issue, [string]$action, $pr, [string]$note) {
@@ -38,7 +44,7 @@ function Out-Result($issue, [string]$action, $pr, [string]$note) {
     }
     $o.pr = if ($pr) { [int]$pr.number } else { $null }
     $o.head = if ($pr) { [string]$pr.headRefName } else { $null }
-    $o.note = $note
+    $o.note = (@($note, $slotNote) | Where-Object { $_ }) -join '; '
     [pscustomobject]$o | ConvertTo-Json -Compress
     exit 0
 }
