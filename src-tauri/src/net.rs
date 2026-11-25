@@ -1134,7 +1134,9 @@ impl LanStream {
             .inner
             .set_write_timeout(Some(d))
             .map_err(io_err)?;
-        self.deadline = Some(std::time::Instant::now() + d);
+        // A duration too large for an `Instant` means no deadline beyond the
+        // socket timeouts, not a panic.
+        self.deadline = std::time::Instant::now().checked_add(d);
         Ok(())
     }
 
@@ -1152,6 +1154,17 @@ impl LanStream {
         }
         Ok(Some(left))
     }
+
+    /// A socket timeout under a deadline reports `TimedOut` on every platform
+    /// (Unix reports the expired receive/send timeout as `WouldBlock`).
+    fn deadline_err<T>(&self, r: std::io::Result<T>) -> std::io::Result<T> {
+        match r {
+            Err(e) if self.deadline.is_some() && e.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(std::io::Error::new(std::io::ErrorKind::TimedOut, e))
+            }
+            r => r,
+        }
+    }
 }
 
 #[cfg(feature = "network")]
@@ -1160,7 +1173,8 @@ impl std::io::Read for LanStream {
         if let Some(left) = self.left()? {
             self.inner.inner.set_read_timeout(Some(left))?;
         }
-        self.inner.read(buf)
+        let r = self.inner.read(buf);
+        self.deadline_err(r)
     }
 }
 
@@ -1170,7 +1184,8 @@ impl std::io::Write for LanStream {
         if let Some(left) = self.left()? {
             self.inner.inner.set_write_timeout(Some(left))?;
         }
-        self.inner.write(buf)
+        let r = self.inner.write(buf);
+        self.deadline_err(r)
     }
     fn flush(&mut self) -> std::io::Result<()> {
         self.inner.flush()
@@ -1600,6 +1615,8 @@ mod tests {
             let err = stream.read_exact(&mut buf).unwrap_err();
             assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
             assert!(started.elapsed() < std::time::Duration::from_millis(1500));
+            // A duration past what an `Instant` can hold must not panic.
+            stream.set_timeout(std::time::Duration::MAX).unwrap();
         });
     }
 
