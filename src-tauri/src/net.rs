@@ -1130,7 +1130,10 @@ impl LanStream {
     /// paces its bytes.
     pub fn set_timeout(&mut self, d: std::time::Duration) -> Result<(), NetError> {
         self.inner.inner.set_read_timeout(Some(d)).map_err(io_err)?;
-        self.inner.inner.set_write_timeout(Some(d)).map_err(io_err)?;
+        self.inner
+            .inner
+            .set_write_timeout(Some(d))
+            .map_err(io_err)?;
         self.deadline = Some(std::time::Instant::now() + d);
         Ok(())
     }
