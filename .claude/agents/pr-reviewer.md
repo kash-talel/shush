@@ -75,8 +75,16 @@ that no test can reach. Where the real trigger cannot be reproduced safely, chec
 by reading it and, if possible, by calling it from a test, and record it as "not tested, why".
 
 ## Step 3: Review for defects
-Skip this step's `/code-review` when the PR changes only Markdown. Otherwise run
-`/code-review high <PR>` through the Skill tool (it runs in the background; see "Waiting on background work").
+Get the level once the first pass (Step 1, item 5) has reported (Step 2 usually takes as long):
+`powershell -NoProfile -File .claude/scripts/review-level.ps1 -Pr <PR> -Issue <ISSUE>` (omit
+`-Issue` when there is none; one line, `LEVEL: high|medium (<reason>)`; it is `high` for all
+high-risk work, when the first pass posted no result for this head, and whenever the scorecard
+has not earned a lower one). Skip `/code-review` only when the PR changes only Markdown AND the
+reason is not `high-risk` (a `docs/FORMAT.md` change is always reviewed). Otherwise run
+`/code-review <level> <PR>` through the Skill tool
+(it runs in the background; see "Waiting on background work"). Use exactly that level: never
+lower it, and raise it to `high` only if the diff is clearly riskier than its labels say (then
+say why in your comment).
 This is the one full review of the PR. Do not repeat it line by line yourself: confirm or reject
 each of its findings against the code. Then take the first pass's findings (Step 1, item 5; wait for
 its notification if it is still running): treat each as a lead, confirm or reject it against the
@@ -123,8 +131,8 @@ a `### Not tested` list with the reason for each item.
 
 End the comment with this one line, filled in honestly (it feeds `hydrogen-stats.ps1`, which decides
 whether `/code-review` may later run at a lower level; a wrong count makes that decision wrong):
-`<!-- review-score v1 confirmed=D cr=R hy=H own=O cr_only=X cr_only_mh=Y hy_only=Z hy_leads=L hy_rejected=J hy_missed_high=M -->`
-Count each distinct defect you confirmed (fixed, or filed as an issue) once. Its sources are
+`<!-- review-score v1 level=V confirmed=D cr=R hy=H own=O cr_only=X cr_only_mh=Y hy_only=Z hy_leads=L hy_rejected=J hy_missed_high=M -->`
+`V` is the level `/code-review` actually ran at (`high` or `medium`; `none` when it was skipped, which never counts toward a downgrade). Count each distinct defect you confirmed (fixed, or filed as an issue) once. Its sources are
 `/code-review` (cr), the first pass (hy), and your own checks, tests and checklist (own); a defect
 can have several. `cr_only` = found by `/code-review` and by neither other source; `cr_only_mh` = of
 those, the medium/high ones; `hy_only` = found only by the first pass; `hy_leads` / `hy_rejected` =
