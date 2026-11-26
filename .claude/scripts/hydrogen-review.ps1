@@ -17,7 +17,7 @@
 # tool (shell, URL fetch, MCP, browser, a read outside the snapshot) is auto-denied and the run
 # aborts with `denied_actions` (fail closed: exit 7, nothing posted). Allow rules must not contain
 # globs: they feed agy's terminal sandbox, which rejects them. Before posting, the answer is
-# scanned for secret-like strings (tokens, key blocks, the vault path, the home folder); a hit
+# scanned for secret-like strings (tokens, signing keys, local profile paths); a hit
 # withholds the comment (exit 7). Residual risk: a hostile issue can still make agy read any file
 # inside the snapshot (the repo itself, which is public) and shape its answer text.
 #
@@ -140,11 +140,15 @@ try {
     $leaf = [regex]::Escape((Split-Path -Leaf $work))
     $resp = [regex]::Replace($resp, "(?i)(?:[a-z]:)?[\\/][^\s``""'<>|*?]*?$leaf[\\/]repo(?:[\\/]|\b)", '')
     # Never post secret-like text (#280): the answer goes on a public PR.
-    $secretRx = '(?i)gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|-----BEGIN [A-Z ]*PRIVATE KEY|RWR[A-Za-z0-9+/=]{40,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|sk-[A-Za-z0-9]{20,}|com\.shush\.vault|\.shush\b[^\s]*vault|[\\/]\.ssh[\\/]|[\\/]\.gemini[\\/]|(?:[a-z]:)?[\\/]+users[\\/]+[^\s\\/]+[\\/]'
+    # Case-sensitive key prefixes: minisign secret keys start RWRTY0Iy (public keys, which PRs pin,
+    # do not); a Tauri signing key is the base64 of an "untrusted comment: rsign/minisign encrypted
+    # secret key" file. com.shush.vault alone is the app's public identifier, not a secret: the real
+    # vault path is caught by the %APPDATA% check above.
+    $secretRx = 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|-----BEGIN [A-Z ]*PRIVATE KEY|RWRTY0Iy[A-Za-z0-9+/=]{20,}|dW50cnVzdGVkIGNvbW1lbnQ6I(?:HJzaWdu|G1pbmlzaWduIGVuY3J5cHRlZ)|(?i:untrusted comment:[^\n]*secret key)|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|sk-[A-Za-z0-9]{20,}|(?i:[\\/]\.ssh[\\/]|[\\/]\.gemini[\\/]|(?:[a-z]:)?[\\/]+users[\\/]+[^\s\\/]+[\\/])'
     foreach ($localPath in @($env:USERPROFILE, $env:APPDATA, $env:LOCALAPPDATA)) {
         if ($localPath -and $resp.IndexOf($localPath, [StringComparison]::OrdinalIgnoreCase) -ge 0) { Out-Result 7 "HYDROGEN #${Pr}: unavailable: answer held back (it names a local path)" '' }
     }
-    if ($resp -match $secretRx) { Out-Result 7 "HYDROGEN #${Pr}: unavailable: answer held back (secret-like text)" '' }
+    if ($resp -cmatch $secretRx) { Out-Result 7 "HYDROGEN #${Pr}: unavailable: answer held back (secret-like text)" '' }
     $m = [regex]::Match($resp, '(?ms)^\W*FINDINGS\W*:?\s*(.*?)(?=^\W*CHECKED\W*:|\z)')
     if (-not $m.Success) { Out-Result 7 "HYDROGEN #${Pr}: unavailable: answer has no FINDINGS line" $resp }
     # Clean only when the whole FINDINGS value is "none" (markdown allowed); anything more is a finding.
