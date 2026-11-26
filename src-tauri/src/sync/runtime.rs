@@ -104,8 +104,9 @@ pub struct WindowView {
 #[derive(Default)]
 pub struct SyncRuntime {
     active: Mutex<Option<Active>>,
-    /// The join (initiator) connection in flight, and its generation.
-    join: Mutex<(u64, Arc<ConnSlot>)>,
+    /// The join (initiator) connections in flight, and the lock generation:
+    /// `abort_join` bumps it and closes every one of them.
+    join: Mutex<(u64, Vec<std::sync::Weak<ConnSlot>>)>,
 }
 
 /// One join attempt; `abort_join` (vault lock) invalidates it.
@@ -171,29 +172,33 @@ impl SyncRuntime {
         }
     }
 
-    /// Starts a join attempt, replacing the record of any earlier one.
-    #[cfg_attr(not(feature = "network"), allow(dead_code))]
+    /// Starts a join attempt. Overlapping attempts are all tracked, so a
+    /// vault lock reaches each of them.
     pub fn begin_join(&self) -> JoinGuard {
+        let conn = Arc::new(ConnSlot::default());
         let mut j = lock(&self.join);
-        j.0 += 1;
-        j.1 = Arc::new(ConnSlot::default());
+        j.1.retain(|w| w.strong_count() > 0);
+        j.1.push(Arc::downgrade(&conn));
         JoinGuard {
-            conn: j.1.clone(),
+            conn,
             generation: j.0,
         }
     }
 
-    /// Vault lock: shuts the in-flight join connection down and makes its
-    /// attempt unable to store a peer.
+    /// Vault lock: shuts every in-flight join connection down and makes those
+    /// attempts unable to store a peer.
     pub fn abort_join(&self) {
-        let mut j = lock(&self.join);
-        j.0 += 1;
-        let conn = std::mem::take(&mut j.1);
-        drop(j);
-        conn.close();
+        let conns = {
+            let mut j = lock(&self.join);
+            j.0 = j.0.wrapping_add(1);
+            std::mem::take(&mut j.1)
+        };
+        for c in conns.iter().filter_map(std::sync::Weak::upgrade) {
+            c.close();
+        }
     }
 
-    /// Whether `g` is still the live join attempt (no lock since it began).
+    /// Whether `g` is still a live join attempt (no vault lock since it began).
     #[cfg_attr(not(feature = "network"), allow(dead_code))]
     pub fn join_is_current(&self, g: &JoinGuard) -> bool {
         lock(&self.join).0 == g.generation
@@ -391,6 +396,40 @@ mod tests {
         });
         assert!(started.elapsed() < Duration::from_secs(5));
         assert_eq!(rt.view().map(|v| v.state), None);
+    }
+
+    /// A vault lock closes every in-flight join (also overlapping ones and
+    /// one whose connection is registered only after the lock) and bars
+    /// their stores; a join begun after the lock is unaffected (issue #276).
+    #[test]
+    fn abort_join_closes_every_join_in_flight() {
+        let rt = SyncRuntime::default();
+        let closed = || {
+            let f = Arc::new(AtomicBool::new(false));
+            let g = f.clone();
+            (f, Box::new(move || g.store(true, Ordering::SeqCst)) as Closer)
+        };
+        let a = rt.begin_join();
+        let b = rt.begin_join();
+        let late = rt.begin_join();
+        let (fa, ca) = closed();
+        let (fb, cb) = closed();
+        a.conn.register(ca);
+        b.conn.register(cb);
+        assert!(rt.join_is_current(&a) && rt.join_is_current(&b));
+        rt.abort_join();
+        assert!(fa.load(Ordering::SeqCst) && fb.load(Ordering::SeqCst));
+        assert!(!rt.join_is_current(&a) && !rt.join_is_current(&b));
+        // Connected only after the lock: shut down on registration.
+        let (fl, cl) = closed();
+        late.conn.register(cl);
+        assert!(fl.load(Ordering::SeqCst));
+        assert!(!rt.join_is_current(&late));
+        let next = rt.begin_join();
+        let (fn_, cn) = closed();
+        next.conn.register(cn);
+        assert!(rt.join_is_current(&next));
+        assert!(!fn_.load(Ordering::SeqCst));
     }
 
     /// The right code pairs once; the window then closes, so the code cannot

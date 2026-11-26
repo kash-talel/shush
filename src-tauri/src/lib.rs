@@ -1790,8 +1790,10 @@ fn lock_and_forget(app: tauri::AppHandle) {
 fn lock_vault(app: &tauri::AppHandle) {
     // The pairing window and its code never outlive the unlocked vault (lan-sync.md §3, §9).
     app.state::<sync::runtime::SyncRuntime>().cancel();
-    app.state::<sync::runtime::SyncRuntime>().abort_join();
     app.state::<VaultState>().lock();
+    // After the lock: a join that began earlier is aborted here, and one that
+    // begins later finds the vault locked in `sync_preflight`.
+    app.state::<sync::runtime::SyncRuntime>().abort_join();
     app.state::<bridge::state::BridgeState>()
         .bridge()
         .on_vault_locked();
@@ -3591,8 +3593,10 @@ async fn sync_join(
     let code = Zeroizing::new(code);
     blocking(move || {
         sync::pairing::parse_code(&code).map_err(pair_error)?;
+        // Before the preflight, so a vault lock from here on aborts this join.
+        let join = app.state::<sync::runtime::SyncRuntime>().begin_join();
         sync_preflight(&app)?;
-        sync_join_blocking(&app, &address, &code)
+        sync_join_blocking(&app, &join, &address, &code)
     })
     .await
 }
@@ -3600,6 +3604,7 @@ async fn sync_join(
 #[cfg(not(feature = "network"))]
 fn sync_join_blocking(
     _app: &tauri::AppHandle,
+    _join: &sync::runtime::JoinGuard,
     _address: &str,
     _code: &str,
 ) -> Result<SyncJoined, CmdError> {
@@ -3612,6 +3617,7 @@ fn sync_join_blocking(
 #[cfg(feature = "network")]
 fn sync_join_blocking(
     app: &tauri::AppHandle,
+    join: &sync::runtime::JoinGuard,
     address: &str,
     code: &str,
 ) -> Result<SyncJoined, CmdError> {
@@ -3631,19 +3637,23 @@ fn sync_join_blocking(
     let expected = *identity.public();
     let peer = stream.peer().to_owned();
     // A vault lock shuts this connection down and bars the store below.
+    // `register` shuts it down at once if the vault was locked meanwhile.
     let rt = app.state::<sync::runtime::SyncRuntime>();
-    let join = rt.begin_join();
     let closer = stream
         .closer()
         .map_err(|e| CmdError::new("SYNC_CONNECT_FAILED", e.to_string()))?;
     join.conn.register(closer);
     let result = sync::pairing::initiate(&mut stream, code, &identity, &sync_device_name(), |p| {
-        if !rt.join_is_current(&join) {
+        if !rt.join_is_current(join) {
             return Err(sync::pairing::PairError::StoreFailed);
         }
         sync_store_peer(app, &expected, p, &peer)
     });
     join.conn.clear();
+    if !rt.join_is_current(join) {
+        // Aborted by a vault lock: say so, not "wrong code".
+        return Err(locked());
+    }
     let p = result.map_err(pair_error)?;
     Ok(SyncJoined {
         fingerprint: sync::identity::fingerprint(&p.public_key),

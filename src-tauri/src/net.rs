@@ -803,8 +803,9 @@ pub struct LanStream {
     /// window's listener, code and identity) alive past it.
     deadline: Option<std::time::Instant>,
     /// Set by [`LanStream::closer`]: reads and writes then fail at once.
-    /// Windows does not wake a blocked `recv` on `shutdown`, so blocking
-    /// calls run in short slices that look at this flag.
+    /// Windows does not wake a blocked `recv` on `shutdown`, so reads under a
+    /// deadline ([`LanStream::set_timeout`]) run in short slices that look at
+    /// this flag.
     closed: std::sync::Arc<AtomicBool>,
 }
 
@@ -1136,7 +1137,9 @@ impl LanStream {
     }
 
     /// A closure that shuts this connection down from another thread, so a
-    /// blocked read or write fails at once (cancel, vault lock).
+    /// blocked read fails within [`CLOSE_POLL`] (cancel, vault lock). Needs
+    /// [`LanStream::set_timeout`] first: without a deadline a read is not
+    /// sliced, and Windows does not wake it on `shutdown`.
     pub fn closer(&self) -> Result<Box<dyn FnOnce() + Send>, NetError> {
         let clone = self.inner.inner.try_clone().map_err(io_err)?;
         let closed = self.closed.clone();
@@ -1210,18 +1213,22 @@ impl std::io::Read for LanStream {
 #[cfg(feature = "network")]
 impl std::io::Write for LanStream {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        loop {
-            if let Some(left) = self.left()? {
-                self.inner
-                    .inner
-                    .set_write_timeout(Some(left.min(CLOSE_POLL)))?;
-            }
-            let r = self.inner.write(buf);
-            if self.deadline.is_some() && is_timeout(&r) {
-                continue;
-            }
-            return r;
+        // Writes are not sliced: on Windows a timed-out `send` may have queued
+        // part of `buf` without saying how much, so retrying could duplicate
+        // bytes. A send timeout ends the connection instead. Pairing frames fit
+        // in the socket buffer, so a write does not block long enough to delay
+        // a cancel.
+        if let Some(left) = self.left()? {
+            self.inner.inner.set_write_timeout(Some(left))?;
         }
+        let r = self.inner.write(buf);
+        if self.deadline.is_some() && is_timeout(&r) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "connection deadline passed",
+            ));
+        }
+        r
     }
     fn flush(&mut self) -> std::io::Result<()> {
         self.inner.flush()
