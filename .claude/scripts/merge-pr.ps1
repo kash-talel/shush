@@ -56,7 +56,10 @@ if (-not $Reviewed) {
     $null = $fp.Handle
 }
 function Stop-FirstPass {
-    if ($fp -and -not $fp.HasExited) { & taskkill /T /F /PID $fp.Id 2>$null | Out-Null }
+    # try/catch: under 'Stop', PowerShell 5.1 turns taskkill's stderr (process already gone) into a
+    # terminating error, which would turn exit 5 into exit 1.
+    if ($fp -and -not $fp.HasExited) { try { & taskkill /T /F /PID $fp.Id 2>$null | Out-Null } catch { } }
+    if ($fp) { Remove-Item -LiteralPath $fpOut, "$fpOut.err" -ErrorAction SilentlyContinue }
 }
 
 # --- wait for required checks, quietly ---

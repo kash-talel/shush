@@ -63,7 +63,7 @@ their real app.
 The procedure lives in `.claude/skills/issue/SKILL.md` and the `issue-worker` / `pr-reviewer`
 agents; routing and review rules live only in `.claude/scripts/Policy.ps1`. For any work outside
 `/issue`: branch, verify with `.claude/scripts/verify.ps1`, open a PR, and merge only through
-`.claude/scripts/merge-pr.ps1` (it waits for CI and stops sensitive diffs with exit 4 for the `pr-reviewer`; pass `-Reviewed`
+`.claude/scripts/merge-pr.ps1` (it waits for CI and stops sensitive diffs, or routine ones with first-pass review findings, with exit 4 for the `pr-reviewer`; pass `-Reviewed`
 only after such a review or when the owner explicitly asked for the merge); never
 `gh pr merge --admin`. Run `/clear` after each `/issue`.
 

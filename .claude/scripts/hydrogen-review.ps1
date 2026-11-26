@@ -23,13 +23,22 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Policy.ps1')
+[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)   # gh and issue-brief speak UTF-8
 $Marker = 'hydrogen-review'
+$trusted = @('OWNER', 'MEMBER', 'COLLABORATOR')   # only their marker comments count (public repo)
 
 function Out-Result([int]$code, [string]$line, [string]$text) {
     Write-Output $line
     if ($Print -and $text) { Write-Output ''; Write-Output $text }
     exit $code
 }
+# Any unexpected error (gh down, bad JSON) means "unavailable", never a finding or a clean result.
+trap { Write-Output "HYDROGEN #${Pr}: unavailable: $($_.Exception.Message)"; exit 7 }
+
+# Snapshots left behind by a killed run (merge-pr stops this script with taskkill when CI fails).
+Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter 'shush-hydrogen-*' -ErrorAction SilentlyContinue |
+    Where-Object { $_.LastWriteTime -lt (Get-Date).AddHours(-2) } |
+    ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
 
 $p = (& gh pr view $Pr --json number,title,headRefOid,closingIssuesReferences) | ConvertFrom-Json
 if (-not $p.headRefOid) { Out-Result 7 "HYDROGEN #${Pr}: unavailable: cannot read the PR" '' }
@@ -38,7 +47,7 @@ $oid = [string]$p.headRefOid
 # --- reuse a result for this exact head ---
 $prior = if ($NoComment) { @() } else { @(& gh api "repos/{owner}/{repo}/issues/$Pr/comments" --paginate --jq '.[] | @json' |
     Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json } |
-    Where-Object { ([string]$_.body).StartsWith("<!-- $Marker head=$oid ") }) }
+    Where-Object { ($trusted -contains [string]$_.author_association) -and ([string]$_.body).StartsWith("<!-- $Marker head=$oid ") }) }
 if ($prior.Count -gt 0) {
     $b = [string]$prior[-1].body
     if ($b -match "^<!-- $Marker head=\w+ result=(\w+) -->") {
@@ -104,10 +113,13 @@ try {
         Out-Result 7 "HYDROGEN #${Pr}: unavailable: agy exit $($proc.ExitCode), no response. $tail" ''
     }
     $resp = [regex]::Replace([string]$resp, '\]\(file:///[^)]*\)', ']')   # local links mean nothing on GitHub
-    $resp = $resp.Replace("$snap\", '').Replace($snap.Replace('\', '/') + '/', '')
+    # Strip the snapshot path in any form (short 8.3 or long, any case, / or \): it holds the user name.
+    $leaf = [regex]::Escape((Split-Path -Leaf $work))
+    $resp = [regex]::Replace($resp, "(?i)(?:[a-z]:)?[\\/][^\s``""'<>|*?]*?$leaf[\\/]repo(?:[\\/]|\b)", '')
     $m = [regex]::Match($resp, '(?ms)^\W*FINDINGS\W*:?\s*(.*?)(?=^\W*CHECKED\W*:|\z)')
     if (-not $m.Success) { Out-Result 7 "HYDROGEN #${Pr}: unavailable: answer has no FINDINGS line" $resp }
-    $clean = $m.Groups[1].Value.Trim() -match '^(none|no findings)\b'
+    # Clean only when the whole FINDINGS value is "none" (markdown allowed); anything more is a finding.
+    $clean = $m.Groups[1].Value.Trim() -match '^\W*(none|no findings)\W*$'
     $result = if ($clean) { 'clean' } else { 'findings' }
     if ($resp.Length -gt 60000) { $resp = $resp.Substring(0, 60000) + "`n`n(truncated)" }
 
