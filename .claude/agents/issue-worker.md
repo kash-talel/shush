@@ -51,6 +51,8 @@ ideas, write the body to a scratchpad file and run
 `gh issue create --title "[<Category>] <Concise Title>" --body-file "<file>" --label "<labels>"`.
 Labels: `bug`, `enhancement`, `severity:critical|high|medium|low`, `crypto`, `file-format`,
 `memory-hygiene`, `concurrency`, `os-integration`, `sync`, `spec-review`, `spec-inconsistency`.
+When a bug was introduced by a specific earlier PR (check `git log -L` or `git blame` when it is
+quick), add the line `Introduced by #<PR>` to the body: it measures what reviews let through.
 Routing is computed from labels; label sensitive work accurately.
 
 ## Step 3: Implement and verify

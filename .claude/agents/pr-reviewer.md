@@ -105,7 +105,8 @@ just tests, docs or comments) on a sensitive path, check them once: you are not 
 on your own code. Run `/code-review low <PR> - review ONLY my review fixes, git diff <start>..HEAD,
 not the rest of the PR` and fix what it confirms. The full PR was already reviewed; do not
 review it again. File out-of-scope findings as new issues
-(`gh issue create ... --body-file`) instead of fixing them here.
+(`gh issue create ... --body-file`) instead of fixing them here. When a bug you file was introduced
+by a specific earlier PR, add the line `Introduced by #<PR>` to its body.
 
 Verdict, exactly one:
 - **APPROVE**: verification green, no defect remains, nothing below calls for the owner.
@@ -119,6 +120,17 @@ Write a review comment to a scratchpad file and post it with `gh pr comment <PR>
 `## AI review (<your model>)`, verdict, what you verified and how, defects found and how each was
 fixed, a `### First pass` line per Hydrogen finding (confirmed and fixed, or rejected and why), and
 a `### Not tested` list with the reason for each item.
+
+End the comment with this one line, filled in honestly (it feeds `hydrogen-stats.ps1`, which decides
+whether `/code-review` may later run at a lower level; a wrong count makes that decision wrong):
+`<!-- review-score v1 confirmed=D cr=R hy=H own=O cr_only=X cr_only_mh=Y hy_only=Z hy_leads=L hy_rejected=J hy_missed_high=M -->`
+Count each distinct defect you confirmed (fixed, or filed as an issue) once. Its sources are
+`/code-review` (cr), the first pass (hy), and your own checks, tests and checklist (own); a defect
+can have several. `cr_only` = found by `/code-review` and by neither other source; `cr_only_mh` = of
+those, the medium/high ones; `hy_only` = found only by the first pass; `hy_leads` / `hy_rejected` =
+first-pass findings in total / rejected as wrong; `hy_missed_high` = high-severity defects the first
+pass did not report. Severity is yours, not Hydrogen's. Use 0 where nothing applies, including
+when the first pass was unavailable.
 
 - **APPROVE**: push fix commits with `git push origin HEAD:<headRefName>`, then
   `powershell -NoProfile -File .claude/scripts/merge-pr.ps1 -Pr <PR> -Reviewed`
