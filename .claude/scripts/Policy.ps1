@@ -48,14 +48,24 @@ $ParkLabels = @('blocked', 'agent-failed')
 
 # High-risk work: the pr-reviewer's /code-review never runs below `high` here, whatever the
 # first-pass scorecard says (review-level.ps1). Good results on routine PRs say nothing about these.
-$HighRiskLabels = @('severity:critical', 'severity:high', 'crypto', 'file-format', 'sync', 'memory-hygiene')
-$HighRiskTitleWords = @('Crypto', 'File format', 'Memory hygiene', 'Keyfile', 'Duress', 'Sync', 'Security', 'Signing', 'Updater', 'Update', 'Updates')
+$HighRiskLabels = @('severity:critical', 'severity:high', 'crypto', 'file-format', 'sync', 'memory-hygiene',
+    'browser-integration')
+$HighRiskTitleWords = @('Crypto', 'File format', 'Memory hygiene', 'Keyfile', 'Duress', 'Sync', 'Security', 'Signing',
+    'Updater', 'Update', 'Updates', 'Release', 'Distribution', 'Browser', 'Network', 'CI', 'Pipeline')
+# Secrets, unlock, browser bridge, network, signing/release, and the review gate itself (a change
+# to how review depth is decided is never reviewed at a depth it could have lowered).
 $HighRiskPrefixes = @('src-tauri/src/crypto/', 'src-tauri/src/vault/', 'src-tauri/src/update/', 'src-tauri/src/sync/',
-    'src-tauri/src/os/memory', 'src-tauri/src/bridge/', 'docs/FORMAT.md', '.github/workflows/release')
+    'src-tauri/src/os/memory', 'src-tauri/src/bridge/', 'src-tauri/src/os/clipboard', 'src-tauri/src/os/pipe',
+    'src-tauri/src/os/native_host', 'src-tauri/src/os/session', 'src-tauri/src/os/private_dir',
+    'src-tauri/src/os/win_hello', 'src-tauri/src/totp/', 'src-tauri/src/net', 'src-tauri/src/bin/',
+    'src-tauri/capabilities/', 'src-tauri/permissions/', 'extension/',
+    'docs/FORMAT.md', '.github/', '.claude/scripts/', '.claude/agents/', '.claude/skills/issue/', '.claude/settings')
 
-# Why an issue + PR paths are high-risk, or '' when they are not.
-function Get-HighRiskReason($issue, [string[]]$paths) {
-    if ($issue) {
+# Why the issues + PR paths are high-risk, or '' when they are not. Pass EVERY issue the PR is
+# linked to: one high-risk issue makes the PR high-risk.
+function Get-HighRiskReason($issues, [string[]]$paths) {
+    foreach ($issue in @($issues)) {
+        if (-not $issue) { continue }
         $hit = @(Get-LabelNames $issue | Where-Object { $HighRiskLabels -contains $_ })
         if ($hit.Count) { return "label $($hit -join ', ')" }
         if ([string]$issue.title -match '^\s*\[([^\]]+)\]') {
@@ -70,6 +80,19 @@ function Get-HighRiskReason($issue, [string[]]$paths) {
         foreach ($h in $HighRiskPrefixes) { if ($q.StartsWith($h, [StringComparison]::OrdinalIgnoreCase)) { return "path $q" } }
     }
     return ''
+}
+
+# The pr-reviewer's /code-review level (review-level.ps1 gathers the inputs). `medium` only when
+# ALL hold: not high-risk, the first pass posted a result for this PR head, the scorecard
+# (hydrogen-stats.ps1 -Decision) says exactly DROP, and this PR is not a spot check (1 in 4,
+# random). Everything else, including any input that is missing or unexpected, is `high`.
+$ReviewSpotCheckOneIn = 4
+function Get-ReviewLevel([string]$risk, [bool]$firstPass, [string]$scorecard, [int]$roll) {
+    if ($risk) { return "high (high-risk: $risk; never lowered)" }
+    if (-not $firstPass) { return 'high (no first-pass result for this PR head)' }
+    if ($scorecard -cne 'DROP') { return "high (scorecard $scorecard)" }
+    if ($roll -eq 0) { return "high (spot check, 1 in $ReviewSpotCheckOneIn after a DROP)" }
+    return 'medium (scorecard DROP; not high-risk; first pass ran)'
 }
 
 function Get-LabelNames($issue) { return @($issue.labels | ForEach-Object { [string]$_.name }) }

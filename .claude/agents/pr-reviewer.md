@@ -75,10 +75,13 @@ that no test can reach. Where the real trigger cannot be reproduced safely, chec
 by reading it and, if possible, by calling it from a test, and record it as "not tested, why".
 
 ## Step 3: Review for defects
-Skip this step's `/code-review` when the PR changes only Markdown. Otherwise get the level from
-`powershell -NoProfile -File .claude/scripts/review-level.ps1 -Pr <PR>` (one line,
-`LEVEL: high|medium (<reason>)`; it is `high` for all high-risk work and whenever the first-pass
-scorecard has not earned a lower one) and run `/code-review <level> <PR>` through the Skill tool
+Get the level once the first pass (Step 1, item 5) has reported (Step 2 usually takes as long):
+`powershell -NoProfile -File .claude/scripts/review-level.ps1 -Pr <PR> -Issue <ISSUE>` (omit
+`-Issue` when there is none; one line, `LEVEL: high|medium (<reason>)`; it is `high` for all
+high-risk work, when the first pass posted no result for this head, and whenever the scorecard
+has not earned a lower one). Skip `/code-review` only when the PR changes only Markdown AND the
+reason is not `high-risk` (a `docs/FORMAT.md` change is always reviewed). Otherwise run
+`/code-review <level> <PR>` through the Skill tool
 (it runs in the background; see "Waiting on background work"). Use exactly that level: never
 lower it, and raise it to `high` only if the diff is clearly riskier than its labels say (then
 say why in your comment).

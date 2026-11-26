@@ -10,17 +10,20 @@
 # Decision rule, fixed in advance (2026-11-26) so it cannot drift with the data:
 #   DROP to medium only if ALL hold:
 #     1. at least 15 reviewed PRs carry a review-score, with at least 20 confirmed defects in total;
-#     2. in the last 15 reviews that ran `/code-review high` (a score without level= counts as high),
-#        it found no medium/high defect that neither the first pass nor the reviewer's own checks
-#        found (sum of cr_only_mh = 0);
+#     2. there are 15 reviews that ran `/code-review high` (level=high; a score without level=
+#        does not count), and in the last 15 of them it found no medium/high defect that neither
+#        the first pass nor the reviewer's own checks found (sum of cr_only_mh = 0);
 #     3. no severity:high/critical bug was ever traced ("Introduced by") to a PR the first pass
 #        called clean and that merged without an Opus review;
 #     4. in the last 15 reviews of any level, the first pass missed no high-severity defect
-#        (sum of hy_missed_high = 0).
+#        (sum of hy_missed_high = 0);
+#     5. the first pass posted a result on every one of those last 15 reviews (a failing or
+#        unavailable first pass means KEEP), and no score has an unknown level=.
+#   Scores with level=none (no /code-review ran) are left out of every rule.
 #   Otherwise KEEP high. The rule is re-evaluated on every review (review-level.ps1), so one
 #   counter-example switches back to high on the next review with no one acting. After a drop,
 #   review-level.ps1 still runs 1 in 4 eligible reviews at high, so rule 2 keeps being measured.
-#   High-risk work (Policy.ps1 Test-HighRisk) is never reviewed below high, whatever this says.
+#   High-risk work (Policy.ps1 Get-HighRiskReason) is never reviewed below high, whatever this says.
 #
 # Usage:  powershell -NoProfile -File .claude/scripts/hydrogen-stats.ps1 [-Window 15] [-Decision]
 #         -Decision: print only `DROP` or `KEEP: <why>` (review-level.ps1 uses it).
@@ -53,12 +56,16 @@ foreach ($c in $comments) {
         $row = @{ pr = (PrOf $c.u) }
         foreach ($kv in ($Matches[1] -split '\s+')) {
             $k, $v = $kv -split '=', 2
-            if ($k -eq 'level') { $row[$k] = [int]($v -eq 'high') } elseif ($v -match '^\d+$') { $row[$k] = [int]$v }
+            if ($k -eq 'level') { $row.lv = ([string]$v).ToLowerInvariant() } elseif ($v -match '^\d+$') { $row[$k] = [int]$v }
         }
+        if (-not $row.ContainsKey('lv')) { $row.lv = 'legacy' }   # before level= existed: never counted as high
+        $scores.Remove([string]$row.pr)   # re-add, so a later score moves the PR to its latest position
         $scores[[string]$row.pr] = $row
     }
 }
-$rows = @($scores.Values)
+# level=none (no /code-review ran) never counts toward a downgrade: it is left out of every rule.
+$rows = @($scores.Values | Where-Object { $_.lv -ne 'none' })
+$odd = @($rows | Where-Object { @('high', 'medium', 'legacy') -notcontains $_.lv })
 function Sum($set, [string]$k) { $s = 0; foreach ($r in $set) { if ($r.ContainsKey($k)) { $s += $r[$k] } }; $s }
 
 # --- escapes: bugs traced to a PR that merged on a clean first pass without an Opus review ---
@@ -79,7 +86,8 @@ foreach ($i in $traced) {
 # --- scorecard ---
 $all = $rows
 $last = @($rows | Select-Object -Last $Window)
-$lastHigh = @($rows | Where-Object { -not $_.ContainsKey('level') -or $_.level -eq 1 } | Select-Object -Last $Window)
+$lastHigh = @($rows | Where-Object { $_.lv -eq 'high' } | Select-Object -Last $Window)
+$noFp = @($last | Where-Object { -not $fp.ContainsKey([int]$_.pr) })
 $D = Sum $all 'confirmed'; $H = Sum $all 'hy'; $L = Sum $all 'hy_leads'; $J = Sum $all 'hy_rejected'
 $crMh = Sum $lastHigh 'cr_only_mh'; $hyMissHigh = Sum $last 'hy_missed_high'
 $highEsc = @($escapes | Where-Object { $_.sev -match 'high|critical' })
@@ -89,6 +97,8 @@ if ($all.Count -lt 15 -or $D -lt 20) { $why += "need >= 15 scored PRs and >= 20 
 if ($lastHigh.Count -lt [Math]::Min($Window, 15)) { $why += "need $([Math]::Min($Window, 15)) reviews at high in the window (have $($lastHigh.Count))" }
 if ($crMh -gt 0) { $why += "/code-review high found $crMh medium/high defect(s) nobody else did in its last $($lastHigh.Count) runs" }
 if ($highEsc.Count -gt 0) { $why += "$($highEsc.Count) high/critical bug(s) escaped a clean first pass" }
+if ($noFp.Count -gt 0) { $why += "the first pass posted no result on $($noFp.Count) of the last $($last.Count) reviews (failing or unavailable)" }
+if ($odd.Count -gt 0) { $why += "$($odd.Count) score(s) with an unknown level=" }
 if ($hyMissHigh -gt 0) { $why += "the first pass missed $hyMissHigh high-severity defect(s) in the last $($last.Count) reviews" }
 $verdict = if ($why.Count -eq 0) { 'DROP' } else { "KEEP: $($why -join '; ')" }
 if ($Decision) { Write-Output $verdict; exit 0 }
@@ -96,7 +106,7 @@ if ($Decision) { Write-Output $verdict; exit 0 }
 $pct = { param($a, $b) if ($b -gt 0) { '{0:P0}' -f ($a / $b) } else { 'n/a' } }
 $routine = @($fp.Keys | Where-Object { -not $opus[$_] })
 Write-Output "First pass ran on $($fp.Count) PRs: $(@($fp.Values | Where-Object { $_ -eq 'clean' }).Count) clean, $(@($fp.Values | Where-Object { $_ -eq 'findings' }).Count) with findings; $($routine.Count) without an Opus review."
-Write-Output "Opus-reviewed PRs with a score: $($all.Count) ($(@($rows | Where-Object { $_.ContainsKey('level') -and $_.level -eq 0 }).Count) at medium); confirmed defects: $D"
+Write-Output "Opus-reviewed PRs with a score: $($all.Count) ($(@($rows | Where-Object { $_.lv -eq 'medium' }).Count) at medium); confirmed defects: $D"
 Write-Output "  Hydrogen recall (share of confirmed defects it reported): $(& $pct $H $D)   precision (leads not rejected): $(& $pct ($L - $J) $L) of $L leads"
 Write-Output "  found only by /code-review: $(Sum $all 'cr_only') (medium/high: $(Sum $all 'cr_only_mh')); only by Hydrogen: $(Sum $all 'hy_only'); high defects Hydrogen missed: $(Sum $all 'hy_missed_high')"
 Write-Output "  last $($lastHigh.Count) reviews at high: /code-review-only medium/high defects: $crMh"
