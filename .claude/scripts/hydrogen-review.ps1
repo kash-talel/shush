@@ -144,7 +144,7 @@ try {
     # do not); a Tauri signing key is the base64 of an "untrusted comment: rsign/minisign encrypted
     # secret key" file. com.shush.vault alone is the app's public identifier, not a secret: the real
     # vault path is caught by the %APPDATA% check above.
-    $secretRx = 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|-----BEGIN [A-Z ]*PRIVATE KEY|RWRTY0Iy[A-Za-z0-9+/=]{20,}|dW50cnVzdGVkIGNvbW1lbnQ6I(?:HJzaWdu|G1pbmlzaWduIGVuY3J5cHRlZ)|(?i:untrusted comment:[^\n]*secret key)|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|sk-[A-Za-z0-9]{20,}|(?i:[\\/]\.ssh[\\/]|[\\/]\.gemini[\\/]|(?:[a-z]:)?[\\/]+users[\\/]+[^\s\\/]+[\\/])'
+    $secretRx = 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|-----BEGIN [A-Z ]*PRIVATE KEY|RWRTY0Iy[A-Za-z0-9+/=]{20,}|dW50cnVzdGVkIGNvbW1lbnQ6I(?:HJzaWdu|G1pbmlzaWduIGVuY3J5cHRlZ)|(?i:untrusted comment:[^\n]*secret key)|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|sk-[A-Za-z0-9]{20,}|(?i:[\\/]\.ssh[\\/]|[\\/]\.gemini[\\/]|(?<![\w.-])(?:[a-z]:|[\\/][a-z])?[\\/]+users[\\/]+[^\s\\/]+[\\/])'
     foreach ($localPath in @($env:USERPROFILE, $env:APPDATA, $env:LOCALAPPDATA)) {
         if ($localPath -and $resp.IndexOf($localPath, [StringComparison]::OrdinalIgnoreCase) -ge 0) { Out-Result 7 "HYDROGEN #${Pr}: unavailable: answer held back (it names a local path)" '' }
     }
