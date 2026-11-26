@@ -122,7 +122,10 @@ if ($LASTEXITCODE -ne 0) {
     Write-Output "ERROR #${Pr}: merge failed: $(($err | Out-String).Trim())"
     exit 1
 }
-& gh api -X DELETE "repos/{owner}/{repo}/git/refs/heads/$($p.headRefName)" 2>$null | Out-Null   # usually auto-deleted already
-if ($Reviewed) { & gh pr edit $Pr --remove-label ai-review 2>$null | Out-Null }
+# Best effort after a successful merge: under 'Stop', PowerShell 5.1 turns gh's stderr (the branch
+# is usually auto-deleted already: HTTP 404) into a terminating error, which made a merged PR exit 1.
+$ErrorActionPreference = 'Continue'
+try { & gh api -X DELETE "repos/{owner}/{repo}/git/refs/heads/$($p.headRefName)" 2>$null | Out-Null } catch { }
+if ($Reviewed) { try { & gh pr edit $Pr --remove-label ai-review 2>$null | Out-Null } catch { } }
 Write-Output "MERGED #$Pr ($($p.url))$(if ($rerun) { ' after one CI re-run' })$(if ($fpNote) { "; $fpNote" })"
 exit 0

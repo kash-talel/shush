@@ -46,6 +46,32 @@ $SensitivePrefixes = @(
 
 $ParkLabels = @('blocked', 'agent-failed')
 
+# High-risk work: the pr-reviewer's /code-review never runs below `high` here, whatever the
+# first-pass scorecard says (review-level.ps1). Good results on routine PRs say nothing about these.
+$HighRiskLabels = @('severity:critical', 'severity:high', 'crypto', 'file-format', 'sync', 'memory-hygiene')
+$HighRiskTitleWords = @('Crypto', 'File format', 'Memory hygiene', 'Keyfile', 'Duress', 'Sync', 'Security', 'Signing', 'Updater', 'Update', 'Updates')
+$HighRiskPrefixes = @('src-tauri/src/crypto/', 'src-tauri/src/vault/', 'src-tauri/src/update/', 'src-tauri/src/sync/',
+    'src-tauri/src/os/memory', 'src-tauri/src/bridge/', 'docs/FORMAT.md', '.github/workflows/release')
+
+# Why an issue + PR paths are high-risk, or '' when they are not.
+function Get-HighRiskReason($issue, [string[]]$paths) {
+    if ($issue) {
+        $hit = @(Get-LabelNames $issue | Where-Object { $HighRiskLabels -contains $_ })
+        if ($hit.Count) { return "label $($hit -join ', ')" }
+        if ([string]$issue.title -match '^\s*\[([^\]]+)\]') {
+            foreach ($part in ($Matches[1] -split '/')) {
+                $w = $part.Trim()
+                if ($HighRiskTitleWords | Where-Object { $_ -ieq $w }) { return "title [$w]" }
+            }
+        }
+    }
+    foreach ($p in $paths) {
+        $q = ([string]$p).Replace('\', '/').TrimStart('/')
+        foreach ($h in $HighRiskPrefixes) { if ($q.StartsWith($h, [StringComparison]::OrdinalIgnoreCase)) { return "path $q" } }
+    }
+    return ''
+}
+
 function Get-LabelNames($issue) { return @($issue.labels | ForEach-Object { [string]$_.name }) }
 
 function Get-Route($issue) {
