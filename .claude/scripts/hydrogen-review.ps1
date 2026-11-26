@@ -7,6 +7,20 @@
 # Replay tests (2026-11-26): caught 3 of 3 seeded bugs with no false alarms on a clean PR, but only
 # about 1 in 5 of the real problems Opus later fixed (it misses compatibility and tool defaults).
 #
+# Confinement (probed 2026-11-26 with canary files, #280): `--mode plan --sandbox` alone does NOT
+# confine agy. With the owner's own settings it read files outside the snapshot (home folder, temp
+# canaries), ran shell commands and reached the network, and a plan-mode run writes plan files
+# under ~/.gemini. The cause: the owner's settings.json is "always-proceed" with a big allow list.
+# So the run gets its own --settings (written next to the snapshot): permission mode
+# "request-review", no trusted workspaces, and allow rules ONLY for read_file / list_dir /
+# grep_search / find_by_name on the snapshot folder. Headless agy cannot prompt, so any other
+# tool (shell, URL fetch, MCP, browser, a read outside the snapshot) is auto-denied and the run
+# aborts with `denied_actions` (fail closed: exit 7, nothing posted). Allow rules must not contain
+# globs: they feed agy's terminal sandbox, which rejects them. Before posting, the answer is
+# scanned for secret-like strings (tokens, key blocks, the vault path, the home folder); a hit
+# withholds the comment (exit 7). Residual risk: a hostile issue can still make agy read any file
+# inside the snapshot (the repo itself, which is public) and shape its answer text.
+#
 # Usage:  powershell -NoProfile -File .claude/scripts/hydrogen-review.ps1 -Pr <number> [-TimeoutMinutes 25]
 # Exit:   0 no findings   3 findings (posted on the PR)   7 unavailable (agy missing, timeout, bad output)
 #         8 skipped (Markdown-only PR)
@@ -97,7 +111,12 @@ try {
     # --- run agy, bounded ---
     $out = Join-Path $work 'out.json'; $err = Join-Path $work 'err.txt'
     $prompt = 'Read REVIEW_TASK.md in the current directory (it is not part of the repository) and do exactly what it says. Do not edit any file.'
-    $argLine = "-p `"$prompt`" --model $Model --mode plan --sandbox --output-format json"
+    $snapFull = (Get-Item -LiteralPath $snap).FullName
+    $allow = @(foreach ($t in 'read_file', 'list_dir', 'grep_search', 'find_by_name') { "$t($snapFull)" })
+    $settings = Join-Path $work 'agy-settings.json'
+    [IO.File]::WriteAllText($settings, (@{ toolPermission = 'request-review'; trustedWorkspaces = @()
+        permissions = @{ allow = $allow; deny = @() } } | ConvertTo-Json -Depth 5), $utf8)
+    $argLine = "-p `"$prompt`" --model $Model --mode plan --sandbox --settings `"$settings`" --output-format json"
     $proc = Start-Process -FilePath $agy.Source -ArgumentList $argLine -WorkingDirectory $snap `
         -RedirectStandardOutput $out -RedirectStandardError $err -NoNewWindow -PassThru
     $null = $proc.Handle   # keep the handle so ExitCode is readable later
@@ -106,16 +125,26 @@ try {
         Out-Result 7 "HYDROGEN #${Pr}: unavailable: no answer within $TimeoutMinutes minutes" ''
     }
 
-    $resp = $null
-    try { $resp = ([IO.File]::ReadAllText($out) | ConvertFrom-Json).response } catch { }
+    $resp = $null; $denied = ''
+    try {
+        $j = [IO.File]::ReadAllText($out) | ConvertFrom-Json
+        $resp = $j.response
+        if ($j.denied_actions) { $denied = ' Denied: ' + ((@($j.denied_actions) | ForEach-Object { $_.action }) -join ',') + ' (confinement, #280).' }
+    } catch { }
     if (-not $resp) {
-        $tail = if (Test-Path $err) { ((Get-Content -LiteralPath $err -Tail 3) -join ' ') } else { '' }
+        $tail = $denied + $(if (Test-Path $err) { ((Get-Content -LiteralPath $err -Tail 3) -join ' ') } else { '' })
         Out-Result 7 "HYDROGEN #${Pr}: unavailable: agy exit $($proc.ExitCode), no response. $tail" ''
     }
     $resp = [regex]::Replace([string]$resp, '\]\(file:///[^)]*\)', ']')   # local links mean nothing on GitHub
     # Strip the snapshot path in any form (short 8.3 or long, any case, / or \): it holds the user name.
     $leaf = [regex]::Escape((Split-Path -Leaf $work))
     $resp = [regex]::Replace($resp, "(?i)(?:[a-z]:)?[\\/][^\s``""'<>|*?]*?$leaf[\\/]repo(?:[\\/]|\b)", '')
+    # Never post secret-like text (#280): the answer goes on a public PR.
+    $secretRx = '(?i)gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|-----BEGIN [A-Z ]*PRIVATE KEY|RWR[A-Za-z0-9+/=]{40,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|sk-[A-Za-z0-9]{20,}|com\.shush\.vault|\.shush\b[^\s]*vault|[\\/]\.ssh[\\/]|[\\/]\.gemini[\\/]|(?:[a-z]:)?[\\/]+users[\\/]+[^\s\\/]+[\\/]'
+    foreach ($localPath in @($env:USERPROFILE, $env:APPDATA, $env:LOCALAPPDATA)) {
+        if ($localPath -and $resp.IndexOf($localPath, [StringComparison]::OrdinalIgnoreCase) -ge 0) { Out-Result 7 "HYDROGEN #${Pr}: unavailable: answer held back (it names a local path)" '' }
+    }
+    if ($resp -match $secretRx) { Out-Result 7 "HYDROGEN #${Pr}: unavailable: answer held back (secret-like text)" '' }
     $m = [regex]::Match($resp, '(?ms)^\W*FINDINGS\W*:?\s*(.*?)(?=^\W*CHECKED\W*:|\z)')
     if (-not $m.Success) { Out-Result 7 "HYDROGEN #${Pr}: unavailable: answer has no FINDINGS line" $resp }
     # Clean only when the whole FINDINGS value is "none" (markdown allowed); anything more is a finding.
