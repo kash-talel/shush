@@ -6,9 +6,9 @@
 ---
 
 ## Dual-Runner Architecture & Issue Routing
-This project operates with a split-model workflow between **Claude Code** and **Antigravity CLI (AGY / Gemini 3.8 Flash)**:
+This project operates with a split-model workflow between **Claude Code** and **Antigravity CLI (AGY / Gemini 4 Hydrogen)**:
 - **Claude Code (Sonnet 5.5 / Opus 5.5)**: Writes every line of code, UI, tests and scripts: Rust, Tauri IPC, Win32, Svelte 5, CDP/E2E scripts, assets.
-- **Antigravity CLI (Gemini 3.8 Flash)**: Prose only: documentation and spec reconciliation in Markdown files. AGY opens a PR and never merges; Claude's `/issue` dispatcher merges it after `.claude/scripts/agy-gate.ps1` confirms it only touches allowed docs.
+- **Antigravity CLI (Gemini 4 Hydrogen)**: Prose only: documentation and spec reconciliation in Markdown files. AGY opens a PR and never merges; Claude's `/issue` dispatcher merges it after `.claude/scripts/agy-gate.ps1` confirms it only touches allowed docs.
 
 > **Source of Truth for Routing:**
 > Routing is computed from each issue's labels and title by `.claude/scripts/route-issue.ps1` (rules in `.claude/scripts/Policy.ps1`). Only Claude's `/issue` dispatcher starts AGY, inside a worktree it created, on an issue whose route is `runner: agy`.

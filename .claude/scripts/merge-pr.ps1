@@ -2,13 +2,17 @@
 #
 #  1. Unless -Reviewed: a PR labelled ai-review/needs-review, or whose diff touches a sensitive
 #     path (Policy.ps1), is NOT merged: it gets the ai-review label and exit 4.
+#     Otherwise the Gemini first pass (hydrogen-review.ps1) runs beside the CI wait; any finding
+#     labels the PR ai-review and exits 4 instead of merging. If Hydrogen is unavailable the merge
+#     goes ahead as before (the output says so).
 #  2. Waits for the REQUIRED CI checks on GitHub (clean machine, not the agent's warm build).
 #     A failed "Windows · Rust + Svelte" run is re-run once (flaky tests); a second failure is final.
 #  3. Squash-merges without --admin, so the branch ruleset is honoured.
 #
 # Usage:  powershell -NoProfile -File .claude/scripts/merge-pr.ps1 -Pr <number> [-Reviewed]
 #         -Reviewed: only the pr-reviewer agent passes this, after its APPROVE verdict.
-# Exit:   0 merged (or already merged)   4 needs review (labelled ai-review, not merged)
+# Exit:   0 merged (or already merged)   4 needs review (labelled ai-review, not merged: sensitive
+#         paths or a first-pass finding)
 #         5 CI failed or timed out       6 conflicts with main (rebase, verify, push, rerun)
 #         1 other error
 # Output is a few lines on purpose: CI polling never reaches the agent's context.
@@ -42,6 +46,19 @@ if (-not $Reviewed) {
 
 if ($p.mergeable -eq 'CONFLICTING') { Write-Output "CONFLICT #${Pr}: conflicts with main"; exit 6 }
 
+# --- first pass by a second model family, in parallel with CI (routine PRs only) ---
+$fp = $null
+if (-not $Reviewed) {
+    $fpOut = [IO.Path]::Combine([IO.Path]::GetTempPath(), "shush-firstpass-$Pr-$([guid]::NewGuid().ToString('N').Substring(0,8)).txt")
+    $fpArgs = "-NoProfile -File `"$(Join-Path $PSScriptRoot 'hydrogen-review.ps1')`" -Pr $Pr"
+    $fp = Start-Process -FilePath 'powershell.exe' -ArgumentList $fpArgs -RedirectStandardOutput $fpOut `
+        -RedirectStandardError "$fpOut.err" -NoNewWindow -PassThru
+    $null = $fp.Handle
+}
+function Stop-FirstPass {
+    if ($fp -and -not $fp.HasExited) { & taskkill /T /F /PID $fp.Id 2>$null | Out-Null }
+}
+
 # --- wait for required checks, quietly ---
 $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
 $start = Get-Date
@@ -67,13 +84,30 @@ while ($true) {
         foreach ($f in $failed) {
             if ([string]$f.link -match '/runs/(\d+)') { Write-Output "  see: gh run view $($Matches[1]) --log-failed" }
         }
+        Stop-FirstPass
         exit 5
     }
     if ($checks.Count -eq 0 -and ((Get-Date) - $start).TotalMinutes -gt 5) {
-        Write-Output "CI FAILED #${Pr}: no required checks reported after 5 minutes"; exit 5
+        Write-Output "CI FAILED #${Pr}: no required checks reported after 5 minutes"; Stop-FirstPass; exit 5
     }
-    if ((Get-Date) -gt $deadline) { Write-Output "CI FAILED #${Pr}: checks still pending after $TimeoutMinutes minutes"; exit 5 }
+    if ((Get-Date) -gt $deadline) { Write-Output "CI FAILED #${Pr}: checks still pending after $TimeoutMinutes minutes"; Stop-FirstPass; exit 5 }
     Start-Sleep -Seconds 20
+}
+
+# --- first-pass result: a finding stops the merge and sends the PR to the pr-reviewer ---
+$fpNote = ''
+if ($fp) {
+    if (-not $fp.WaitForExit(35 * 60 * 1000)) { Stop-FirstPass; $fpNote = 'first pass timed out' }
+    $fpLine = if (Test-Path -LiteralPath $fpOut) { ((Get-Content -LiteralPath $fpOut) -join ' ').Trim() } else { '' }
+    Remove-Item -LiteralPath $fpOut, "$fpOut.err" -ErrorAction SilentlyContinue
+    if (-not $fpNote) {
+        if ($fp.ExitCode -eq 3) {
+            & gh pr edit $Pr --add-label ai-review | Out-Null
+            Write-Output "REVIEW #${Pr}: the first-pass review found possible problems (PR comment), labelled ai-review"
+            exit 4
+        }
+        $fpNote = if ($fpLine) { $fpLine } else { "first pass exit $($fp.ExitCode)" }
+    }
 }
 
 # --- merge (no --admin: the ruleset's required checks are green now) ---
@@ -87,5 +121,5 @@ if ($LASTEXITCODE -ne 0) {
 }
 & gh api -X DELETE "repos/{owner}/{repo}/git/refs/heads/$($p.headRefName)" 2>$null | Out-Null   # usually auto-deleted already
 if ($Reviewed) { & gh pr edit $Pr --remove-label ai-review 2>$null | Out-Null }
-Write-Output "MERGED #$Pr ($($p.url))$(if ($rerun) { ' after one CI re-run' })"
+Write-Output "MERGED #$Pr ($($p.url))$(if ($rerun) { ' after one CI re-run' })$(if ($fpNote) { "; $fpNote" })"
 exit 0

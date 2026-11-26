@@ -83,8 +83,16 @@ You are in an isolated git worktree. Never `git checkout main`, never touch the 
    `gh pr merge` yourself. Start it with `run_in_background` (see "Waiting on background work"): it
    waits for CI (usually a few minutes, up to 30) and prints one result line:
    - exit 0 → merged. Make sure the issue is closed (`gh issue close <NUMBER>` if not).
-   - exit 4 → the diff touches sensitive paths; it is now labelled `ai-review`. Add a
-     `### Review focus` section (`gh pr edit <PR> --body-file`) and return `STATUS: REVIEW`.
+   - exit 4 → the PR is now labelled `ai-review`, for one of two reasons (the line says which):
+     - sensitive paths: add a `### Review focus` section (`gh pr edit <PR> --body-file`) and
+       return `STATUS: REVIEW`.
+     - first-pass review findings (a Gemini model, posted as a PR comment; read it with
+       `powershell -NoProfile -File .claude/scripts/hydrogen-review.ps1 -Pr <PR> -Print`, which
+       reuses the posted result). Its findings are leads: check each against the code. Once only,
+       if you confirm one and the fix is clear: fix it with a test, verify, push, remove the label
+       (`gh pr edit <PR> --remove-label ai-review`) and run merge-pr again; a new head gets a new
+       first pass. Otherwise, or on a second exit 4, add `### Review focus` listing each finding
+       and what you concluded, and return `STATUS: REVIEW`. Never remove the label without a fix.
    - exit 5 → CI failed on GitHub. Read `gh run view <id> --log-failed` (pipe through
      `Select-String -Pattern 'error|FAILED|panicked' -Context 0,5` to keep it short), fix,
      verify, commit, push, run merge-pr again.

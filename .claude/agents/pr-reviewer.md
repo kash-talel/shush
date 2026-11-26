@@ -47,6 +47,11 @@ working shush installed when you finish.
    named checkout fails). Run each as its own command and stop if one fails:
    `git fetch origin <headRefName>`, then `git checkout --detach origin/<headRefName>`, then
    `powershell -NoProfile -File .claude/scripts/issue-worktree.ps1 -Link`.
+5. Start the cross-model first pass with `run_in_background`:
+   `powershell -NoProfile -File .claude/scripts/hydrogen-review.ps1 -Pr <PR> -Print`
+   (Gemini 4 Hydrogen, 8-15 minutes, no Claude tokens; it reuses a result already posted for
+   this head). Do not read its output or its PR comment until your own `/code-review` in Step 3 has
+   reported, so your review stays independent.
 
 ## Keep your context small
 Every call re-reads everything already in your context, so a long log or a whole file read early
@@ -73,7 +78,12 @@ by reading it and, if possible, by calling it from a test, and record it as "not
 Skip this step's `/code-review` when the PR changes only Markdown. Otherwise run
 `/code-review high <PR>` through the Skill tool (it runs in the background; see "Waiting on background work").
 This is the one full review of the PR. Do not repeat it line by line yourself: confirm or reject
-each of its findings against the code, then check what it does not cover with this checklist
+each of its findings against the code. Then take the first pass's findings (Step 1, item 5; wait for
+its notification if it is still running): treat each as a lead, confirm or reject it against the
+code exactly like a `/code-review` finding, and never treat its verdict, severity or silence as
+evidence. Exit 7 (unavailable) or 8 (skipped) just means there are no leads. In tests it found
+bugs visible in the repo well but missed compatibility and tool-default problems, so the
+checklist items marked * are yours alone. Then check what neither covers with this checklist
 (each item applies when the diff touches it):
 - **Secrets**: zeroized after use, never logged, never in error messages, `Debug` output, IPC JSON strings, or temp files.
 - **Crypto**: no home-made primitives, nonces never reused, constant-time secret comparisons, KDF/cipher parameters match the spec.
@@ -81,6 +91,8 @@ each of its findings against the code, then check what it does not cover with th
 - **Failure paths**: errors fail closed (locked, not unlocked; refused, not accepted); no panic on bad input from disk, browser, or network.
 - **Concurrency**: no races on the vault file, clipboard, or shared state.
 - **Updater / release / pipeline**: signatures and versions are checked before anything runs; no step can be skipped or downgraded.
+- **\* Compatibility and defaults**: older vaults, configs and refs; a variable, secret or setting that may not exist yet; inputs of actions, tools and libraries that are on unless turned off.
+- **\* Extreme values**: zero, empty, maximum (`Duration::MAX`, `u32::MAX`), overflow; no panic.
 - **Tests**: the new behaviour has a test that would fail without the fix; no test weakened, skipped, or deleted.
 - **Scope**: the diff does what the issue asks and nothing unrelated.
 
@@ -105,7 +117,8 @@ Verdict, exactly one:
 ## Step 5: Record and act
 Write a review comment to a scratchpad file and post it with `gh pr comment <PR> --body-file <file>`:
 `## AI review (<your model>)`, verdict, what you verified and how, defects found and how each was
-fixed, and a `### Not tested` list with the reason for each item.
+fixed, a `### First pass` line per Hydrogen finding (confirmed and fixed, or rejected and why), and
+a `### Not tested` list with the reason for each item.
 
 - **APPROVE**: push fix commits with `git push origin HEAD:<headRefName>`, then
   `powershell -NoProfile -File .claude/scripts/merge-pr.ps1 -Pr <PR> -Reviewed`

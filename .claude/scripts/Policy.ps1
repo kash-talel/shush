@@ -7,6 +7,9 @@
 #                              including the OLD path of a rename
 #   Get-SensitivePaths $paths -> the paths that force review whatever the issue's labels say
 #
+# First-pass review (hydrogen-review.ps1): Gemini 4 Hydrogen reads every Claude PR. It can only
+# ADD review (a finding labels a routine PR ai-review); its verdict and severities are never used.
+#
 # Nothing is stored: routing is a pure function of the issue, so a label added later (for
 # example severity:critical) changes the route on the next run. To pin a route by hand, put a
 # label on the issue:
@@ -66,7 +69,7 @@ function Get-Route($issue) {
         ($labels -contains 'docs') -or ($labels -contains 'documentation') -or ($labels -contains 'spec-inconsistency')
     $domain = @($labels | Where-Object { $docsOnly -notcontains $_ })
     if ($docsSignal -and $domain.Count -eq 0 -and -not $high) {
-        return @{ model = 'gemini-3.8-flash'; runner = 'agy'; target = 'gemini-3.8-flash-medium'; reason = 'docs/spec prose only' }
+        return @{ model = 'gemini-4-hydrogen'; runner = 'agy'; target = 'gemini-4-hydrogen-high'; reason = 'docs/spec prose only' }
     }
     return $sonnet + @{ reason = 'code, UI or tests' }
 }
