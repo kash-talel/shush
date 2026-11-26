@@ -35,6 +35,7 @@ $SensitivePrefixes = @(
     'src-tauri/src/bridge/', 'src-tauri/src/sync/', 'src-tauri/src/bin/',
     'src-tauri/src/os/memory', 'src-tauri/src/os/clipboard', 'src-tauri/src/os/pipe',
     'src-tauri/src/os/native_host', 'src-tauri/src/os/session', 'src-tauri/src/os/private_dir',
+    'src-tauri/src/os/win_hello', 'src-tauri/src/totp/',
     'src-tauri/src/net',
     'src-tauri/Cargo.toml', 'src-tauri/Cargo.lock', 'src-tauri/tauri.conf.json', 'src-tauri/build.rs',
     'src-tauri/capabilities/', 'src-tauri/permissions/', 'src-tauri/windows/', 'src-tauri/windows-app-manifest',
