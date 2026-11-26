@@ -802,7 +802,16 @@ pub struct LanStream {
     /// trickling one byte at a time cannot keep the connection (and the
     /// window's listener, code and identity) alive past it.
     deadline: Option<std::time::Instant>,
+    /// Set by [`LanStream::closer`]: reads and writes then fail at once.
+    /// Windows does not wake a blocked `recv` on `shutdown`, so reads under a
+    /// deadline ([`LanStream::set_timeout`]) run in short slices that look at
+    /// this flag.
+    closed: std::sync::Arc<AtomicBool>,
 }
+
+/// How long a blocking read or write waits before it re-checks `closed`.
+#[cfg(feature = "network")]
+const CLOSE_POLL: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// A socket the gate can close from outside: the owner and the gate's closer share it, and
 /// closing drops it.
@@ -942,6 +951,7 @@ impl NetGate {
             inner,
             peer: sa.to_string(),
             deadline: None,
+            closed: std::sync::Arc::default(),
         })
     }
 
@@ -1107,6 +1117,7 @@ impl LanListener {
                         inner: gate.track_stream(s)?,
                         peer: peer.to_string(),
                         deadline: None,
+                        closed: std::sync::Arc::default(),
                     }));
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -1123,6 +1134,19 @@ impl LanStream {
     /// The other end, `ip:port`.
     pub fn peer(&self) -> &str {
         &self.peer
+    }
+
+    /// A closure that shuts this connection down from another thread, so a
+    /// blocked read fails within [`CLOSE_POLL`] (cancel, vault lock). Needs
+    /// [`LanStream::set_timeout`] first: without a deadline a read is not
+    /// sliced, and Windows does not wake it on `shutdown`.
+    pub fn closer(&self) -> Result<Box<dyn FnOnce() + Send>, NetError> {
+        let clone = self.inner.inner.try_clone().map_err(io_err)?;
+        let closed = self.closed.clone();
+        Ok(Box::new(move || {
+            closed.store(true, Ordering::SeqCst);
+            let _ = clone.shutdown(std::net::Shutdown::Both);
+        }))
     }
 
     /// Limits the whole rest of the connection to `d`: every later read or
@@ -1142,6 +1166,12 @@ impl LanStream {
 
     /// Time left before the deadline, or `TimedOut` once it passed.
     fn left(&self) -> std::io::Result<Option<std::time::Duration>> {
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "connection closed",
+            ));
+        }
         let Some(deadline) = self.deadline else {
             return Ok(None);
         };
@@ -1154,38 +1184,51 @@ impl LanStream {
         }
         Ok(Some(left))
     }
+}
 
-    /// A socket timeout under a deadline reports `TimedOut` on every platform
-    /// (Unix reports the expired receive/send timeout as `WouldBlock`).
-    fn deadline_err<T>(&self, r: std::io::Result<T>) -> std::io::Result<T> {
-        match r {
-            Err(e) if self.deadline.is_some() && e.kind() == std::io::ErrorKind::WouldBlock => {
-                Err(std::io::Error::new(std::io::ErrorKind::TimedOut, e))
-            }
-            r => r,
-        }
-    }
+/// A socket timeout (Unix reports an expired receive/send timeout as `WouldBlock`).
+#[cfg(feature = "network")]
+fn is_timeout<T>(r: &std::io::Result<T>) -> bool {
+    matches!(r, Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut))
 }
 
 #[cfg(feature = "network")]
 impl std::io::Read for LanStream {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if let Some(left) = self.left()? {
-            self.inner.inner.set_read_timeout(Some(left))?;
+        loop {
+            if let Some(left) = self.left()? {
+                self.inner
+                    .inner
+                    .set_read_timeout(Some(left.min(CLOSE_POLL)))?;
+            }
+            let r = self.inner.read(buf);
+            if self.deadline.is_some() && is_timeout(&r) {
+                continue;
+            }
+            return r;
         }
-        let r = self.inner.read(buf);
-        self.deadline_err(r)
     }
 }
 
 #[cfg(feature = "network")]
 impl std::io::Write for LanStream {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // Writes are not sliced: on Windows a timed-out `send` may have queued
+        // part of `buf` without saying how much, so retrying could duplicate
+        // bytes. A send timeout ends the connection instead. Pairing frames fit
+        // in the socket buffer, so a write does not block long enough to delay
+        // a cancel.
         if let Some(left) = self.left()? {
             self.inner.inner.set_write_timeout(Some(left))?;
         }
         let r = self.inner.write(buf);
-        self.deadline_err(r)
+        if self.deadline.is_some() && is_timeout(&r) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "connection deadline passed",
+            ));
+        }
+        r
     }
     fn flush(&mut self) -> std::io::Result<()> {
         self.inner.flush()
