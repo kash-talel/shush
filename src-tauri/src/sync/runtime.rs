@@ -407,7 +407,10 @@ mod tests {
         let closed = || {
             let f = Arc::new(AtomicBool::new(false));
             let g = f.clone();
-            (f, Box::new(move || g.store(true, Ordering::SeqCst)) as Closer)
+            (
+                f,
+                Box::new(move || g.store(true, Ordering::SeqCst)) as Closer,
+            )
         };
         let a = rt.begin_join();
         let b = rt.begin_join();

@@ -3650,7 +3650,7 @@ fn sync_join_blocking(
         sync_store_peer(app, &expected, p, &peer)
     });
     join.conn.clear();
-    if !rt.join_is_current(join) {
+    if result.is_err() && !rt.join_is_current(join) {
         // Aborted by a vault lock: say so, not "wrong code".
         return Err(locked());
     }
