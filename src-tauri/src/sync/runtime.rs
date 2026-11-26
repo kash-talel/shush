@@ -25,8 +25,50 @@ use {
 #[cfg(feature = "network")]
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Where an in-flight pairing connection can be shut down from another
+/// thread. Once closed it stays closed: a connection registered afterwards
+/// is shut down at once, so a cancel cannot miss a connection that is just
+/// being set up.
+#[derive(Default)]
+pub struct ConnSlot(Mutex<(bool, Option<Closer>)>);
+
+type Closer = Box<dyn FnOnce() + Send>;
+
+impl ConnSlot {
+    /// Registers the connection's closer (runs it now if already closed).
+    #[cfg_attr(not(feature = "network"), allow(dead_code))]
+    pub fn register(&self, closer: Closer) {
+        let mut g = lock(&self.0);
+        if g.0 {
+            drop(g);
+            closer();
+        } else {
+            g.1 = Some(closer);
+        }
+    }
+
+    /// Forgets the closer once the connection ended.
+    #[cfg_attr(not(feature = "network"), allow(dead_code))]
+    pub fn clear(&self) {
+        lock(&self.0).1 = None;
+    }
+
+    /// Shuts the registered connection down and refuses later ones.
+    pub fn close(&self) {
+        let c = {
+            let mut g = lock(&self.0);
+            g.0 = true;
+            g.1.take()
+        };
+        if let Some(c) = c {
+            c();
+        }
+    }
+}
+
 /// The open (or just closed) pairing window, as the UI sees it.
 struct Active {
+    conn: Arc<ConnSlot>,
     code: Zeroizing<String>,
     addresses: Vec<String>,
     advertised: bool,
@@ -62,6 +104,15 @@ pub struct WindowView {
 #[derive(Default)]
 pub struct SyncRuntime {
     active: Mutex<Option<Active>>,
+    /// The join (initiator) connection in flight, and its generation.
+    join: Mutex<(u64, Arc<ConnSlot>)>,
+}
+
+/// One join attempt; `abort_join` (vault lock) invalidates it.
+pub struct JoinGuard {
+    /// Shut down by `abort_join`.
+    pub conn: Arc<ConnSlot>,
+    generation: u64,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -74,6 +125,8 @@ pub struct WindowHandles {
     pub window: Arc<Mutex<Window>>,
     /// Set to stop the listener.
     pub cancel: Arc<AtomicBool>,
+    /// Shut down on cancel so an in-flight connection ends at once.
+    pub conn: Arc<ConnSlot>,
 }
 
 impl SyncRuntime {
@@ -87,19 +140,26 @@ impl SyncRuntime {
     ) -> WindowHandles {
         let window = Arc::new(Mutex::new(Window::new(Instant::now())));
         let cancel = Arc::new(AtomicBool::new(false));
+        let conn = Arc::new(ConnSlot::default());
         let mut a = lock(&self.active);
         if let Some(old) = a.take() {
             old.cancel.store(true, Ordering::SeqCst);
             lock(&old.window).close(WindowState::Cancelled);
+            old.conn.close();
         }
         *a = Some(Active {
+            conn: conn.clone(),
             code,
             addresses,
             advertised,
             window: window.clone(),
             cancel: cancel.clone(),
         });
-        WindowHandles { window, cancel }
+        WindowHandles {
+            window,
+            cancel,
+            conn,
+        }
     }
 
     /// Closes the window (user cancel or vault lock) and forgets its code.
@@ -107,7 +167,36 @@ impl SyncRuntime {
         if let Some(old) = lock(&self.active).take() {
             old.cancel.store(true, Ordering::SeqCst);
             lock(&old.window).close(WindowState::Cancelled);
+            old.conn.close();
         }
+    }
+
+    /// Starts a join attempt, replacing the record of any earlier one.
+    #[cfg_attr(not(feature = "network"), allow(dead_code))]
+    pub fn begin_join(&self) -> JoinGuard {
+        let mut j = lock(&self.join);
+        j.0 += 1;
+        j.1 = Arc::new(ConnSlot::default());
+        JoinGuard {
+            conn: j.1.clone(),
+            generation: j.0,
+        }
+    }
+
+    /// Vault lock: shuts the in-flight join connection down and makes its
+    /// attempt unable to store a peer.
+    pub fn abort_join(&self) {
+        let mut j = lock(&self.join);
+        j.0 += 1;
+        let conn = std::mem::take(&mut j.1);
+        drop(j);
+        conn.close();
+    }
+
+    /// Whether `g` is still the live join attempt (no lock since it began).
+    #[cfg_attr(not(feature = "network"), allow(dead_code))]
+    pub fn join_is_current(&self, g: &JoinGuard) -> bool {
+        lock(&self.join).0 == g.generation
     }
 
     /// The window for the UI, if one was opened since the last cancel.
@@ -161,7 +250,11 @@ pub fn run_pairing_window(
     my_name: &str,
     mut store: impl FnMut(&Paired, &str) -> Result<(), PairError>,
 ) {
-    let WindowHandles { window, cancel } = handles;
+    let WindowHandles {
+        window,
+        cancel,
+        conn,
+    } = handles;
     loop {
         let mut keep = || !cancel.load(Ordering::SeqCst) && lock(window).accepting(Instant::now());
         let mut stream = match listener.accept(gate, &mut keep) {
@@ -188,6 +281,13 @@ pub fn run_pairing_window(
             continue;
         }
         let peer = stream.peer().to_owned();
+        match stream.closer() {
+            Ok(c) => conn.register(c),
+            Err(_) => {
+                lock(window).fail();
+                continue;
+            }
+        }
         let result = pairing::respond(&mut stream, code, id, my_name, |p| {
             // A window cancelled meanwhile (vault lock) must not store anything.
             if cancel.load(Ordering::SeqCst)
@@ -198,6 +298,7 @@ pub fn run_pairing_window(
             }
             store(p, &peer)
         });
+        conn.clear();
         drop(stream);
         let mut w = lock(window);
         match result {
@@ -261,6 +362,35 @@ mod tests {
         assert!(v.code.is_none());
         // The listener was dropped with the window: nobody answers any more.
         assert!(gate.lan_connect(&addr, Duration::from_secs(2)).is_err());
+    }
+
+    /// A cancel (vault lock) ends a connection a stalled peer is holding open
+    /// well before the 30 s connection timeout (issue #276).
+    #[test]
+    fn cancel_closes_an_in_flight_connection() {
+        let gate = open_gate();
+        let rt = SyncRuntime::default();
+        let code = pairing::new_code().unwrap();
+        let listener = gate.lan_listen(true).unwrap();
+        let addr = format!("127.0.0.1:{}", listener.port());
+        let handles = rt.begin(code.clone(), vec![addr.clone()], false);
+        let r = Identity::generate().unwrap();
+        let started = Instant::now();
+        std::thread::scope(|s| {
+            let h = s.spawn(|| {
+                run_pairing_window(&gate, listener, &handles, &code, &r, "R", |_, _| {
+                    panic!("nothing may be stored")
+                })
+            });
+            // Connects, then says nothing: the listener blocks reading.
+            let _stalled = gate.lan_connect(&addr, Duration::from_secs(5)).unwrap();
+            std::thread::sleep(Duration::from_millis(500));
+            assert!(!h.is_finished());
+            rt.cancel();
+            h.join().unwrap();
+        });
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(rt.view().map(|v| v.state), None);
     }
 
     /// The right code pairs once; the window then closes, so the code cannot
