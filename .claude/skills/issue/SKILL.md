@@ -27,8 +27,9 @@ Then by `action`:
 - `parked`: print `⏸️ Issue #<number> already has PR #<pr> awaiting your decision` and stop.
 - `review`: go to Step 3 with `pr`.
 - `resume-pr`: an open PR already exists. runner `agy` → Step 2 AGY item 4 with `pr`.
-  runner `claude` → `powershell -NoProfile -File .claude/scripts/merge-pr.ps1 -Pr <pr>`:
-  exit 0 → Step 4; exit 4 → Step 3; any other exit → Step 2 claude, adding to the prompt
+  runner `claude` → `powershell -NoProfile -File .claude/scripts/merge-pr.ps1 -Pr <pr>` with
+  `run_in_background: true` (CI plus the first-pass review can take 30+ minutes; wait for the
+  notification, never poll): exit 0 → Step 4; exit 4 → Step 3; any other exit → Step 2 claude, adding to the prompt
   `An open PR #<pr> on branch <head> already exists: continue from it.`
 - `dispatch`: Step 2.
 

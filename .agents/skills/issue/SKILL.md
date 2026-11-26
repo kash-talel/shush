@@ -1,7 +1,7 @@
 ---
 name: issue
 description: >-
-  Resolve ONE GitHub issue that Claude's /issue dispatcher routed to AGY (Gemini 3.8 Flash).
+  Resolve ONE GitHub issue that Claude's /issue dispatcher routed to AGY (Gemini 4 Hydrogen).
   AGY gets prose-only work (docs and specs): plan, file discovered issues, branch, edit Markdown,
   open a PR. AGY never merges; the dispatcher gates and merges the PR.
 ---
