@@ -67,4 +67,4 @@ jobs:
 
       - name: Rust · net tests (no-network build)
         working-directory: src-tauri
-        run: cargo test --lib --no-default-features net::
+        run: "cargo test --lib --no-default-features net::"
