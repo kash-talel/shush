@@ -30,12 +30,19 @@ $ReviewTitleWords = @('Crypto', 'Sync', 'File format', 'Memory hygiene', 'Keyfil
 
 # A diff touching any of these goes to the pr-reviewer even when the issue looks routine.
 # Prefixes end in '/'; anything else is an exact file or a file-name prefix.
+# Deliberately NOT listed: src-tauri/src/lib.rs and main.rs. They hold most #[tauri::command]
+# handlers (including the unlock commands and the Windows Hello evict(...) calls), but listing
+# them would send almost every code PR to the pr-reviewer. The first-pass review
+# (hydrogen-review.ps1) and the CI tests cover them; an issue that changes those calls should
+# carry a review label (crypto / memory-hygiene). Revisit if that proves too weak.
+# policy-selfcheck.ps1 (run by verify.ps1) asserts the entries below stay present.
 $SensitivePrefixes = @(
     'src-tauri/src/crypto/', 'src-tauri/src/vault/', 'src-tauri/src/update/',
     'src-tauri/src/bridge/', 'src-tauri/src/sync/', 'src-tauri/src/bin/',
     'src-tauri/src/os/memory', 'src-tauri/src/os/clipboard', 'src-tauri/src/os/pipe',
     'src-tauri/src/os/native_host', 'src-tauri/src/os/session', 'src-tauri/src/os/private_dir',
     'src-tauri/src/os/win_hello', 'src-tauri/src/totp/',
+    'src-tauri/src/os/ancestry', 'src-tauri/src/os/replace', 'src-tauri/src/os/recycle',
     'src-tauri/src/net',
     'src-tauri/Cargo.toml', 'src-tauri/Cargo.lock', 'src-tauri/tauri.conf.json', 'src-tauri/build.rs',
     'src-tauri/capabilities/', 'src-tauri/permissions/', 'src-tauri/windows/', 'src-tauri/windows-app-manifest',
