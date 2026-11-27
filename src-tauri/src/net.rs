@@ -25,6 +25,7 @@ const HEADER_ALLOWANCE: usize = 16 * 1024;
 
 /// Extracts the body of a complete `HTTP/1.1 200` response. Rejects every other status
 /// (redirects included), bodies over `max_body`, and truncated bodies.
+#[cfg_attr(not(feature = "network"), allow(dead_code))]
 pub(crate) fn parse_http_response(raw: &[u8], max_body: usize) -> Result<Vec<u8>, &'static str> {
     let split = raw
         .windows(4)
@@ -78,6 +79,7 @@ pub(crate) fn parse_http_response(raw: &[u8], max_body: usize) -> Result<Vec<u8>
     Ok(out)
 }
 
+#[cfg_attr(not(feature = "network"), allow(dead_code))]
 fn decode_chunked(mut b: &[u8], max_body: usize) -> Result<Vec<u8>, &'static str> {
     let mut out = Vec::new();
     loop {
@@ -1455,6 +1457,7 @@ mod tests {
     }
 
     /// Air-gapped mode switched on mid-download stops before the next read.
+    #[cfg(feature = "network")]
     #[test]
     fn download_stops_when_the_gate_closes() {
         struct Slow<'a> {
@@ -1529,6 +1532,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "network")]
     #[test]
     fn download_refuses_while_air_gapped() {
         let g = NetGate::default();

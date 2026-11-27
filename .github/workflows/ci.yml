@@ -60,3 +60,11 @@ jobs:
       - name: Rust · tests
         working-directory: src-tauri
         run: cargo test --lib
+
+      - name: Rust · clippy (no-network build)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
+
+      - name: Rust · net tests (no-network build)
+        working-directory: src-tauri
+        run: cargo test --lib --no-default-features net::
