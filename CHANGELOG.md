@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.0](https://github.com/kash-talel/shush/compare/v0.2.0...v0.3.0) (2026-11-27)
+
+
+### Features
+
+* **issue:** Gemini Hydrogen first-pass review; AGY docs on Hydrogen ([#277](https://github.com/kash-talel/shush/issues/277)) ([67eb23f](https://github.com/kash-talel/shush/commit/67eb23fd3cd24889ef548623b50a1770e94592ff))
+* **issue:** scorecard to decide when /code-review can drop to medium ([#278](https://github.com/kash-talel/shush/issues/278)) ([b151bf3](https://github.com/kash-talel/shush/commit/b151bf32e91fe5da1daae28986bc7900c4eeadc1))
+* **issue:** script-decided /code-review level; high-risk never lowered ([#279](https://github.com/kash-talel/shush/issues/279)) ([02f8e11](https://github.com/kash-talel/shush/commit/02f8e117a3a9c9a240a309725d27fb016ee212ef))
+
+
+### Bug Fixes
+
+* **#184:** run tauri build/dev hooks in src/ via cwd ([#274](https://github.com/kash-talel/shush/issues/274)) ([c2834e3](https://github.com/kash-talel/shush/commit/c2834e312383e83a2f08c664abed6f0ddadea5a4))
+* **#187:** actions/attest, client-id, no npm cache in key-holding jobs ([#275](https://github.com/kash-talel/shush/issues/275)) ([8c5bd67](https://github.com/kash-talel/shush/commit/8c5bd675ba771195a2601e144a645b5faefdb175))
+* **#192:** build and test the no-network configuration in CI ([#288](https://github.com/kash-talel/shush/issues/288)) ([454af20](https://github.com/kash-talel/shush/commit/454af2067f93322d1fad21fde943879c818de117))
+* **#271:** whole-connection deadline on LAN streams ([#272](https://github.com/kash-talel/shush/issues/272)) ([e7e7801](https://github.com/kash-talel/shush/commit/e7e78015c42e9679ad511af9ec93df2bbd7c989f))
+* **#276:** cancel / vault lock closes in-flight pairing connections ([#282](https://github.com/kash-talel/shush/issues/282)) ([c1f95c1](https://github.com/kash-talel/shush/commit/c1f95c1425258debb7768c5536fe6178c99ae45d))
+* **#280:** confine the agy first pass, scan its answer ([#283](https://github.com/kash-talel/shush/issues/283)) ([7df7a49](https://github.com/kash-talel/shush/commit/7df7a49e89ed4da6edece251690a0554faeb6669))
+* **#281:** add win_hello and totp to SensitivePrefixes ([#284](https://github.com/kash-talel/shush/issues/284)) ([d87e03e](https://github.com/kash-talel/shush/commit/d87e03e9be2a42edbbd7c8a501b7413086ad7754))
+* **#285:** sensitive prefixes for ancestry/replace/recycle + policy self-check ([#286](https://github.com/kash-talel/shush/issues/286)) ([bcb4fe5](https://github.com/kash-talel/shush/commit/bcb4fe5b54c081393b181eea72c1d84e6dacd782))
+* **issue:** stop leaking cargo slots; don't park issues on setup failures ([#267](https://github.com/kash-talel/shush/issues/267)) ([2307b81](https://github.com/kash-talel/shush/commit/2307b81a22319ce7914403e081d516aa5c17ee2b))
+
 ## [0.2.0](https://github.com/kash-talel/shush/compare/v0.1.2...v0.2.0) (2026-11-25)
 
 

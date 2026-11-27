@@ -1,12 +1,18 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "shush",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "identifier": "com.shush.vault",
   "build": {
-    "beforeDevCommand": {"script": "npm run dev", "cwd": "../src"},
+    "beforeDevCommand": {
+      "script": "npm run dev",
+      "cwd": "../src"
+    },
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": {"script": "npm run build", "cwd": "../src"},
+    "beforeBuildCommand": {
+      "script": "npm run build",
+      "cwd": "../src"
+    },
     "frontendDist": "../src/dist"
   },
   "app": {
