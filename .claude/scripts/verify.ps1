@@ -44,7 +44,8 @@ function Invoke-Step([string]$name, [string]$cmd, [scriptblock]$excerpt) {
     return $false
 }
 
-# Policy.ps1 self-check (cheap, so it runs whenever this does).
+# Policy.ps1 self-check (cheap, so it runs on every code run, -Test included; a docs-only run
+# exits above, and a Policy.ps1 change is never docs-only).
 $selfcheck = @(& powershell -NoProfile -File (Join-Path $root '.claude\scripts\policy-selfcheck.ps1'))
 if ($LASTEXITCODE -ne 0) { $selfcheck | ForEach-Object { [Console]::WriteLine($_) }; Write-Output 'verify: FAILED (policy self-check)'; exit 1 }
 
