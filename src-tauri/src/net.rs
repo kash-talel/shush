@@ -1532,7 +1532,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "network")]
     #[test]
     fn download_refuses_while_air_gapped() {
         let g = NetGate::default();
@@ -1544,7 +1543,40 @@ mod tests {
             std::time::Duration::from_millis(10),
             &mut Vec::new(),
         );
-        assert_eq!(r, Err(NetError::AirGapped));
+        let want = if NetGate::compiled_in() {
+            NetError::AirGapped
+        } else {
+            NetError::NotCompiledIn
+        };
+        assert_eq!(r, Err(want));
+        assert_eq!(g.sockets_opened(), 0);
+    }
+
+    /// Issue #192: a build without the `network` feature refuses every request, even with
+    /// air-gapped mode switched off.
+    #[cfg(not(feature = "network"))]
+    #[test]
+    fn no_network_build_refuses_even_when_the_gate_is_open() {
+        let g = NetGate::default();
+        g.set_air_gapped(false);
+        assert!(!NetGate::compiled_in());
+        assert_eq!(g.check(), Err(NetError::NotCompiledIn));
+        let t = std::time::Duration::from_millis(10);
+        assert_eq!(
+            g.https_get("example.com", "/", "shush/test", 1024, t),
+            Err(NetError::NotCompiledIn)
+        );
+        assert_eq!(
+            g.https_download(
+                "https://example.com/x",
+                "shush/test",
+                3,
+                t,
+                t,
+                &mut Vec::new()
+            ),
+            Err(NetError::NotCompiledIn)
+        );
         assert_eq!(g.sockets_opened(), 0);
     }
 
