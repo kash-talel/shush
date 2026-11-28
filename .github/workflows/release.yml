@@ -37,7 +37,7 @@ jobs:
     steps:
       # A GitHub App token (not GITHUB_TOKEN) so the release PR triggers CI.
       - id: app
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
           # Falls back to the legacy numeric App ID until RELEASE_APP_CLIENT_ID is set; the
           # action and GitHub's JWT `iss` accept either. No deprecated `app-id` key, so no warning.
